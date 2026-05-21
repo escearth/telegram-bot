@@ -1,0 +1,88 @@
+════════════════════════════════════════════════
+  EARTH CRYPTO BOT — BOTFATHER SETUP GUIDE
+════════════════════════════════════════════════
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. BOT NAME  /setname
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Earth Crypto
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2. COMMAND LIST  /setcommands
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Paste ONLY the lines below (no dashes) into BotFather:
+
+────────────────────────────────────────────────
+start - Start the bot & show all features
+price - Live prices for all 12 coins
+market - Market overview + Fear & Greed index
+compare - Side-by-side coin comparison
+usd - USD → Toman rate
+try - Turkish Lira → Toman rate
+gold - Gold prices (global + Iran coins)
+convert - Convert between coins, USD or Toman
+holdings - Your portfolio with live P&L
+set - Set or update your coin holdings
+alert - Set a price alert
+alerts - View and manage your alerts
+digest - Daily portfolio summary settings
+wallets - Manage your TRON wallets
+mywallets - Show wallet balances
+language - Change language / تغییر زبان
+privacy - What data we store & how to delete it
+deleteaccount - Permanently delete all your data
+cancel - Cancel current action
+help - Show all commands and tips
+────────────────────────────────────────────────
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3. DESCRIPTION  /setdescription
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Live crypto prices, portfolio tracking, price alerts, and TRON wallet tools.
+Type a coin name like "btc" or "بیتکوین" to get started.
+قیمت لحظه‌ای ارزها، مدیریت پرتفو، هشدار قیمت و بررسی کیف پول ترون.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4. ABOUT TEXT  /setabouttext
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Real-time prices for BTC, ETH, TRX, TON and more.
+Portfolio P&L, price alerts, and USD/Toman conversion.
+فارسی و انگلیسی — دو زبانه
+@EscEarthBot
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  5. INLINE MODE  /setinline
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Enable inline mode, then set the placeholder text to:
+
+  btc · ولت · ۱۰ ترون · دلار · قیمت
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  6. PRIVACY MODE  /setprivacy
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Set to ENABLED — bot will only read commands and @mentions in groups.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  STEP-BY-STEP INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Open Telegram → message @BotFather
+2. /setname        → select @EscEarthBot → paste name above
+3. /setcommands    → select @EscEarthBot → paste command list above
+4. /setdescription → select @EscEarthBot → paste description above
+5. /setabouttext   → select @EscEarthBot → paste about text above
+6. /setinline      → select @EscEarthBot → enable → set placeholder
+7. /setprivacy     → select @EscEarthBot → ENABLED
