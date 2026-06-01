@@ -283,7 +283,7 @@ def format_wallet_balance(
         ...     Decimal('60000'),
         ...     'en'
         ... )
-        '🪙 0.5 TRX\n💵 $0.14\n💰 8,400 تومان'
+        '🪙 0.5 TRX\n💵 $0.14\n💰 8,400 Toman'
     """
     # Format crypto (up to 8 decimals, strip zeros)
     crypto_str = format_crypto(crypto_amount)
@@ -298,10 +298,12 @@ def format_wallet_balance(
     
     # ⚠️ Always use English digits (ignore user_lang) to prevent RTL display issues in Telegram
     
+    toman_label = "تومان" if user_lang == 'fa' else "Toman"
+    
     # Build display
     result = f"🪙 {crypto_str} {crypto_symbol}\n"
     result += f"💵 ${usd_str}\n"
-    result += f"💰 {toman_str} تومان"
+    result += f"💰 {toman_str} {toman_label}"
     
     return result
 

@@ -1497,13 +1497,12 @@ def get_ton_wallet_balance(address, user_id: int = 0):
                 return f"👛 TON Wallet Balance\n\n🪙 {bal_str} TON"
             
             # Enhanced display with crypto + USD + Toman
-            # Force English digits to avoid RTL issues
             balance_display = format_wallet_balance(
                 crypto_amount=balance_ton,
                 crypto_symbol='TON',
                 usd_rate=Decimal(str(ton_price)),
                 toman_rate=Decimal(str(usd_to_irr)),
-                user_lang='en'  # Always use English digits for wallet display
+                user_lang=user_lang
             )
             
             return f"👛 TON Wallet Balance\n\n{balance_display}"
@@ -2059,7 +2058,7 @@ def get_tron_wallet_trx(address, user_id: int = 0):
                 crypto_symbol='TRX',
                 usd_rate=Decimal(str(trx_price)),
                 toman_rate=Decimal(str(usd_to_irr)),
-                user_lang='en'  # Always use English digits for wallet display
+                user_lang=user_lang
             )
             
             return f"👛 TRON Wallet Balance\n\n{balance_display}"
@@ -2605,7 +2604,7 @@ def handle_callback(call):
 
     if data == "alrt_new":
         bot.answer_callback_query(call.id)
-        coins = list(CRYPTO_LIST.keys())
+        coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
         rows = []
         for i in range(0, len(coins), 3):
             row = []
