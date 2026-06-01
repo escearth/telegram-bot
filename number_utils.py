@@ -95,6 +95,16 @@ def parse_number(text: str) -> Optional[Decimal]:
         if comma_count == 0 and dot_count == 0:
             return Decimal(text)
         
+        # Multiple separators of one type with none of the other = thousands separator
+        if comma_count > 1 and dot_count == 0:
+            # US: 1,000,000 → remove all commas
+            text = text.replace(',', '')
+            return Decimal(text)
+        if dot_count > 1 and comma_count == 0:
+            # European: 1.000.000 → remove all dots
+            text = text.replace('.', '')
+            return Decimal(text)
+        
         # Find last separator to determine format
         last_comma_pos = text.rfind(',')
         last_dot_pos = text.rfind('.')

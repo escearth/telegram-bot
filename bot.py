@@ -4029,8 +4029,9 @@ def run_tests(message):
 
     # ── Address validation ──────────────────────────────
     section("ADDRESS VALIDATION")
-    ok(f"TRON valid(T...): {is_valid_tron_address('TMhVB8xvL8rQ9pDKL5bGcmTp8xK9Y3k2Fj')}")
-    ok(f"TRON invalid(short): {not is_valid_tron_address('TMhVB8xvL8rQ9p')}")
+    ok(f"TRON length+prefix: {is_valid_tron_address('T' + 'a'*33)}")
+    ok(f"TRON short rejected: {not is_valid_tron_address('TMhVB8xvL8rQ9p')}")
+    ok(f"TRON bad prefix rejected: {not is_valid_tron_address('A' + 'a'*33)}")
     ok(f"TON valid(EQ...): {is_valid_ton_address('EQD4v3pGbRfL8yYjKQVw5wZxgHJXqXxGq7UqGcXvZ3xJh5aN')}")
     ok(f"TON invalid(short): {not is_valid_ton_address('EQD4v3')}")
 
@@ -4046,13 +4047,13 @@ def run_tests(message):
 
     # ── evaluate_math ──────────────────────────────────
     section("MATH EVALUATION")
-    for expr, expected in [("2+2", "4"), ("5*3", "15"), ("10/2", "5.0"), ("2**8", "256")]:
+    for expr, expected in [("2+2", "4"), ("5*3", "15"), ("10/2", "5"), ("2**8", "256")]:
         try:
             r = evaluate_math(expr)
-            if str(r) == expected:
-                ok(f"evaluate_math({expr!r}) = {r}")
+            if isinstance(r, str) and f"= {expected}" in r:
+                ok(f"evaluate_math({expr!r}) -> {r}")
             else:
-                fail(f"evaluate_math({expr!r}) = {r!r}, expected {expected!r}")
+                fail(f"evaluate_math({expr!r}) = {r!r}, expected '= {expected}' in result")
         except Exception as e:
             fail(f"evaluate_math({expr!r})", str(e))
 

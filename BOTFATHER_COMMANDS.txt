@@ -30,6 +30,7 @@ set - Set or update your coin holdings
 alert - Set a price alert
 alerts - View and manage your alerts
 digest - Daily portfolio summary settings
+star - Telegram Stars price & conversion
 wallets - Manage your TRON wallets
 mywallets - Show wallet balances
 test - Run bot diagnostics (owner only)
