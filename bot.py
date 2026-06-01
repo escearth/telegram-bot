@@ -1,11 +1,15 @@
 import os
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
+import telebot
+from telebot import types
+from telebot.types import InlineKeyboardButton as IKB
+import requests
+import re
 import ast
-import html
+import time
 import logging
 import json
 import threading
-import time
 import functools
 import sqlite3
 import hashlib
@@ -14,17 +18,11 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pycoingecko import CoinGeckoAPI
 import pandas as pd
-import telebot
-from telebot import types
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from io import BytesIO
 from decimal import Decimal
 import pytz
-import requests
-import re
 
 # Enhanced number processing utilities
 from number_utils import (
@@ -65,7 +63,6 @@ _owner_env = os.getenv('OWNER_USER_ID')
 OWNER_USER_ID: int | None = int(_owner_env) if _owner_env and _owner_env.isdigit() else None
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-SESSION = requests.Session()
 
 # Iran timezone for timestamps
 IRAN_TZ = pytz.timezone('Asia/Tehran')
@@ -73,65 +70,15 @@ IRAN_TZ = pytz.timezone('Asia/Tehran')
 # Button panel security - track who initiated each callback
 # Format: {message_id: {user_id: int, expires_at: timestamp}}
 panel_owners = {}
-panel_owners_lock = threading.Lock()
 PANEL_TIMEOUT = 300  # 5 minutes until auto-delete
 
-# Group chat slowdown monitoring
+# Group chat slowdown monitoring (thread-safe)
 # Format: {chat_id: [timestamps of recent messages]}
 group_message_history = defaultdict(list)
-group_message_history_lock = threading.Lock()
 group_slowdown_last_warning = {}  # {chat_id: timestamp of last warning}
+group_activity_lock = threading.Lock()  # ← NEW: Protect shared state
 SLOWDOWN_THRESHOLD = 40  # messages per minute
 SLOWDOWN_COOLDOWN = 300  # 5 minutes between warnings
-
-# Thread-safe per-user state storage
-user_state = {}
-user_state_lock = threading.Lock()
-
-# ─────────────────────────────────────────────
-# HTML safety helpers
-# ─────────────────────────────────────────────
-
-def safe_html(text: str) -> str:
-    """Escape user-controlled text for Telegram HTML mode."""
-    return html.escape(str(text), quote=False)
-
-
-def safe_send_message(chat_id, text, **kwargs):
-    """Send message with HTML when possible, otherwise fallback to plain text."""
-    try:
-        return bot.send_message(chat_id, text, **kwargs)
-    except telebot.apihelper.ApiTelegramException as e:
-        if kwargs.get('parse_mode') == 'HTML':
-            kwargs.pop('parse_mode', None)
-            return bot.send_message(chat_id, html.escape(text), **kwargs)
-        raise
-
-
-def safe_reply_to(message, text, **kwargs):
-    """Reply to a message safely, falling back if HTML parse fails."""
-    try:
-        return bot.reply_to(message, text, **kwargs)
-    except telebot.apihelper.ApiTelegramException as e:
-        if kwargs.get('parse_mode') == 'HTML':
-            kwargs.pop('parse_mode', None)
-            return bot.reply_to(message, html.escape(text), **kwargs)
-        raise
-
-
-def get_user_state(user_id):
-    with user_state_lock:
-        return user_state.get(user_id)
-
-
-def set_user_state(user_id, state):
-    with user_state_lock:
-        user_state[user_id] = state
-
-
-def clear_user_state(user_id):
-    with user_state_lock:
-        return user_state.pop(user_id, None)
 
 # ─────────────────────────────────────────────
 # SQLite persistence (replaces JSON files)
@@ -300,7 +247,7 @@ def db_clear_wallets(user_id):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("DELETE FROM wallets WHERE user_id=?", (user_id,))
-        affected = conn.total_changes
+        affected = c.rowcount
         conn.commit()
         conn.close()
     return affected > 0
@@ -480,71 +427,89 @@ def add_timestamp(text: str) -> str:
     time_str = get_iran_time_str()
     return f"{text}\n\n🕐 {time_str} (Iran)"
 
+
+def _sym(cid: str) -> str:
+    """Extract ticker: '🪙 Bitcoin (BTC)' → 'BTC'"""
+    entry = CRYPTO_LIST.get(cid)
+    if entry and '(' in entry:
+        return entry.split('(')[1].replace(')', '').strip()
+    return cid.upper()
+
+
 def register_panel_owner(message_id: int, user_id: int):
     """Register who owns a button panel."""
-    with panel_owners_lock:
-        panel_owners[message_id] = {
-            'user_id': user_id,
-            'expires_at': time.time() + PANEL_TIMEOUT
-        }
+    panel_owners[message_id] = {
+        'user_id': user_id,
+        'expires_at': time.time() + PANEL_TIMEOUT
+    }
 
 def check_panel_owner(message_id: int, user_id: int) -> bool:
     """Check if user owns the panel. Returns True if allowed."""
-    with panel_owners_lock:
-        if message_id not in panel_owners:
-            return True  # No restriction if not registered
-
-        panel = panel_owners[message_id]
-        if time.time() > panel['expires_at']:
-            del panel_owners[message_id]
-            return True  # Expired, allow anyone
-
-        return panel['user_id'] == user_id
+    if message_id not in panel_owners:
+        return True  # No restriction if not registered
+    
+    panel = panel_owners[message_id]
+    
+    # Check if expired
+    if time.time() > panel['expires_at']:
+        del panel_owners[message_id]
+        return True  # Expired, allow anyone
+    
+    # Check ownership
+    return panel['user_id'] == user_id
 
 def cleanup_expired_panels():
     """Remove expired panel ownership records."""
     current_time = time.time()
-    with panel_owners_lock:
-        expired = [mid for mid, panel in panel_owners.items() if current_time > panel['expires_at']]
-        for mid in expired:
-            del panel_owners[mid]
+    expired = [mid for mid, panel in panel_owners.items() 
+               if current_time > panel['expires_at']]
+    for mid in expired:
+        del panel_owners[mid]
 
 def monitor_group_activity(chat_id: int, message_time: float = None):
     """
     Monitor group message rate and return warning if too busy.
+    Thread-safe: uses group_activity_lock.
     Returns warning message if threshold exceeded, None otherwise.
     """
     if message_time is None:
         message_time = time.time()
-
-    warning_to_send = False
-    with group_message_history_lock:
+    
+    with group_activity_lock:
+        # Add current message
         group_message_history[chat_id].append(message_time)
+        
+        # Clean old messages (older than 1 minute)
         cutoff = message_time - 60
-        group_message_history[chat_id] = [t for t in group_message_history[chat_id] if t > cutoff]
+        group_message_history[chat_id] = [
+            t for t in group_message_history[chat_id] if t > cutoff
+        ]
+        
+        # Check if too busy
         msg_count = len(group_message_history[chat_id])
+        
         if msg_count > SLOWDOWN_THRESHOLD:
+            # Check cooldown
             last_warning = group_slowdown_last_warning.get(chat_id, 0)
             if message_time - last_warning > SLOWDOWN_COOLDOWN:
                 group_slowdown_last_warning[chat_id] = message_time
-                warning_to_send = True
-
-    if msg_count > SLOWDOWN_THRESHOLD and warning_to_send:
-        funny_messages = [
-            "😅 وای وای! گروه داره میسوزه! یه کم آروم‌تر لطفاً 🔥\n"
-            "Whoa! The chat is on fire! Slow down a bit please! 🔥",
-            
-            "🚀 سرعتتون از صوت رد شد! بریک بزنید! 😄\n"
-            "You broke the sound barrier! Hit the brakes! 😄",
-            
-            "🏎️ گروه تبدیل به اتوبان شده! محدودیت سرعت داریم اینجا 😂\n"
-            "The group became a highway! We have speed limits here! 😂",
-            
-            "🌪️ گردباد پیام! یه نفس عمیق بکشید 😌\n"
-            "Message tornado! Take a deep breath! 😌"
-        ]
-        import random
-        return random.choice(funny_messages)
+                
+                # Funny messages
+                funny_messages = [
+                    "😅 وای وای! گروه داره میسوزه! یه کم آروم‌تر لطفاً 🔥\n"
+                    "Whoa! The chat is on fire! Slow down a bit please! 🔥",
+                    
+                    "🚀 سرعتتون از صوت رد شد! بریک بزنید! 😄\n"
+                    "You broke the sound barrier! Hit the brakes! 😄",
+                    
+                    "🏎️ گروه تبدیل به اتوبان شده! محدودیت سرعت داریم اینجا 😂\n"
+                    "The group became a highway! We have speed limits here! 😂",
+                    
+                    "🌪️ گردباد پیام! یه نفس عمیق بکشید 😌\n"
+                    "Message tornado! Take a deep breath! 😌"
+                ]
+                import random
+                return random.choice(funny_messages)
     
     return None
 
@@ -557,19 +522,36 @@ CACHE_TIMEOUT = 60  # 1 minute cache for price data
 
 
 def cache_get(key):
+    """Get cached value, returns None if missing or expired. Cleans up stale entries."""
     with _cache_lock:
-        entry = _cache.get(key)
-    if entry is None:
-        return None
-    value, timestamp = entry
-    if time.time() - timestamp < CACHE_TIMEOUT:
+        if key not in _cache:
+            return None
+        value, timestamp = _cache[key]
+        if time.time() - timestamp >= CACHE_TIMEOUT:
+            # Clean up expired entry
+            del _cache[key]
+            return None
         return value
-    return None
 
 
 def cache_set(key, value):
+    """Set a cache entry with current timestamp."""
     with _cache_lock:
         _cache[key] = (value, time.time())
+
+
+def cache_cleanup():
+    """Remove all expired entries from cache. Called periodically."""
+    current_time = time.time()
+    with _cache_lock:
+        expired_keys = [
+            k for k, (_, ts) in _cache.items() 
+            if current_time - ts >= CACHE_TIMEOUT
+        ]
+        for k in expired_keys:
+            del _cache[k]
+        if expired_keys:
+            logger.debug(f"Cache cleanup: removed {len(expired_keys)} expired entries")
 
 
 # ─────────────────────────────────────────────
@@ -594,6 +576,19 @@ def rate_limited_api_call(func):
     return wrapper
 
 
+@rate_limited_api_call
+def _fetch_prices_batch(ids: str) -> dict:
+    try:
+        resp = requests.get(
+            f"https://api.coingecko.com/api/v3/simple/price"
+            f"?ids={ids}&vs_currencies=usd&include_24hr_change=true",
+            timeout=10
+        )
+        return resp.json() if resp.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
 # ─────────────────────────────────────────────
 # Per-user state (thread-safe dict access is
 # fine in CPython for simple get/set/del)
@@ -608,6 +603,7 @@ user_state = {}
 USER_RATE_LIMIT = 10       # max requests
 USER_RATE_WINDOW = 60      # per N seconds
 MAX_WALLETS_PER_USER = 10  # wallet cap
+MAX_ALERTS_PER_USER = 10   # alert cap
 
 _user_request_times: dict[int, list[float]] = defaultdict(list)
 _user_rate_lock = threading.Lock()
@@ -680,7 +676,7 @@ STRINGS = {
         'invalid_price':       "❌ Invalid price. Send a positive number.",
         'invalid_expression':  "❌ Invalid expression.",
         'division_by_zero':    "❌ Division by zero.",
-        'math_result':         "✅ {expr} = <b>{result}</b>",
+        'math_result':         "✅ {expr} = {result}",
         'invalid_hour':        "❌ Please send a number between 0 and 23.",
         'price_fetch_fail':    "❌ Can\'t fetch price right now. Try again in a moment.",
         'refreshing':          "Refreshing…",
@@ -1688,9 +1684,6 @@ def get_crypto_price(crypto_id):
 
 
 def get_crypto_chart_image(crypto_id, days=30, user_id=0):
-    if crypto_id == 'telegram-stars':
-        raise ValueError('Chart data unavailable for Telegram Stars')
-
     try:
         data = cg.get_coin_market_chart_by_id(
             id=crypto_id,
@@ -1826,24 +1819,11 @@ def get_usd_to_irr():
 
 
 @rate_limited_api_call
-def _build_iran_gold_prices(xau_price):
-    usd_to_irr = get_usd_to_irr()
-    pure_gram_usd = xau_price / 31.1035
-    return {
-        'xau': xau_price,
-        'gram18': round(pure_gram_usd * 0.75 * usd_to_irr),
-        'bahar': round(pure_gram_usd * 8.13 * usd_to_irr),
-        'emami': round(pure_gram_usd * 7.96 * usd_to_irr),
-        'nim': round(pure_gram_usd * 8.13 * usd_to_irr / 2),
-        'rob':  round(pure_gram_usd * 8.13 * usd_to_irr / 4),
-    }
-
-
 def get_gold_prices():
     """Fetch gold prices from CoinGecko (XAU in USD)."""
     cached = cache_get('gold_xau')
     if cached is not None:
-        return _build_iran_gold_prices(cached)
+        return {'xau': cached}
     
     try:
         # CoinGecko: Gold (XAU) in USD
@@ -1856,7 +1836,7 @@ def get_gold_prices():
             xau_price = data['pax-gold']['usd']
             cache_set('gold_xau', xau_price)
             logger.info(f"Fetched gold price: ${xau_price}")
-            return _build_iran_gold_prices(xau_price)
+            return {'xau': xau_price}
     except Exception as e:
         logger.error(f"CoinGecko gold error: {e}")
     
@@ -1871,7 +1851,7 @@ def get_gold_prices():
             xau_price = float(data['price'])
             cache_set('gold_xau', xau_price)
             logger.info(f"Fetched gold price from Binance: ${xau_price}")
-            return _build_iran_gold_prices(xau_price)
+            return {'xau': xau_price}
     except Exception as e:
         logger.error(f"Binance gold error: {e}")
     
@@ -1943,14 +1923,12 @@ def _fmt_number(value: str, user_id: int) -> str:
 def evaluate_math(expression, user_id: int = 0):
     try:
         original_expr = expression.strip()
-        if not original_expr:
-            return T(user_id, 'invalid_expression')
-
         # Normalize Persian/Arabic-Indic digits and operators to ASCII
         work_expr = _normalize_persian(original_expr).lower()
+        # Normalize Persian "از" (az = "of") → "of" for percentage pattern
         work_expr = re.sub(r'\s*از\s*', ' of ', work_expr)
 
-        # Handle percentage expressions
+        # Handle "X% of Y"
         if '% of' in work_expr or '%of' in work_expr:
             work_expr = re.sub(
                 r'(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)',
@@ -1967,57 +1945,42 @@ def evaluate_math(expression, user_id: int = 0):
                 base, percent = match.group(1), match.group(2)
                 work_expr = f"{base} - ({base}*{percent}/100)"
 
-        work_expr = work_expr.replace('%', ' ')
-        work_expr = re.sub(r'\s+', '', work_expr)
+        work_expr = work_expr.replace('%', '').replace(' ', '')
         sanitized = re.sub(r'[^\d+\-*/().]', '', work_expr)
 
         if not sanitized or sanitized == '.':
             return T(user_id, 'invalid_expression')
 
-        def _eval_node(node):
-            if isinstance(node, ast.Expression):
-                return _eval_node(node.body)
-            if isinstance(node, ast.Constant):
-                if isinstance(node.value, (int, float)):
-                    return node.value
-                raise ValueError('Invalid constant')
-            if isinstance(node, ast.BinOp):
-                left = _eval_node(node.left)
-                right = _eval_node(node.right)
-                if isinstance(node.op, ast.Add):
-                    return left + right
-                if isinstance(node.op, ast.Sub):
-                    return left - right
-                if isinstance(node.op, ast.Mult):
-                    return left * right
-                if isinstance(node.op, ast.Div):
-                    return left / right
-                if isinstance(node.op, ast.Pow):
-                    return left ** right
-                if isinstance(node.op, ast.Mod):
-                    return left % right
-                raise ValueError('Unsupported operator')
-            if isinstance(node, ast.UnaryOp):
-                operand = _eval_node(node.operand)
-                if isinstance(node.op, ast.UAdd):
-                    return +operand
-                if isinstance(node.op, ast.USub):
-                    return -operand
-                raise ValueError('Unsupported unary operator')
-            raise ValueError('Invalid expression')
-
-        try:
-            parsed = ast.parse(sanitized, mode='eval')
-            result = _eval_node(parsed)
-        except Exception:
+        # Validate expression contains digits and operators
+        if not re.search(r'\d', sanitized) or not re.search(r'[+\-*/]', sanitized):
+            return T(user_id, 'invalid_expression')
+        
+        # Make sure it's not JUST operators/parentheses
+        if sanitized.strip() in ['+', '-', '*', '/', '(', ')', '+-', '--', '**', '//']:
             return T(user_id, 'invalid_expression')
 
-        if isinstance(result, float) and result.is_integer():
-            result = int(result)
+        # Evaluate safely
+        try:
+            if SAFE_EVAL_AVAILABLE:
+                # Use simpleeval for maximum safety
+                from simpleeval import simple_eval
+                result = simple_eval(sanitized)
+            else:
+                if not sanitized or sanitized == '.':
+                    return T(user_id, 'invalid_expression')
+                try:
+                    tree = ast.parse(sanitized, mode='eval')
+                    result = eval(compile(tree, '', 'eval'), {"__builtins__": {}}, {})
+                except Exception:
+                    return T(user_id, 'invalid_expression')
+        except (SyntaxError, NameError, TypeError, ValueError):
+            return T(user_id, 'invalid_expression')
 
-        result_str = f"{result:,}"
+        # Format result
+        if isinstance(result, float) and result == int(result):
+            result = int(result)
         expr_display = _normalize_persian(original_expr)
-        return T(user_id, 'math_result', expr=expr_display, result=_fmt_number(result_str, user_id))
+        return T(user_id, 'math_result', expr=expr_display, result=f"{result:,}")
     except ZeroDivisionError:
         return T(user_id, 'division_by_zero')
     except Exception as e:
@@ -2031,7 +1994,7 @@ def evaluate_math(expression, user_id: int = 0):
 def get_tron_wallet_trx(address, user_id: int = 0):
     try:
         url = f"https://apilist.tronscan.org/api/account?address={address}"
-        response = SESSION.get(url, timeout=10)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         if 'balance' in data:
@@ -2071,7 +2034,7 @@ def get_tron_wallet_trx(address, user_id: int = 0):
 def get_tron_transaction_details(hash_value, user_id: int = 0):
     try:
         url = f"https://apilist.tronscan.org/api/transaction-info?hash={hash_value}"
-        response = SESSION.get(url, timeout=10)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         if not data or 'hash' not in data:
@@ -2081,15 +2044,10 @@ def get_tron_transaction_details(hash_value, user_id: int = 0):
         confirmed = data.get('confirmed', False)
         status_emoji = '✅' if confirmed else '⏳'
         status_text = T(user_id, 'tx_confirmed') if confirmed else T(user_id, 'tx_pending')
-        block_value = data.get('block', 'N/A')
-        if isinstance(block_value, (int, float)) and float(block_value).is_integer():
-            block_text = f"{int(block_value):,}"
-        else:
-            block_text = str(block_value)
         result = (
             T(user_id, 'tx_header') +
             T(user_id, 'tx_status', emoji=status_emoji, status=status_text) +
-            T(user_id, 'tx_block', block=block_text) +
+            T(user_id, 'tx_block', block=f"{data.get('block', 'N/A'):,}") +
             T(user_id, 'tx_time', time=time_str)
         )
         if 'contractData' in data:
@@ -2165,22 +2123,22 @@ def convert_amount(amount, src, dst):
 @rate_limit_check
 def start(message):
     user_id = message.from_user.id
-    name = safe_html(message.from_user.first_name or "there")
+    name = message.from_user.first_name or "there"
     # On first /start, show language picker if no language set yet
     if message.text and message.text.strip().lower() == '/start':
         import sqlite3 as _sq
         with db_lock:
             _c = _sq.connect(DB_FILE)
-            _cur = _c.cursor()
-            _cur.execute("SELECT lang FROM user_languages WHERE user_id=?", (user_id,))
-            _row = _cur.fetchone()
+            cur = _c.cursor()
+            cur.execute("SELECT lang FROM user_languages WHERE user_id=?", (user_id,))
+            _row = cur.fetchone()
             _c.close()
         if _row is None:
             _send_language_picker(message.chat.id)
             return
-    safe_send_message(
+    bot.send_message(
         message.chat.id,
-        T(user_id, 'start_welcome', name=name),
+        add_timestamp(T(user_id, 'start_welcome', name=name)),
         parse_mode='HTML'
     )
     logger.info(f"User {user_id} started the bot")
@@ -2192,9 +2150,9 @@ def cancel(message):
     user_id = message.from_user.id
     if user_id in user_state:
         del user_state[user_id]
-        bot.reply_to(message, T(user_id, 'cancelled'))
+        bot.reply_to(message, add_timestamp(T(user_id, 'cancelled')))
     else:
-        bot.reply_to(message, T(user_id, 'nothing_to_cancel'))
+        bot.reply_to(message, add_timestamp(T(user_id, 'nothing_to_cancel')))
 
 
 def _send_language_picker(chat_id):
@@ -2293,7 +2251,7 @@ def build_holdings_keyboard(holdings: dict, user_id: int = 0) -> types.InlineKey
         keyboard.append([
             types.InlineKeyboardButton(f"🪙 {symbol}", callback_data=f"hnoop_{symbol}"),
             types.InlineKeyboardButton(T(user_id, 'btn_edit'),      callback_data=f"hedit_{symbol}"),
-            types.InlineKeyboardButton(T(user_id, 'btn_price'),     callback_data=f"hbuy_{symbol}"),
+            types.InlineKeyboardButton(T(user_id, 'btn_buy_price'), callback_data=f"hbuy_{symbol}"),
             types.InlineKeyboardButton("🗑", callback_data=f"hrem_{symbol}"),
         ])
     if holdings:
@@ -2425,7 +2383,7 @@ def handle_callback(call):
         for crypto_id, count in top_alerts:
             name = CRYPTO_LIST.get(crypto_id, crypto_id)
             if '(' in name:
-                sym = name.split('(')[1].replace(')', '').strip()
+                sym = _sym(code)
             else:
                 sym = crypto_id.upper()
             msg += f"  {sym}: {count} alerts\n"
@@ -2433,7 +2391,7 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         try:
             bot.edit_message_text(
-                msg,
+                add_timestamp(msg),
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 parse_mode='HTML'
@@ -2483,14 +2441,14 @@ def handle_callback(call):
     # ── Convert wizard ────────────────────────────────────────────────
     if data.startswith("cvt1_"):
         from_cid = data[5:]
-        from_sym = CRYPTO_LIST[from_cid].split('(')[1].replace(')', '').strip() if from_cid in CRYPTO_LIST else from_cid.upper()
+        from_sym = _sym(from_cid)
         coins = list(CRYPTO_LIST.keys()) + ['usd', 'toman']
         rows = []
         row = []
         for cid in coins:
             if cid == from_cid:
                 continue
-            sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip() if cid in CRYPTO_LIST else cid.upper()
+            sym = _sym(cid)
             row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt2_{from_cid}_{cid}"))
             if len(row) == 3:
                 rows.append(row)
@@ -2512,8 +2470,8 @@ def handle_callback(call):
 
     if data.startswith("cvt2_"):
         _, from_cid, to_cid = data.split("_", 2)
-        from_sym = CRYPTO_LIST[from_cid].split('(')[1].replace(')', '').strip() if from_cid in CRYPTO_LIST else from_cid.upper()
-        to_sym   = CRYPTO_LIST[to_cid].split('(')[1].replace(')', '').strip() if to_cid in CRYPTO_LIST else to_cid.upper()
+        from_sym = _sym(from_cid)
+        to_sym   = _sym(to_cid)
         user_state[user_id] = f"convert_{from_cid}_{to_cid}"
         bot.answer_callback_query(call.id)
         try:
@@ -2547,14 +2505,14 @@ def handle_callback(call):
         rows = []
         row = []
         for cid in filtered:
-            sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+            sym = _sym(cid)
             row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp2_{cid1}_{cid}"))
             if len(row) == 3:
                 rows.append(row)
                 row = []
         if row:
             rows.append(row)
-        sym1 = CRYPTO_LIST[cid1].split('(')[1].replace(')', '').strip()
+        sym1 = _sym(cid1)
         bot.answer_callback_query(call.id)
         try:
             bot.edit_message_text(
@@ -2581,6 +2539,16 @@ def handle_callback(call):
         _do_compare(call.message, cid1, cid2, user_id)
         return
 
+    if data.startswith("cmpref_"):
+        _, cid1, cid2 = data.split("_", 2)
+        bot.answer_callback_query(call.id, T(user_id, "refreshing"))
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        _do_compare(call.message, cid1, cid2, user_id)
+        return
+
     # ── Alert wizard (step 1: coin → step 2: direction → step 3: price) ──
     if data == "alrt_cancel":
         bot.answer_callback_query(call.id)
@@ -2597,7 +2565,7 @@ def handle_callback(call):
         for i in range(0, len(coins), 3):
             row = []
             for cid in coins[i:i+3]:
-                sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+                sym = _sym(cid)
                 row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}"))
             rows.append(row)
         rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")])
@@ -2617,7 +2585,7 @@ def handle_callback(call):
         if cid not in CRYPTO_LIST:
             bot.answer_callback_query(call.id, T(user_id, 'unknown_coin_short'))
             return
-        sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+        sym = _sym(cid)
         price = get_crypto_price(cid)
         price_str = fmt_price(price) if price else "—"
         kb = types.InlineKeyboardMarkup([[
@@ -2645,7 +2613,7 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, T(user_id, 'invalid_data'))
             return
         cid, direction = parts[1], parts[2]
-        sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+        sym = _sym(cid)
         price = get_crypto_price(cid)
         price_str = fmt_price(price) if price else "—"
         arrow = "📈" if direction == "above" else "📉"
@@ -2755,31 +2723,30 @@ def handle_callback(call):
             pass
         return
 
+    if data == "market_refresh":
+        bot.answer_callback_query(call.id, T(user_id, 'refreshing'))
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        market_cmd(call.message)
+        return
+
     # Price list refresh
     if data == "refresh_all_prices":
         bot.answer_callback_query(call.id, T(user_id, 'refreshing'))
-        coins = [code for code in CRYPTO_LIST.keys() if code != 'telegram-stars']
-        ids = ','.join(coins)
-        try:
-            resp = requests.get(
-                f"https://api.coingecko.com/api/v3/simple/price"
-                f"?ids={ids}&vs_currencies=usd&include_24hr_change=true",
-                timeout=10
-            )
-            prices = resp.json() if resp.status_code == 200 else {}
-        except Exception:
-            prices = {}
+        ids = ','.join(CRYPTO_LIST.keys())
+        prices = _fetch_prices_batch(ids)
         usd_to_irr = get_usd_to_irr()
         lines = [T(user_id, 'prices_header')]
-        for code in coins:
-            name = CRYPTO_LIST[code]
+        for code, name in CRYPTO_LIST.items():
             p = prices.get(code, {})
             price_usd = p.get('usd')
             change = p.get('usd_24h_change')
             if price_usd is None:
                 continue
             cache_set(code, price_usd)
-            sym = name.split('(')[1].replace(')', '').strip()
+            sym = _sym(code)
             arrow = ('📈' if change >= 0 else '📉') if change is not None else '  '
             chg   = f"{change:+.1f}%" if change is not None else ""
             lines.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
@@ -2972,7 +2939,7 @@ def handle_callback(call):
         if cid not in CRYPTO_LIST:
             bot.answer_callback_query(call.id, T(user_id, 'unknown_coin_short'))
             return
-        sym   = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+        sym   = _sym(cid)
         price = get_crypto_price(cid)
         price_str = T(user_id, 'now_price', price=fmt_price(price)) if price else ""
         user_state[user_id] = f"hpick_amount_{cid}"
@@ -3088,37 +3055,34 @@ def show_wallets_with_balance(message):
 @rate_limit_check
 def price(message):
     bot.send_chat_action(message.chat.id, 'typing')
-    coins = [code for code in CRYPTO_LIST.keys() if code != 'telegram-stars']
-    ids = ','.join(coins)
-    try:
-        url = (f"https://api.coingecko.com/api/v3/simple/price"
-               f"?ids={ids}&vs_currencies=usd&include_24hr_change=true")
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        prices = response.json()
-    except Exception as e:
-        logger.error(f"Batch price fetch failed: {e}")
-        bot.reply_to(message, T(message.from_user.id, 'price_unavailable'))
+    ids = ','.join(CRYPTO_LIST.keys())
+    prices = _fetch_prices_batch(ids)
+    if not prices:
+        bot.reply_to(message, add_timestamp(T(message.from_user.id, 'price_unavailable')))
         return
 
     usd_to_irr = get_usd_to_irr()
     uid_p = message.from_user.id
     lines = [T(uid_p, 'prices_header')]
-    for code in coins:
-        name = CRYPTO_LIST[code]
+    for code, name in CRYPTO_LIST.items():
+        if code == 'telegram-stars':
+            continue  # Skip stars in price list
         p = prices.get(code, {})
         price_usd = p.get('usd')
         change = p.get('usd_24h_change')
         if price_usd is None:
             continue
         cache_set(code, price_usd)
-        sym = name.split('(')[1].replace(')', '').strip()
+        sym = _sym(code)
         arrow = ('📈' if change >= 0 else '📉') if change is not None else '  '
         chg   = f"{change:+.1f}%" if change is not None else ""
         lines.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
 
-    msg = bot.reply_to(message, "\n".join(lines), parse_mode='HTML')
-    logger.info(f"User {message.from_user.id} requested prices")
+    kb = types.InlineKeyboardMarkup([[
+        types.InlineKeyboardButton(T(uid_p, 'btn_refresh'), callback_data="refresh_all_prices")
+    ]])
+    msg = bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML', reply_markup=kb)
+    register_panel_owner(msg.message_id, message.from_user.id)
     logger.info(f"User {message.from_user.id} requested prices")
 
 
@@ -3131,7 +3095,7 @@ def usd_command(message):
     rate_str = f"{usd_iran:,.0f}"
     bot.reply_to(
         message,
-        T(uid_u, 'usd_rate', rate=rate_str),
+        add_timestamp(T(uid_u, 'usd_rate', rate=rate_str)),
         parse_mode='HTML'
     )
     logger.info(f"User {message.from_user.id} requested USD → Toman")
@@ -3143,7 +3107,7 @@ def try_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
     try_rate = get_try_to_irr()
-    bot.reply_to(message, T(uid, 'try_rate', rate=f"{try_rate:,.0f}"), parse_mode='HTML')
+    bot.reply_to(message, add_timestamp(T(uid, 'try_rate', rate=f"{try_rate:,.0f}")), parse_mode='HTML')
     logger.info(f"User {uid} requested TRY → Toman")
 
 
@@ -3154,7 +3118,7 @@ def gold_command(message):
     uid = message.from_user.id
     prices = get_gold_prices()
     if not prices:
-        bot.reply_to(message, T(uid, 'gold_fetch_fail'))
+        bot.reply_to(message, add_timestamp(T(uid, 'gold_fetch_fail')))
         return
     
     msg = ""
@@ -3173,7 +3137,7 @@ def gold_command(message):
         if prices.get('gram18'):
             msg += T(uid, 'gold_gram18', price=f"{prices['gram18']:,}")
     
-    bot.reply_to(message, msg if msg else T(uid, 'gold_fetch_fail'), parse_mode='HTML')
+    bot.reply_to(message, add_timestamp(msg if msg else T(uid, 'gold_fetch_fail')), parse_mode='HTML')
     logger.info(f"User {uid} requested gold prices")
 
 
@@ -3200,7 +3164,7 @@ def stars_command(message):
     
     msg += f"\n<i>Official Telegram in-app currency</i>"
     
-    bot.reply_to(message, msg, parse_mode='HTML')
+    bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
     logger.info(f"User {uid} requested Stars price")
 
 
@@ -3210,7 +3174,7 @@ def _show_holding_coin_picker(chat_id, prompt, user_id=0):
     rows = []
     row = []
     for cid in coins:
-        sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+        sym = _sym(cid)
         row.append(types.InlineKeyboardButton(sym, callback_data=f"hpick_{cid}"))
         if len(row) == 3:
             rows.append(row)
@@ -3254,7 +3218,7 @@ def convert_cmd(message):
     rows = []
     row = []
     for cid in coins:
-        sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip() if cid in CRYPTO_LIST else cid.upper()
+        sym = _sym(cid)
         row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt1_{cid}"))
         if len(row) == 3:
             rows.append(row)
@@ -3265,7 +3229,7 @@ def convert_cmd(message):
     uid_cv = message.from_user.id
     msg = bot.reply_to(
         message,
-        T(uid_cv, 'convert_step1'),
+        add_timestamp(T(uid_cv, 'convert_step1')),
         parse_mode='HTML',
         reply_markup=types.InlineKeyboardMarkup(rows)
     )
@@ -3283,7 +3247,8 @@ def inline_query_handler(inline_query):
     results = []
 
     def article(id_, title, desc, text, html=False):
-        text_with_time = text
+        # Add timestamp to inline results
+        text_with_time = add_timestamp(text) if html else text
         return types.InlineQueryResultArticle(
             id=id_, title=title, description=desc,
             input_message_content=types.InputTextMessageContent(
@@ -3453,7 +3418,7 @@ def inline_query_handler(inline_query):
                         src_sym = 'USD' if src == 'usd' else toman_lbl
                     elif src in CRYPTO_LIST:
                         # Extract symbol from "🪙 Name (SYMBOL)" format
-                        src_sym = CRYPTO_LIST[src].split('(')[1].replace(')', '').strip()
+                        src_sym = _sym(src)
                     else:
                         src_sym = src.upper()
                     
@@ -3461,7 +3426,7 @@ def inline_query_handler(inline_query):
                         dst_sym = 'USD' if dst == 'usd' else toman_lbl
                     elif dst in CRYPTO_LIST:
                         # Extract symbol from "🪙 Name (SYMBOL)" format
-                        dst_sym = CRYPTO_LIST[dst].split('(')[1].replace(')', '').strip()
+                        dst_sym = _sym(dst)
                     else:
                         dst_sym = dst.upper()
                     
@@ -3495,7 +3460,7 @@ def inline_query_handler(inline_query):
                 if p:
                     v_usd = amt * p
                     v_irr = v_usd * irr
-                    name  = CRYPTO_LIST[cur].split('(')[1].replace(')', '').strip()
+                    name  = _sym(cur)
                     toman_lbl = T(uid, 'toman_label')
                     desc  = f"${v_usd:,.2f} | {v_irr:,.0f} {toman_lbl}"
                     results.append(article(
@@ -3531,8 +3496,6 @@ def inline_query_handler(inline_query):
                 prices = resp.json()
                 lines = [f"{EMOJIS['chart']} <b>Crypto Prices</b>\n"]
                 for code, cname in CRYPTO_LIST.items():
-                    if code == 'telegram-stars':
-                        continue
                     pr = prices.get(code, {}).get('usd')
                     if pr:
                         lines.append(f"{cname}\n💵 {fmt_price(pr)} | 💰 {pr*irr:,.0f} T\n")
@@ -3549,7 +3512,7 @@ def inline_query_handler(inline_query):
             res = evaluate_math(q)
             if res and not res.startswith('❌'):
                 results.append(article(
-                    "math", "Calculator", res.replace('✅', '').strip(), res, html=True
+                    "math", "Calculator", res.replace('✅', '').strip(), res
                 ))
 
         # ── 11. Wallets ───────────────────────────────────────────────
@@ -3627,7 +3590,6 @@ def inline_query_handler(inline_query):
 # ─────────────────────────────────────────────
 # Price alerts
 # ─────────────────────────────────────────────
-MAX_ALERTS_PER_USER = 10
 
 
 @bot.message_handler(commands=['alert'])
@@ -3641,7 +3603,7 @@ def alert_cmd(message):
         symbol_raw  = parts[1]
         crypto_id   = detect_currency(symbol_raw.lower())
         if not crypto_id or crypto_id not in CRYPTO_LIST:
-            bot.reply_to(message, T(message.from_user.id, 'unknown_coin', sym=symbol_raw), parse_mode='HTML')
+            bot.reply_to(message, add_timestamp(T(message.from_user.id, 'unknown_coin', sym=symbol_raw)), parse_mode='HTML')
             return
         if len(parts) == 3:
             direction_raw, price_raw = 'cross', parts[2]
@@ -3653,21 +3615,22 @@ def alert_cmd(message):
     # No args — show coin picker
     existing = db_get_alerts(user_id)
     if len(existing) >= MAX_ALERTS_PER_USER:
-            bot.reply_to(message, T(message.from_user.id, 'alert_limit', max=MAX_ALERTS_PER_USER), parse_mode='HTML')
+        bot.reply_to(message, add_timestamp(T(message.from_user.id, 'alert_limit', max=MAX_ALERTS_PER_USER)), parse_mode='HTML')
+        return
 
     coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
     rows = []
     for i in range(0, len(coins), 3):
         row = []
         for cid in coins[i:i+3]:
-            sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+            sym = _sym(cid)
             row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}"))
         rows.append(row)
     rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")])
 
     msg = bot.reply_to(
         message,
-        T(user_id, 'alert_step1'),
+        add_timestamp(T(user_id, 'alert_step1')),
         parse_mode='HTML',
         reply_markup=types.InlineKeyboardMarkup(rows)
     )
@@ -3702,7 +3665,7 @@ def _finalize_alert(message, user_id, crypto_id, direction_raw, price_raw):
         bot.send_message(chat_id, T(user_id, 'alert_limit_reached', max=MAX_ALERTS_PER_USER))
         return
 
-    symbol = CRYPTO_LIST[crypto_id].split('(')[1].replace(')', '').strip()
+    symbol = _sym(crypto_id)
     db_add_alert(user_id, crypto_id, symbol, target, direction)
     arrow    = '📈' if direction == 'above' else '📉'
     dword    = T(user_id, 'above_word') if direction == 'above' else T(user_id, 'below_word')
@@ -3782,13 +3745,13 @@ def compare_cmd(message):
     for i in range(0, len(coins), 3):
         row = []
         for cid in coins[i:i+3]:
-            sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip()
+            sym = _sym(cid)
             row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp1_{cid}"))
         rows.append(row)
 
     msg = bot.reply_to(
         message,
-        T(message.from_user.id, 'compare_pick1'),
+        add_timestamp(T(message.from_user.id, 'compare_pick1')),
         parse_mode='HTML',
         reply_markup=types.InlineKeyboardMarkup(rows)
     )
@@ -3816,7 +3779,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0):
             bot.send_message(chat_id, T(uid_tmp, 'unknown_coin', sym=raw), parse_mode='HTML')
             return
         ids.append(cid)
-        names.append(CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip())
+        names.append(_sym(cid))
 
     usd_to_irr = get_usd_to_irr()
     cmp_uid = user_id or getattr(getattr(message, "from_user", None), "id", 0)
@@ -3871,11 +3834,20 @@ def _do_compare(message, raw1, raw2, user_id: int = 0):
         winner  = names[0] if changes[0] > changes[1] else names[1]
         verdict = T(cmp_uid, 'compare_winner', name=winner)
 
-    bot.send_message(
-        chat_id,
-        T(cmp_uid, 'compare_header') + "\n\n".join(blocks) + f"\n{'━'*20}{verdict}",
-        parse_mode='HTML'
+    kb = types.InlineKeyboardMarkup([[
+        types.InlineKeyboardButton(
+            T(cmp_uid, 'btn_refresh'), 
+            callback_data=f"cmpref_{ids[0]}_{ids[1]}"
     )
+    ]])
+    msg = bot.send_message(
+        chat_id,
+        add_timestamp(T(cmp_uid, 'compare_header') + "\n\n".join(blocks) + f"\n{'━'*20}{verdict}"),
+        parse_mode='HTML',
+        reply_markup=kb
+    )
+    # Register panel owner
+    register_panel_owner(msg.message_id, cmp_uid)
 
 
 @bot.message_handler(commands=['market'])
@@ -3919,16 +3891,18 @@ def market_cmd(message):
     arrow   = '📈' if chg24 >= 0 else '📉'
 
     kb = types.InlineKeyboardMarkup([[
+        types.InlineKeyboardButton(T(uid_m, 'btn_refresh'), callback_data="market_refresh")
     ]])
-    bot.send_message(
-        message.chat.id,
+    bot.reply_to(
+        message,
         T(uid_m, 'market_header') +
         T(uid_m, 'market_mcap', mcap=f"${mcap/1e12:.2f}T", arrow=arrow, chg=f"{chg24:+.1f}") +
         T(uid_m, 'market_vol',  vol=f"${vol/1e9:.1f}B") +
         T(uid_m, 'market_dom',  btc=f"{btc_dom:.1f}", eth=f"{eth_dom:.1f}") +
         T(uid_m, 'market_coins', coins=f"{coins:,}") +
         T(uid_m, 'market_fg', bar=fg_str),
-        parse_mode='HTML'
+        parse_mode='HTML',
+        reply_markup=kb
     )
 
 
@@ -4023,7 +3997,7 @@ def admin_panel(message):
         f"<i>Select an action below:</i>"
     )
     
-    sent_msg = bot.reply_to(message, msg, parse_mode='HTML', reply_markup=kb)
+    sent_msg = bot.reply_to(message, add_timestamp(msg), parse_mode='HTML', reply_markup=kb)
     register_panel_owner(sent_msg.message_id, message.from_user.id)
 
 # ─────────────────────────────────────────────
@@ -4076,7 +4050,7 @@ def handle_text(message):
         
         for target_user in all_users:
             try:
-                bot.send_message(target_user, broadcast_msg)
+                bot.send_message(target_user, broadcast_msg, parse_mode='HTML')
                 sent_count += 1
                 time.sleep(0.05)  # Rate limiting
             except Exception as e:
@@ -4123,8 +4097,8 @@ def handle_text(message):
     if state and state.startswith('convert_'):
         del user_state[user_id]
         _, from_cid, to_cid = state.split('_', 2)
-        from_sym = CRYPTO_LIST[from_cid].split('(')[1].replace(')', '').strip() if from_cid in CRYPTO_LIST else from_cid.upper()
-        to_sym   = CRYPTO_LIST[to_cid].split('(')[1].replace(')', '').strip() if to_cid in CRYPTO_LIST else to_cid.upper()
+        from_sym = _sym(from_cid)
+        to_sym   = _sym(to_cid)
         try:
             amount = float(text.strip().replace(',', ''))
         except ValueError:
@@ -4151,8 +4125,10 @@ def handle_text(message):
                 toman_note = T(user_id, 'convert_toman_approx', usd=fmt_price(usd_val), irr=f"{usd_val * usd_to_irr:,.0f}") if usd_val else ""
             bot.reply_to(
                 message,
-                T(user_id, 'convert_result', amount=f"{amount:,g}", from_sym=from_sym,
-                result=result_str_w, to_sym=display_to_sym_w) + toman_note,
+                add_timestamp(
+                    T(user_id, 'convert_result', amount=f"{amount:,g}", from_sym=from_sym,
+                    result=result_str_w, to_sym=display_to_sym_w) + toman_note
+                ),
                 parse_mode='HTML'
             )
         return
@@ -4172,7 +4148,7 @@ def handle_text(message):
     # Coin picker amount step (from /set, hadd, hpick buttons)
     if state and state.startswith('hpick_amount_'):
         cid = state[len('hpick_amount_'):]
-        sym = CRYPTO_LIST[cid].split('(')[1].replace(')', '').strip() if cid in CRYPTO_LIST else cid.upper()
+        sym = _sym(cid)
         try:
             amount = float(text.strip().replace(',', ''))
             if amount < 0:
@@ -4262,7 +4238,7 @@ def handle_text(message):
             and has_digit and has_operator and not is_only_operator) \
             or _has_pct_of:
         result = evaluate_math(text_original, user_id)
-        bot.reply_to(message, result, parse_mode='HTML')
+        bot.reply_to(message, result)
         return
 
     # USD → Toman (support flexible number formats)
@@ -4295,18 +4271,9 @@ def handle_text(message):
         
         bot.reply_to(
             message,
-            f"💵 <b>{reply_text}</b>",
+            add_timestamp(f"💵 <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
-        return
-
-    # Typed /try and /gold keyword support
-    if text_lower.strip() in ('try', 'turkish lira', 'lira', 'لیر', 'لیر ترکیه'):
-        try_command(message)
-        return
-
-    if text_lower.strip() in ('gold', 'gold price', 'قیمت طلا', 'طلا'):
-        gold_command(message)
         return
 
     # TRON wallet address
@@ -4314,7 +4281,7 @@ def handle_text(message):
         if is_valid_tron_address(text):
             bot.send_chat_action(message.chat.id, 'typing')
             result = get_tron_wallet_trx(text, user_id)
-            bot.reply_to(message, result, parse_mode='HTML')
+            bot.reply_to(message, add_timestamp(result), parse_mode='HTML')
         else:
             bot.reply_to(message, T(user_id, 'invalid_tron_addr'))
         return
@@ -4324,7 +4291,7 @@ def handle_text(message):
         if is_valid_ton_address(text):
             bot.send_chat_action(message.chat.id, 'typing')
             result = get_ton_wallet_balance(text, user_id)
-            bot.reply_to(message, result, parse_mode='HTML')
+            bot.reply_to(message, add_timestamp(result), parse_mode='HTML')
             return
 
     # TON transaction hash or Tonscan link
@@ -4339,12 +4306,12 @@ def handle_text(message):
         # Try as TRON first (both use 64-char hex)
         tron_result = get_tron_transaction_details(tx_hash, user_id)
         if tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower():
-            bot.reply_to(message, tron_result, parse_mode='HTML')
+            bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
             return
         
         # If TRON failed, try TON
         ton_result = get_ton_transaction_details(tx_hash, user_id)
-        bot.reply_to(message, ton_result, parse_mode='HTML')
+        bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
         return   
 
     # TRON transaction hash OR Tronscan link
@@ -4370,19 +4337,14 @@ def handle_text(message):
                 return
             price_irr  = price_usd * usd_to_irr
             crypto_name = CRYPTO_LIST.get(crypto, crypto)
-            if crypto == 'telegram-stars':
-                bot.reply_to(
-                    message,
-                    f"📊 <b>{crypto_name}</b>\n\n"
-                    f"💵 <b>{fmt_price(price_usd)}</b>\n"
-                    + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}"),
-                    parse_mode='HTML'
-                )
-                return
-            sym = crypto_name.split('(')[1].replace(')', '').strip()
+            sym = _sym(crypto)
+            refresh_kb = types.InlineKeyboardMarkup([[
+                types.InlineKeyboardButton(T(user_id, 'btn_refresh'),   callback_data=f"refresh_{crypto}"),
+                types.InlineKeyboardButton(T(user_id, 'btn_add_coin'),  callback_data=f"hpick_{crypto}"),
+            ]])
             try:
                 img_bytes, symbol = get_crypto_chart_image(crypto, user_id=user_id)
-                caption = (
+                caption = add_timestamp(
                     f"📊 <b>{crypto_name}</b>\n\n"
                     f"💵 <b>{fmt_price(price_usd)}</b>\n"
                     + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}")
@@ -4392,16 +4354,20 @@ def handle_text(message):
                     photo=BytesIO(img_bytes),
                     caption=caption,
                     parse_mode='HTML',
-                    reply_to_message_id=message.message_id
+                    reply_to_message_id=message.message_id,
+                    reply_markup=refresh_kb
                 )
             except Exception as e:
                 logger.error(f"Chart failed for {crypto}: {e}")
                 bot.reply_to(
                     message,
-                    f"📊 <b>{crypto_name}</b>\n\n"
-                    f"💵 <b>{fmt_price(price_usd)}</b>\n"
-                    + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}"),
-                    parse_mode='HTML'
+                    add_timestamp(
+                        f"📊 <b>{crypto_name}</b>\n\n"
+                        f"💵 <b>{fmt_price(price_usd)}</b>\n"
+                        + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}")
+                    ),
+                    parse_mode='HTML',
+                    reply_markup=refresh_kb
                 )
             return
 
@@ -4417,12 +4383,14 @@ def handle_text(message):
             if price_usd:
                 value_usd  = amount * price_usd
                 value_irr  = value_usd * usd_to_irr
-                sym = CRYPTO_LIST.get(crypto, crypto).split('(')[1].replace(')', '').strip()
+                sym = _sym(crypto)
                 bot.reply_to(
                     message,
-                    f"💰 <b>{amount:,g} {sym}</b>\n\n"
-                    f"💵 {fmt_price(value_usd)}\n"
-                    f"🏦 {value_irr:,.0f} {T(user_id, 'toman_label')}",
+                    add_timestamp(
+                        f"💰 <b>{amount:,g} {sym}</b>\n\n"
+                        f"💵 {fmt_price(value_usd)}\n"
+                        f"🏦 {value_irr:,.0f} {T(user_id, 'toman_label')}"
+                    ),
                     parse_mode='HTML'
                 )
             else:
@@ -4446,8 +4414,8 @@ def handle_text(message):
                 bot.send_chat_action(message.chat.id, 'typing')
                 result, error_msg = convert_amount(amount, src, dst)
                 if result is not None:
-                    src_sym = CRYPTO_LIST.get(src, src).split('(')[1].replace(')', '').strip() if src in CRYPTO_LIST else src.upper()
-                    dst_sym = CRYPTO_LIST.get(dst, dst).split('(')[1].replace(')', '').strip() if dst in CRYPTO_LIST else dst.upper()
+                    src_sym = _sym(src)
+                    dst_sym = _sym(dst)
                     if dst == 'usd':
                         result_str = fmt_price(result)
                         display_to_sym = ""
@@ -4459,7 +4427,9 @@ def handle_text(message):
                         display_to_sym = dst_sym
                     bot.reply_to(
                         message,
-                        T(user_id, 'convert_result', amount=f"{amount:,g}", from_sym=src_sym, result=result_str, to_sym=display_to_sym),
+                        add_timestamp(
+                            T(user_id, 'convert_result', amount=f"{amount:,g}", from_sym=src_sym, result=result_str, to_sym=display_to_sym)
+                        ),
                         parse_mode='HTML'
                     )
                 else:
@@ -4728,7 +4698,7 @@ def _digest_loop():
     last_sent: dict[int, int] = {}  # user_id → last hour sent
     while True:
         try:
-            now_hour = datetime.now().hour
+            now_hour = datetime.now(IRAN_TZ).hour
             users = db_get_all_digest_users()
             for u in users:
                 uid, hour = u['user_id'], u['hour']

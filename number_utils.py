@@ -249,7 +249,31 @@ def format_wallet_balance(
 ) -> str:
     """
     Format wallet balance showing crypto + USD + Toman values.
-    Always uses English digits to avoid RTL display issues.
+    
+    Displays three lines:
+    - Crypto amount (up to 8 decimals, zeros stripped)
+    - USD value (2 decimals)
+    - Toman value (0 decimals)
+    
+    Args:
+        crypto_amount: Amount of cryptocurrency
+        crypto_symbol: Symbol (e.g., 'TRX', 'BTC')
+        usd_rate: Price per crypto in USD
+        toman_rate: USD to Toman exchange rate
+        user_lang: 'en' or 'fa' for digit localization (not used — always English to avoid RTL issues)
+        
+    Returns:
+        Formatted multi-line string
+        
+    Example:
+        >>> format_wallet_balance(
+        ...     Decimal('0.5'),
+        ...     'TRX',
+        ...     Decimal('0.28'),
+        ...     Decimal('60000'),
+        ...     'en'
+        ... )
+        '🪙 0.5 TRX\n💵 $0.14\n💰 8,400 تومان'
     """
     # Format crypto (up to 8 decimals, strip zeros)
     crypto_str = format_crypto(crypto_amount)
@@ -262,13 +286,13 @@ def format_wallet_balance(
     usd_str = format_fiat(usd_value)  # 2 decimals
     toman_str = format_fiat(toman_value, decimals=0)  # 0 decimals
     
-    # ⚠️ DO NOT apply locale conversion - always use English digits
-    # This prevents RTL display issues in Telegram
+    # ⚠️ Always use English digits (ignore user_lang) to prevent RTL display issues in Telegram
     
     # Build display
     result = f"🪙 {crypto_str} {crypto_symbol}\n"
     result += f"💵 ${usd_str}\n"
-    result += f"💰 {toman_str} Toman"
+    result += f"💰 {toman_str} تومان"
+    
     return result
 
 

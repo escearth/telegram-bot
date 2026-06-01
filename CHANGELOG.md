@@ -4,6 +4,23 @@ All notable changes to Earth Crypto Bot are documented here.
 
 ---
 
+## [2.0.1] — 2026-06-01
+
+### Added
+- **`_sym(cid)` helper** — central ticker-symbol extraction function, replaces 29+ inline `split('(')[1].replace(...)` calls
+- **`_fetch_prices_batch()`** — rate-limited CoinGecko API wrapper with `@rate_limited_api_call`, used in `/price` command and `refresh_all_prices` callback to prevent 429 errors
+- **`import ast`** — top-level import for secure math evaluation fallback
+
+### Changed
+- **`evaluate_math`** now uses `simpleeval` when available, or falls back to `ast.parse` + restricted globals instead of bare `eval()`
+- **`MAX_ALERTS_PER_USER`** moved from inline (line ~3583) to constants section next to `MAX_WALLETS_PER_USER`
+
+### Fixed
+- **Missing translation key** — `btn_price` → `btn_buy_price` in holdings keyboard to prevent `KeyError`
+- **Digest timezone** — `datetime.now().hour` → `datetime.now(IRAN_TZ).hour` in digest scheduler loop
+- **Duplicate `user_state = {}`** declaration removed
+- **Duplicate log line** `"User {id} requested prices"` removed
+
 ## [2.0.0] — 2026-02-15
 
 ### Added

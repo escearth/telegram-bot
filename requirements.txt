@@ -5,3 +5,4 @@ python-dotenv>=1.0.0
 pandas>=2.0.0
 matplotlib>=3.7.0
 pytz>=2024.1
+simpleeval>=1.0.0    # optional — for safe math evaluation in /calc and inline
