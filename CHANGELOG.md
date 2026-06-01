@@ -13,6 +13,7 @@ All notable changes to Earth Crypto Bot are documented here.
 - **`/test` command** — owner-only diagnostic that tests all features (DB, APIs, parsing, math, addresses, conversion) and returns a combined report
 - **`/admin` command** added to BotFather command list
 - **Refresh rate limiter** — `is_refresh_allowed()` with 10s cooldown and 30 refreshes/hour per user; owner exempt
+- **Colored inline buttons** — `style="danger"` (red) for delete/cancel, `style="success"` (green) for add/enable/confirm, `style="primary"` (blue) for navigation/refresh on all 69 inline keyboard buttons
 
 ### Changed
 - **`evaluate_math`** now uses `simpleeval` when available, or falls back to `ast.parse` + restricted globals instead of bare `eval()`
@@ -20,6 +21,7 @@ All notable changes to Earth Crypto Bot are documented here.
 - **Timestamps restored** on all refresh/callback outputs — `refresh_all_prices`, `refresh_{crypto}`, `market_refresh`, `cmpref_` now show `🕒 updated at HH:MM`
 - **Timestamps removed** from non-essential messages — start welcome, cancel, errors, wizard steps, admin panel no longer show timestamp
 - **`parse_number`** now handles thousand separators (`1.000.000`, `1,000,000`)
+- **`pyTelegramBotAPI`** minimum bumped to `>=4.31.0` (required for button `style` support)
 
 ### Fixed
 - **Missing translation key** — `btn_price` → `btn_buy_price` in holdings keyboard to prevent `KeyError`
