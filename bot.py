@@ -2138,7 +2138,7 @@ def start(message):
             return
     bot.send_message(
         message.chat.id,
-        add_timestamp(T(user_id, 'start_welcome', name=name)),
+        T(user_id, 'start_welcome', name=name),
         parse_mode='HTML'
     )
     logger.info(f"User {user_id} started the bot")
@@ -2150,9 +2150,9 @@ def cancel(message):
     user_id = message.from_user.id
     if user_id in user_state:
         del user_state[user_id]
-        bot.reply_to(message, add_timestamp(T(user_id, 'cancelled')))
+        bot.reply_to(message, T(user_id, 'cancelled'))
     else:
-        bot.reply_to(message, add_timestamp(T(user_id, 'nothing_to_cancel')))
+        bot.reply_to(message, T(user_id, 'nothing_to_cancel'))
 
 
 def _send_language_picker(chat_id):
@@ -3058,7 +3058,7 @@ def price(message):
     ids = ','.join(CRYPTO_LIST.keys())
     prices = _fetch_prices_batch(ids)
     if not prices:
-        bot.reply_to(message, add_timestamp(T(message.from_user.id, 'price_unavailable')))
+        bot.reply_to(message, T(message.from_user.id, 'price_unavailable'))
         return
 
     usd_to_irr = get_usd_to_irr()
@@ -3118,7 +3118,7 @@ def gold_command(message):
     uid = message.from_user.id
     prices = get_gold_prices()
     if not prices:
-        bot.reply_to(message, add_timestamp(T(uid, 'gold_fetch_fail')))
+        bot.reply_to(message, T(uid, 'gold_fetch_fail'))
         return
     
     msg = ""
@@ -3229,7 +3229,7 @@ def convert_cmd(message):
     uid_cv = message.from_user.id
     msg = bot.reply_to(
         message,
-        add_timestamp(T(uid_cv, 'convert_step1')),
+        T(uid_cv, 'convert_step1'),
         parse_mode='HTML',
         reply_markup=types.InlineKeyboardMarkup(rows)
     )
@@ -3603,7 +3603,7 @@ def alert_cmd(message):
         symbol_raw  = parts[1]
         crypto_id   = detect_currency(symbol_raw.lower())
         if not crypto_id or crypto_id not in CRYPTO_LIST:
-            bot.reply_to(message, add_timestamp(T(message.from_user.id, 'unknown_coin', sym=symbol_raw)), parse_mode='HTML')
+            bot.reply_to(message, T(message.from_user.id, 'unknown_coin', sym=symbol_raw), parse_mode='HTML')
             return
         if len(parts) == 3:
             direction_raw, price_raw = 'cross', parts[2]
@@ -3615,7 +3615,7 @@ def alert_cmd(message):
     # No args — show coin picker
     existing = db_get_alerts(user_id)
     if len(existing) >= MAX_ALERTS_PER_USER:
-        bot.reply_to(message, add_timestamp(T(message.from_user.id, 'alert_limit', max=MAX_ALERTS_PER_USER)), parse_mode='HTML')
+        bot.reply_to(message, T(message.from_user.id, 'alert_limit', max=MAX_ALERTS_PER_USER), parse_mode='HTML')
         return
 
     coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
@@ -3630,7 +3630,7 @@ def alert_cmd(message):
 
     msg = bot.reply_to(
         message,
-        add_timestamp(T(user_id, 'alert_step1')),
+        T(user_id, 'alert_step1'),
         parse_mode='HTML',
         reply_markup=types.InlineKeyboardMarkup(rows)
     )
@@ -3751,7 +3751,7 @@ def compare_cmd(message):
 
     msg = bot.reply_to(
         message,
-        add_timestamp(T(message.from_user.id, 'compare_pick1')),
+        T(message.from_user.id, 'compare_pick1'),
         parse_mode='HTML',
         reply_markup=types.InlineKeyboardMarkup(rows)
     )
@@ -4218,7 +4218,7 @@ def admin_panel(message):
         f"<i>Select an action below:</i>"
     )
     
-    sent_msg = bot.reply_to(message, add_timestamp(msg), parse_mode='HTML', reply_markup=kb)
+    sent_msg = bot.reply_to(message, msg, parse_mode='HTML', reply_markup=kb)
     register_panel_owner(sent_msg.message_id, message.from_user.id)
 
 # ─────────────────────────────────────────────
