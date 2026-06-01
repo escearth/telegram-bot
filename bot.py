@@ -950,6 +950,7 @@ STRINGS = {
         # ── /digest ───────────────────────────────────────────
         'digest_header':       "📅 <b>Daily Portfolio Digest</b>\n\n",
         'digest_status':       "Status: {status}\nSend time: <b>{hour}:00 Iran</b>\n\nPick a time below, or tap <b>Custom time</b> to enter your own hour (0-23, Iran time).",
+        'digest_enabled':      "✅ Enabled",
         'digest_disabled':     "❌ Disabled",
         'btn_enable':          "▶️ Enable",
         'btn_disable':         "⏹ Disable",
