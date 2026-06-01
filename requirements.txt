@@ -6,3 +6,4 @@ pandas>=2.0.0
 matplotlib>=3.7.0
 pytz>=2024.1
 simpleeval>=1.0.0    # optional — for safe math evaluation in /calc and inline
+telethon>=1.28.0     # optional — for fetching animated emoji IDs at startup

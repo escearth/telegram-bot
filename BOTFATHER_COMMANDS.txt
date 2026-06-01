@@ -33,6 +33,8 @@ digest - Daily portfolio summary settings
 star - Telegram Stars price & conversion
 wallets - Manage your TRON wallets
 mywallets - Show wallet balances
+suggest - Send feedback, bug report or suggestion
+donate - Support the project
 test - Run bot diagnostics (owner only)
 admin - Admin panel & broadcast (owner only)
 language - Change language / تغییر زبان
