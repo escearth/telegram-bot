@@ -12,16 +12,23 @@ All notable changes to Earth Crypto Bot are documented here.
 - **`import ast`** — top-level import for secure math evaluation fallback
 - **`/test` command** — owner-only diagnostic that tests all features (DB, APIs, parsing, math, addresses, conversion) and returns a combined report
 - **`/admin` command** added to BotFather command list
+- **Refresh rate limiter** — `is_refresh_allowed()` with 10s cooldown and 30 refreshes/hour per user; owner exempt
 
 ### Changed
 - **`evaluate_math`** now uses `simpleeval` when available, or falls back to `ast.parse` + restricted globals instead of bare `eval()`
 - **`MAX_ALERTS_PER_USER`** moved from inline (line ~3583) to constants section next to `MAX_WALLETS_PER_USER`
+- **Timestamps restored** on all refresh/callback outputs — `refresh_all_prices`, `refresh_{crypto}`, `market_refresh`, `cmpref_` now show `🕒 updated at HH:MM`
+- **Timestamps removed** from non-essential messages — start welcome, cancel, errors, wizard steps, admin panel no longer show timestamp
+- **`parse_number`** now handles thousand separators (`1.000.000`, `1,000,000`)
 
 ### Fixed
 - **Missing translation key** — `btn_price` → `btn_buy_price` in holdings keyboard to prevent `KeyError`
 - **Digest timezone** — `datetime.now().hour` → `datetime.now(IRAN_TZ).hour` in digest scheduler loop
 - **Duplicate `user_state = {}`** declaration removed
 - **Duplicate log line** `"User {id} requested prices"` removed
+- **Corrupting global replacements** — reversed over-aggressive `_cid`→`_sym(cid)` / `_cur`→`_sym(cur)` / `_crypto`→`_sym(crypto)` refactors that broke `from_cid`, `detect_currency`, `get_crypto_price`, `format_crypto`, `p_src`/`p_dst`
+- **`/test` expectations** — fixed `evaluate_math` and TRON address test assertions
+- **`refresh_{crypto}`** — replaced manual `updated_at` string with `add_timestamp()` for consistent formatting
 
 ## [2.0.0] — 2026-02-15
 

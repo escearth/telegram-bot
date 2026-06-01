@@ -604,6 +604,9 @@ USER_RATE_LIMIT = 10       # max requests
 USER_RATE_WINDOW = 60      # per N seconds
 MAX_WALLETS_PER_USER = 10  # wallet cap
 MAX_ALERTS_PER_USER = 10   # alert cap
+REFRESH_COOLDOWN = 10      # seconds between refreshes
+MAX_REFRESHES = 30         # max refreshes per window
+REFRESH_WINDOW = 3600      # window in seconds (1 hour)
 
 _user_request_times: dict[int, list[float]] = defaultdict(list)
 _user_rate_lock = threading.Lock()
@@ -624,6 +627,37 @@ def is_user_rate_limited(user_id: int) -> bool:
             return True
         _user_request_times[user_id].append(now)
         return False
+
+
+# ─────────────────────────────────────────────
+# Refresh-button rate limiter
+# Cooldown between refreshes + overall cap.
+# Owner is exempt.
+# ─────────────────────────────────────────────
+_last_refresh_time: dict[int, float] = {}
+_refresh_count: dict[int, list[float]] = defaultdict(list)
+_refresh_limit_lock = threading.Lock()
+
+
+def is_refresh_allowed(user_id: int) -> tuple[bool, str]:
+    """Returns (allowed, reason_if_blocked). Owner always allowed."""
+    if is_owner(user_id):
+        return True, ""
+    now = time.time()
+    with _refresh_limit_lock:
+        # Cooldown check
+        last = _last_refresh_time.get(user_id, 0)
+        if now - last < REFRESH_COOLDOWN:
+            wait = int(REFRESH_COOLDOWN - (now - last))
+            return False, T(user_id, 'refresh_cooldown', sec=wait)
+        # Overall limit check
+        times = _refresh_count[user_id]
+        _refresh_count[user_id] = [t for t in times if now - t < REFRESH_WINDOW]
+        if len(_refresh_count[user_id]) >= MAX_REFRESHES:
+            return False, T(user_id, 'refresh_limit_reached')
+        _refresh_count[user_id].append(now)
+        _last_refresh_time[user_id] = now
+        return True, ""
 
 
 def rate_limit_check(func):
@@ -680,6 +714,8 @@ STRINGS = {
         'invalid_hour':        "❌ Please send a number between 0 and 23.",
         'price_fetch_fail':    "❌ Can\'t fetch price right now. Try again in a moment.",
         'refreshing':          "Refreshing…",
+        'refresh_cooldown':    "⏳ Wait {sec}s before refreshing again.",
+        'refresh_limit_reached': "⚠️ Refresh limit reached. Try again later.",
         'generating_chart':    "Generating chart…",
         'fetching':            "Fetching…",
 
@@ -1006,6 +1042,8 @@ STRINGS = {
         'invalid_hour':        "❌ لطفاً عددی بین ۰ تا ۲۳ بفرستید.",
         'price_fetch_fail':    "❌ در حال حاضر امکان دریافت قیمت وجود ندارد. کمی بعد امتحان کنید.",
         'refreshing':          "در حال بروزرسانی…",
+        'refresh_cooldown':    "⏳ {sec} ثانیه صبر کنید.",
+        'refresh_limit_reached': "⚠️ محدودیت بروزرسانی. بعداً تلاش کنید.",
         'generating_chart':    "در حال ساخت نمودار…",
         'fetching':            "در حال دریافت…",
 
@@ -2541,6 +2579,10 @@ def handle_callback(call):
 
     if data.startswith("cmpref_"):
         _, cid1, cid2 = data.split("_", 2)
+        allowed, msg = is_refresh_allowed(user_id)
+        if not allowed:
+            bot.answer_callback_query(call.id, msg, show_alert=True)
+            return
         bot.answer_callback_query(call.id, T(user_id, "refreshing"))
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -2724,6 +2766,10 @@ def handle_callback(call):
         return
 
     if data == "market_refresh":
+        allowed, msg = is_refresh_allowed(user_id)
+        if not allowed:
+            bot.answer_callback_query(call.id, msg, show_alert=True)
+            return
         bot.answer_callback_query(call.id, T(user_id, 'refreshing'))
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -2734,6 +2780,10 @@ def handle_callback(call):
 
     # Price list refresh
     if data == "refresh_all_prices":
+        allowed, msg = is_refresh_allowed(user_id)
+        if not allowed:
+            bot.answer_callback_query(call.id, msg, show_alert=True)
+            return
         bot.answer_callback_query(call.id, T(user_id, 'refreshing'))
         ids = ','.join(CRYPTO_LIST.keys())
         prices = _fetch_prices_batch(ids)
@@ -2755,7 +2805,7 @@ def handle_callback(call):
         ]])
         try:
             bot.edit_message_text(
-                "\n".join(lines),
+                add_timestamp("\n".join(lines)),
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 parse_mode='HTML',
@@ -2768,6 +2818,10 @@ def handle_callback(call):
     # Price refresh button on chart messages
     if data.startswith("refresh_"):
         crypto = data[len("refresh_"):]
+        allowed, msg = is_refresh_allowed(user_id)
+        if not allowed:
+            bot.answer_callback_query(call.id, msg, show_alert=True)
+            return
         bot.answer_callback_query(call.id, T(user_id, 'refreshing'))
         # Invalidate cache for this coin
         with _cache_lock:
@@ -2783,8 +2837,8 @@ def handle_callback(call):
             types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data=f"refresh_{crypto}")
         ]])
         new_caption = (f"📊 {crypto_name}\n\n💵 <b>{fmt_price(price_usd)}</b>\n"
-                       + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}")
-                       + f"<i>{T(user_id, 'updated_at', time=datetime.now().strftime('%H:%M:%S'))}</i>")
+                       + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}"))
+        new_caption = add_timestamp(new_caption)
         try:
             bot.edit_message_caption(
                 caption=new_caption,
@@ -3895,12 +3949,14 @@ def market_cmd(message):
     ]])
     bot.reply_to(
         message,
-        T(uid_m, 'market_header') +
-        T(uid_m, 'market_mcap', mcap=f"${mcap/1e12:.2f}T", arrow=arrow, chg=f"{chg24:+.1f}") +
-        T(uid_m, 'market_vol',  vol=f"${vol/1e9:.1f}B") +
-        T(uid_m, 'market_dom',  btc=f"{btc_dom:.1f}", eth=f"{eth_dom:.1f}") +
-        T(uid_m, 'market_coins', coins=f"{coins:,}") +
-        T(uid_m, 'market_fg', bar=fg_str),
+        add_timestamp(
+            T(uid_m, 'market_header') +
+            T(uid_m, 'market_mcap', mcap=f"${mcap/1e12:.2f}T", arrow=arrow, chg=f"{chg24:+.1f}") +
+            T(uid_m, 'market_vol',  vol=f"${vol/1e9:.1f}B") +
+            T(uid_m, 'market_dom',  btc=f"{btc_dom:.1f}", eth=f"{eth_dom:.1f}") +
+            T(uid_m, 'market_coins', coins=f"{coins:,}") +
+            T(uid_m, 'market_fg', bar=fg_str)
+        ),
         parse_mode='HTML',
         reply_markup=kb
     )
