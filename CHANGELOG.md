@@ -22,6 +22,13 @@ All notable changes to Earth Crypto Bot are documented here.
 - **Timestamps removed** from non-essential messages — start welcome, cancel, errors, wizard steps, admin panel no longer show timestamp
 - **`parse_number`** now handles thousand separators (`1.000.000`, `1,000,000`)
 - **`pyTelegramBotAPI`** minimum bumped to `>=4.31.0` (required for button `style` support)
+- **Refresh cooldown** increased from 10s to 60s to match price update interval
+- **Holdings set is now additive** — typing an amount adds to existing holdings instead of replacing; confirmation shows both added amount and new total
+- **`market_cmd`** uses `send_message` instead of `reply_to` + delete, so market refresh no longer makes the message disappear
+
+### Fixed
+- **Duplicate "Add Another Coin" button** removed from holdings confirmation (was redundant with "Add Coin" already in keyboard)
+- **`market_refresh`** no longer deletes the original message before sending a new one — fixes disappearing market message
 
 ### Fixed
 - **Missing translation key** — `btn_price` → `btn_buy_price` in holdings keyboard to prevent `KeyError`

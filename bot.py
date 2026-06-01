@@ -832,6 +832,7 @@ STRINGS = {
         'price_chart_ylabel':  "Price (USD)",
         'portfolio_total':     "\n💰 <b>Total: {usd}</b> · {irr} Toman",
         'holding_set':         "✅ <b>{sym}</b> set to <b>{amount}</b>\n\n",
+        'holding_added':       "✅ Added <b>{amount}</b> {sym} (total: <b>{total}</b>)\n\n",
         'btn_add_coin':        "➕ Add Coin",
         'btn_add_another':     "➕ Add Another Coin",
         'btn_chart':           "📊 Chart",
@@ -1160,6 +1161,7 @@ STRINGS = {
         'price_chart_ylabel':  "قیمت (دلار)",
         'portfolio_total':     "\n💰 <b>جمع: {usd}</b> · {irr} تومان",
         'holding_set':         "✅ <b>{sym}</b> روی <b>{amount}</b> تنظیم شد\n\n",
+        'holding_added':       "✅ <b>{amount}</b> {sym} اضافه شد (جمع: <b>{total}</b>)\n\n",
         'btn_add_coin':        "➕ افزودن ارز",
         'btn_add_another':     "➕ افزودن ارز دیگر",
         'btn_chart':           "📊 نمودار",
@@ -2771,10 +2773,6 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, msg, show_alert=True)
             return
         bot.answer_callback_query(call.id, T(user_id, 'refreshing'))
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception:
-            pass
         market_cmd(call.message)
         return
 
@@ -3914,7 +3912,7 @@ def market_cmd(message):
         resp.raise_for_status()
         g = resp.json().get('data', {})
     except Exception:
-        bot.reply_to(message, T(uid_m, 'market_unavailable'))
+        bot.send_message(message.chat.id, T(uid_m, 'market_unavailable'))
         return
 
     try:
@@ -3947,8 +3945,8 @@ def market_cmd(message):
     kb = types.InlineKeyboardMarkup([[
         types.InlineKeyboardButton(T(uid_m, 'btn_refresh'), callback_data="market_refresh", style="primary")
     ]])
-    bot.reply_to(
-        message,
+    bot.send_message(
+        message.chat.id,
         add_timestamp(
             T(uid_m, 'market_header') +
             T(uid_m, 'market_mcap', mcap=f"${mcap/1e12:.2f}T", arrow=arrow, chg=f"{chg24:+.1f}") +
@@ -4435,20 +4433,18 @@ def handle_text(message):
             return  # keep state so user can retry
         del user_state[user_id]
         saved = db_get_holdings(user_id) or {}
-        saved[sym] = amount
+        old_amt = saved.get(sym, 0)
+        saved[sym] = old_amt + amount
         db_set_holdings(user_id, saved)
         usd_to_irr = get_usd_to_irr()
         buy_prices = db_get_buy_prices(user_id)
-        # Build keyboard with "Add Another" as first row
         inner_kb = build_holdings_keyboard(saved, user_id)
-        add_row = [types.InlineKeyboardButton(T(user_id, 'btn_add_another'), callback_data="hadd", style="success")]
-        full_kb = types.InlineKeyboardMarkup([add_row] + inner_kb.keyboard)
         bot.reply_to(
             message,
-            T(user_id, 'holding_set', sym=sym, amount=f"{amount:,g}") +
+            T(user_id, 'holding_added', sym=sym, amount=f"{amount:,g}", total=f"{saved[sym]:,g}") +
             holdings_message_text(saved, usd_to_irr, buy_prices, user_id),
             parse_mode='HTML',
-            reply_markup=full_kb
+            reply_markup=inner_kb
         )
         logger.info(f"User {user_id} updated holding: {sym}")
         return
