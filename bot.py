@@ -604,7 +604,7 @@ USER_RATE_LIMIT = 10       # max requests
 USER_RATE_WINDOW = 60      # per N seconds
 MAX_WALLETS_PER_USER = 10  # wallet cap
 MAX_ALERTS_PER_USER = 10   # alert cap
-REFRESH_COOLDOWN = 10      # seconds between refreshes
+REFRESH_COOLDOWN = 60      # seconds between refreshes (matches price update interval)
 MAX_REFRESHES = 30         # max refreshes per window
 REFRESH_WINDOW = 3600      # window in seconds (1 hour)
 
