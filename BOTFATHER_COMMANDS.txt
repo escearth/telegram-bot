@@ -32,6 +32,8 @@ alerts - View and manage your alerts
 digest - Daily portfolio summary settings
 wallets - Manage your TRON wallets
 mywallets - Show wallet balances
+test - Run bot diagnostics (owner only)
+admin - Admin panel & broadcast (owner only)
 language - Change language / تغییر زبان
 privacy - What data we store & how to delete it
 deleteaccount - Permanently delete all your data

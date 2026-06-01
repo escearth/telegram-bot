@@ -3948,6 +3948,226 @@ def is_owner(user_id: int) -> bool:
     """Check if user is the bot owner."""
     return OWNER_USER_ID and user_id == OWNER_USER_ID
 
+@bot.message_handler(commands=['test'])
+def run_tests(message):
+    """Owner-only diagnostic: test all features and return a combined report."""
+    if not is_owner(message.from_user.id):
+        bot.reply_to(message, "⛔ Owner only command.")
+        return
+
+    chat_id = message.chat.id
+    bot.send_chat_action(chat_id, 'typing')
+
+    results = []
+    failed = 0
+
+    def ok(text):
+        results.append(f"  ✅ {text}")
+
+    def fail(text, detail=""):
+        nonlocal failed
+        failed += 1
+        d = f" — {detail}" if detail else ""
+        results.append(f"  ❌ {text}{d}")
+
+    def section(title):
+        results.append(f"\n━━━ {title} ━━━")
+
+    # ── Database ──────────────────────────────────────────
+    section("DATABASE")
+    try:
+        with db_lock:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM user_languages")
+            conn.close()
+        ok("SQLite connection and user_languages table")
+    except Exception as e:
+        fail("SQLite", str(e))
+
+    # ── Imports & constants ──────────────────────────────
+    section("IMPORTS & CONSTANTS")
+    try:
+        from number_utils import parse_number, format_crypto, format_fiat
+        ok("number_utils imports")
+    except Exception as e:
+        fail("number_utils import", str(e))
+
+    ok(f"OWNER_USER_ID = {OWNER_USER_ID}" if OWNER_USER_ID else "OWNER_USER_ID not set")
+    ok(f"FALLBACK_USD_TO_IRR = {FALLBACK_USD_TO_IRR}")
+    ok(f"{len(CRYPTO_LIST)} coins in CRYPTO_LIST")
+    ok(f"{len(CRYPTO_ALIASES)} aliases in CRYPTO_ALIASES")
+    ok(f"MAX_ALERTS_PER_USER = {MAX_ALERTS_PER_USER}")
+    ok(f"MAX_WALLETS_PER_USER = {MAX_WALLETS_PER_USER}")
+
+    # ── Number parsing ──────────────────────────────────
+    section("NUMBER PARSING")
+    test_cases = [
+        ("1.000.000",      "European millions"),
+        ("1,000,000",      "US millions"),
+        ("1.234,56",       "European decimal"),
+        ("1,234.56",       "US decimal"),
+        ("۱۲۳٬۴۵۶",       "Persian"),
+        ("0.00012300",     "Small with trailing zeros"),
+    ]
+    for raw, label in test_cases:
+        try:
+            r = parse_number(raw)
+            if r is not None:
+                ok(f"parse_number({raw!r}) = {r}  ({label})")
+            else:
+                fail(f"parse_number({raw!r}) returned None  ({label})")
+        except Exception as e:
+            fail(f"parse_number({raw!r})  ({label})", str(e))
+
+    try:
+        f = format_crypto(Decimal("0.00012300"))
+        assert f == "0.000123", f"Expected '0.000123', got {f!r}"
+        ok(f"format_crypto(0.00012300) = {f!r}")
+    except Exception as e:
+        fail("format_crypto", str(e))
+
+    # ── Address validation ──────────────────────────────
+    section("ADDRESS VALIDATION")
+    ok(f"TRON valid(T...): {is_valid_tron_address('TMhVB8xvL8rQ9pDKL5bGcmTp8xK9Y3k2Fj')}")
+    ok(f"TRON invalid(short): {not is_valid_tron_address('TMhVB8xvL8rQ9p')}")
+    ok(f"TON valid(EQ...): {is_valid_ton_address('EQD4v3pGbRfL8yYjKQVw5wZxgHJXqXxGq7UqGcXvZ3xJh5aN')}")
+    ok(f"TON invalid(short): {not is_valid_ton_address('EQD4v3')}")
+
+    # ── detect_currency ─────────────────────────────────
+    section("CURRENCY DETECTION")
+    for alias, expected in [("btc", "bitcoin"), ("بیتکوین", "bitcoin"), ("تومان", "toman"), ("دلار", "usd")]:
+        try:
+            r = detect_currency(alias)
+            status = ok if r == expected else fail
+            status(f"detect_currency({alias!r}) = {r!r}")
+        except Exception as e:
+            fail(f"detect_currency({alias!r})", str(e))
+
+    # ── evaluate_math ──────────────────────────────────
+    section("MATH EVALUATION")
+    for expr, expected in [("2+2", "4"), ("5*3", "15"), ("10/2", "5.0"), ("2**8", "256")]:
+        try:
+            r = evaluate_math(expr)
+            if str(r) == expected:
+                ok(f"evaluate_math({expr!r}) = {r}")
+            else:
+                fail(f"evaluate_math({expr!r}) = {r!r}, expected {expected!r}")
+        except Exception as e:
+            fail(f"evaluate_math({expr!r})", str(e))
+
+    # ── API connectivity ───────────────────────────────
+    section("API CONNECTIVITY")
+
+    # CoinGecko direct
+    try:
+        resp = requests.get("https://api.coingecko.com/api/v3/ping", timeout=10)
+        ok(f"CoinGecko ping: HTTP {resp.status_code}")
+    except Exception as e:
+        fail("CoinGecko ping", str(e))
+
+    # Single price fetch via batch
+    try:
+        price_data = _fetch_prices_batch("bitcoin")
+        if price_data and "bitcoin" in price_data:
+            btc_price = price_data["bitcoin"].get("usd", 0)
+            ok(f"BTC price: ${btc_price}")
+        else:
+            fail("Fetch BTC price — empty response")
+    except Exception as e:
+        fail("Fetch BTC price", str(e))
+
+    # USD to IRR
+    try:
+        rate = get_usd_to_irr()
+        ok(f"USD/IRR rate: {rate:,}")
+    except Exception as e:
+        fail("USD/IRR rate", str(e))
+
+    # CryptoCompare fallback
+    try:
+        resp = requests.get("https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD", timeout=10)
+        ok(f"CryptoCompare: HTTP {resp.status_code}")
+    except Exception as e:
+        fail("CryptoCompare", str(e))
+
+    # Gold prices
+    try:
+        gold = get_gold_prices()
+        ok(f"Gold data received ({len(gold)} keys)")
+    except Exception as e:
+        fail("Gold prices", str(e))
+
+    # ── All crypto prices (batch) ──────────────────────
+    section("ALL CRYPTO PRICES")
+    all_ids = ",".join(k for k in CRYPTO_LIST if k != "telegram-stars")
+    try:
+        all_prices = _fetch_prices_batch(all_ids)
+        if all_prices:
+            ok(f"Batch price fetch returned {len(all_prices)} coins")
+            for cid in CRYPTO_LIST:
+                if cid in all_prices:
+                    p = all_prices[cid].get("usd", 0)
+                    chg = all_prices[cid].get("usd_24h_change")
+                    chg_str = f" ({chg:+.2f}%)" if chg is not None else ""
+                    ok(f"  {_sym(cid)}: ${p}{chg_str}")
+                elif cid == "telegram-stars":
+                    ok(f"  STARS: $0.015 (official rate)")
+                else:
+                    fail(f"  {_sym(cid)} — not in response")
+        else:
+            fail("Batch price fetch returned empty")
+    except Exception as e:
+        fail("Batch price fetch", str(e))
+
+    # ── Convert amount ─────────────────────────────────
+    section("CONVERSION")
+    for amt, src, dst, label in [
+        (1, "usd", "toman", "USD → Toman"),
+        (100_000, "toman", "usd", "Toman → USD"),
+        (1, "bitcoin", "usd", "BTC → USD"),
+        (1, "ethereum", "toman", "ETH → Toman"),
+    ]:
+        try:
+            r, err = convert_amount(float(amt), src, dst)
+            if err:
+                fail(f"{label}: {err}")
+            else:
+                ok(f"{label}: {amt} {src} = {r:.4f} {dst}")
+        except Exception as e:
+            fail(label, str(e))
+
+    # ── Cache ──────────────────────────────────────────
+    section("CACHE")
+    try:
+        cache_set("_test_key", "ok")
+        v = cache_get("_test_key")
+        ok(f"Cache set/get: {v!r}")
+    except Exception as e:
+        fail("Cache", str(e))
+
+    # ── Timestamp ──────────────────────────────────────
+    section("TIMESTAMP")
+    ts = add_timestamp("test")
+    ok(f"add_timestamp() produces time (length {len(ts)})")
+
+    # ── Summary ──────────────────────────────────────
+    section("SUMMARY")
+    total = len([l for l in results if l.startswith("  ✅") or l.startswith("  ❌")])
+    passed = total - failed
+    pct = (passed / total * 100) if total else 0
+    results.append(f"\n  {passed}/{total} tests passed ({pct:.0f}%)")
+    if failed == 0:
+        results.append("\n  🎉 All tests passed!")
+    else:
+        results.append(f"\n  ⚠️  {failed} test(s) failed — check the ❌ entries above.")
+
+    report = "🔬 <b>Bot Diagnostic Report</b>\n" + "\n".join(results)
+
+    # Split long messages (Telegram 4096 limit)
+    for chunk in [report[i:i+4000] for i in range(0, len(report), 4000)]:
+        bot.send_message(chat_id, chunk, parse_mode='HTML')
+
 @bot.message_handler(commands=['admin'])
 def admin_panel(message):
     global _cache

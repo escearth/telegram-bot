@@ -10,6 +10,8 @@ All notable changes to Earth Crypto Bot are documented here.
 - **`_sym(cid)` helper** — central ticker-symbol extraction function, replaces 29+ inline `split('(')[1].replace(...)` calls
 - **`_fetch_prices_batch()`** — rate-limited CoinGecko API wrapper with `@rate_limited_api_call`, used in `/price` command and `refresh_all_prices` callback to prevent 429 errors
 - **`import ast`** — top-level import for secure math evaluation fallback
+- **`/test` command** — owner-only diagnostic that tests all features (DB, APIs, parsing, math, addresses, conversion) and returns a combined report
+- **`/admin` command** added to BotFather command list
 
 ### Changed
 - **`evaluate_math`** now uses `simpleeval` when available, or falls back to `ast.parse` + restricted globals instead of bare `eval()`
