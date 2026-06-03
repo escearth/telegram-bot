@@ -5191,20 +5191,27 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
 
     usd_to_irr = get_usd_to_irr()
     cmp_uid = user_id or getattr(getattr(message, "from_user", None), "id", 0)
-    # Use cached get_crypto_price — avoids separate CoinGecko call and 429s
-    # For 24h change we do one batched call but fall back gracefully on 429
-    change_data = {}
-    try:
-        resp = requests.get(
-            f"https://api.coingecko.com/api/v3/simple/price"
-            f"?ids={','.join(ids)}&vs_currencies=usd"
-            f"&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true",
-            timeout=10
-        )
-        if resp.status_code == 200:
-            change_data = resp.json()
-    except Exception:
-        pass  # fall back to price-only mode below
+    
+    # Multi-source 24h change via batch fallback
+    batch = _fetch_prices_batch(','.join(ids))
+    
+    # Vol & market cap only from CoinGecko (nice-to-have, fall back to —)
+    extra = {}
+    for attempt in range(2):
+        try:
+            r = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price"
+                f"?ids={','.join(ids)}&vs_currencies=usd"
+                f"&include_market_cap=true&include_24hr_vol=true",
+                timeout=8
+            )
+            if r.status_code == 200:
+                extra = r.json()
+                break
+            elif r.status_code == 429:
+                time.sleep(2)
+        except Exception:
+            break
 
     blocks = []
     prices = []
@@ -5212,10 +5219,11 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
     for cid, name in zip(ids, names):
         price  = get_crypto_price(cid) or 0
         prices.append(price)
-        cd     = change_data.get(cid, {})
-        change = cd.get('usd_24h_change')
-        mcap   = cd.get('usd_market_cap', 0)
-        vol    = cd.get('usd_24h_vol', 0)
+        bp = batch.get(cid, {})
+        change = bp.get('usd_24h_change')
+        cd = extra.get(cid, {})
+        mcap = cd.get('usd_market_cap', 0)
+        vol = cd.get('usd_24h_vol', 0)
         changes.append(change or 0)
         arrow  = '📈' if (change or 0) >= 0 else '📉'
         # Format change in English always (not Persian digits)
@@ -5265,13 +5273,23 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
 def market_cmd(message, user_id=None, edit_msg_id=None):
     uid_m = user_id or message.from_user.id
     bot.send_chat_action(message.chat.id, 'typing')
-    try:
-        resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
-        resp.raise_for_status()
-        g = resp.json().get('data', {})
-    except Exception:
-        bot.send_message(message.chat.id, T(uid_m, 'market_unavailable'))
-        return
+    
+    cached_global = cache_get('market_global_data')
+    if cached_global:
+        g = cached_global
+    else:
+        try:
+            resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+            if resp.status_code == 200:
+                g = resp.json().get('data', {})
+                cache_set('market_global_data', g, ttl=300)
+            else:
+                g = {}
+        except Exception:
+            g = {}
+        if not g:
+            bot.send_message(message.chat.id, T(uid_m, 'market_unavailable'))
+            return
 
     try:
         fg_resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=8)
