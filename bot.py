@@ -771,16 +771,19 @@ def rate_limited_api_call(func):
 
 @rate_limited_api_call
 def _fetch_prices_coingecko(ids) -> dict:
+    if cache_get('cg_rate_limited'):
+        return {}
     for attempt in range(2):
         try:
             resp = requests.get(
                 f"https://api.coingecko.com/api/v3/simple/price"
                 f"?ids={ids}&vs_currencies=usd&include_24hr_change=true",
-                timeout=10
+                timeout=8
             )
             if resp.status_code == 200:
                 return resp.json()
             elif resp.status_code == 429:
+                cache_set('cg_rate_limited', True, ttl=60)
                 time.sleep(2)
         except Exception as e:
             logger.error(f"CoinGecko batch error: {e}")
@@ -2111,19 +2114,22 @@ def get_crypto_price(crypto_id):
         return cached
     
     # 1) CoinGecko
-    try:
-        resp = requests.get(
-            f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd",
-            timeout=8
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if crypto_id in data:
-                price = data[crypto_id]['usd']
-                cache_set(crypto_id, price)
-                return price
-    except Exception:
-        pass
+    if not cache_get('cg_rate_limited'):
+        try:
+            resp = requests.get(
+                f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd",
+                timeout=8
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if crypto_id in data:
+                    price = data[crypto_id]['usd']
+                    cache_set(crypto_id, price)
+                    return price
+            elif resp.status_code == 429:
+                cache_set('cg_rate_limited', True, ttl=60)
+        except Exception:
+            pass
     
     # 2) Binance
     try:
@@ -5265,22 +5271,28 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
     uid_m = user_id or message.from_user.id
     bot.send_chat_action(message.chat.id, 'typing')
     
-    cached_global = cache_get('market_global_data')
-    if cached_global:
-        g = cached_global
-    else:
-        try:
-            resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
-            if resp.status_code == 200:
-                g = resp.json().get('data', {})
-                cache_set('market_global_data', g, ttl=300)
-            else:
-                g = {}
-        except Exception:
-            g = {}
-        if not g:
-            bot.send_message(message.chat.id, T(uid_m, 'market_unavailable'))
-            return
+    # Try fresh data first, fall back to any cached (up to 1h stale)
+    g = cache_get('market_global_data')
+    if not g:
+        for attempt in range(2):
+            try:
+                resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=8)
+                if resp.status_code == 200:
+                    g = resp.json().get('data', {})
+                    if g:
+                        cache_set('market_global_data', g, ttl=300)
+                        cache_set('market_global_data_stale', g, ttl=3600)
+                    break
+                elif resp.status_code == 429:
+                    cache_set('cg_rate_limited', True, ttl=60)
+                    time.sleep(2)
+            except Exception:
+                break
+    if not g:
+        g = cache_get('market_global_data_stale')
+    if not g:
+        bot.send_message(message.chat.id, T(uid_m, 'market_unavailable'))
+        return
 
     try:
         fg_resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=8)
