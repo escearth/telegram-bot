@@ -4244,22 +4244,22 @@ def _fragment_collection_floor(slug):
     if cached:
         return cached
     try:
-        resp = requests.get(f'https://fragment.com/gifts/{slug}', timeout=10,
+        resp = requests.get(f'https://fragment.com/gifts/{slug}?filter=sale', timeout=10,
                             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
         if resp.status_code != 200:
             return None
         html = resp.text
         floor = None
         total = None
-        m = re.search(r'tm-value[^>]*icon-ton[^>]*>([\d.,]+)', html)
+        # All TON prices listed for this collection; floor = minimum
+        prices = [float(m.group(1).replace(',', ''))
+                  for m in re.finditer(r'tm-value[^>]*icon-ton[^>]*>([\d.,]+)', html)]
+        if prices:
+            floor = str(min(prices))
+        # Collection total count from the sidebar filter
+        m = re.search(rf'data-value=\"{slug}\"[^>]*>.*?tm-main-filters-count[^>]*>([\d.,]+)', html, re.DOTALL)
         if m:
-            floor = m.group(1).replace(',', '')
-        # Total items: look for "X items" near first filter count
-        for m in re.finditer(r'(\d+[\d,.]*)\s*items?', html, re.IGNORECASE):
-            if total is None:
-                total = m.group(1).replace(',', '')
-            else:
-                break  # first one is the unfiltered total
+            total = m.group(1).replace(',', '')
         result = {'slug': slug, 'floor_ton': floor, 'total': total}
         cache_set(cache_key, result, ttl=FRAGMENT_CACHE_TTL)
         return result
