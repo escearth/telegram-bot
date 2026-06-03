@@ -1,0 +1,33 @@
+start - Welcome & help
+price - All coin prices with 24h change
+chart - Price chart (e.g. /chart btc, /chart btc 90d)
+compare - Compare two coins (/compare btc eth, add --chart for overlay)
+market - Fear & Greed overview
+trending - Top 10 trending coins on CoinGecko
+gainers - Top gainers in 24h
+losers - Top losers in 24h
+gold - Gold prices (XAU/USD)
+convert - Coins · USD · Toman converter
+usd - USD to Toman rate
+try - TRY to Toman rate
+star - Telegram Stars price
+setexchange - Default price source (Coingecko/Binance/Crypto.com/Kraken)
+holdings - Portfolio P&L snapshot
+set - Update your holdings
+digest - Daily summary settings
+alert - Set a new price alert
+alerts - Manage your alerts
+wallets - Manage TRON addresses
+mywallets - Live TRX balances
+clearwallets - Remove all saved wallets
+fragment - Look up a Telegram username on Fragment.com
+gifts - List Telegram gift collections
+gift - View gift collection details (e.g. /gift astralshard)
+suggest - Send feedback or bug report
+donate - Support the project
+privacy - Privacy & data policy
+deleteaccount - Delete all your data
+language - Change language (English / فارسی)
+cancel - Cancel current operation
+test - Run self-diagnostic tests
+admin - Bot owner panel
