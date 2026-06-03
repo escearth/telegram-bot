@@ -11,10 +11,11 @@ import logging
 import json
 import threading
 import functools
+import sys
 import sqlite3
 import hashlib
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from dotenv import load_dotenv
 from pycoingecko import CoinGeckoAPI
 import pandas as pd
@@ -22,6 +23,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from io import BytesIO
 from decimal import Decimal
+import random
 import pytz
 
 # Enhanced number processing utilities
@@ -100,7 +102,8 @@ def _is_joined_channel(user_id: int) -> bool | None:
         chat_id = REQUIRED_CHANNEL
         member = bot.get_chat_member(chat_id, user_id)
         result = member.status in ('member', 'administrator', 'creator')
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to check channel membership for user {user_id}: {e}")
         result = False
     with _joined_cache_lock:
         _joined_cache[user_id] = (result, time.time())
@@ -125,9 +128,7 @@ def _send_join_required(chat_id: int):
 # ── Animated emoji setup ──────────────────────────────────────────────
 ensure_emoji_map(logger)
 
-import re as _re  # used by _strip_emoji_tags below
-
-_TG_EMOJI_RE = _re.compile(r'<tg-emoji[^>]*>|</tg-emoji>')
+_TG_EMOJI_RE = re.compile(r'<tg-emoji[^>]*>|</tg-emoji>')
 
 def _strip_emoji_tags(text: str) -> str:
     """Remove <tg-emoji ...> and </tg-emoji> tags, leaving the emoji char."""
@@ -183,8 +184,8 @@ def _emoji_send_photo(chat_id, photo, **kwargs):
         emoji_caption = apply_emoji(caption)
         try:
             return _orig_send_photo(chat_id, photo, **{**kwargs, 'caption': emoji_caption})
-        except Exception as e:
-            kwargs['caption'] = caption  # restore original (pulled from inner-except scope)
+        except Exception:
+            pass
     return _orig_send_photo(chat_id, photo, **kwargs)
 
 def _emoji_edit_message_caption(**kwargs):
@@ -193,8 +194,8 @@ def _emoji_edit_message_caption(**kwargs):
         emoji_caption = apply_emoji(caption)
         try:
             return _orig_edit_message_caption(**{**kwargs, 'caption': emoji_caption})
-        except Exception as e:
-            kwargs['caption'] = caption
+        except Exception:
+            pass
     return _orig_edit_message_caption(**kwargs)
 
 bot.reply_to = _emoji_reply_to
@@ -210,6 +211,7 @@ IRAN_TZ = pytz.timezone('Asia/Tehran')
 # Button panel security - track who initiated each callback
 # Format: {message_id: {user_id: int, expires_at: timestamp}}
 panel_owners = {}
+panel_owners_lock = threading.Lock()
 PANEL_TIMEOUT = 300  # 5 minutes until auto-delete
 
 # Group chat slowdown monitoring (thread-safe)
@@ -229,6 +231,7 @@ db_lock = threading.Lock()
 
 # Track last rate limit notification per user
 _rate_limit_notified = {}
+_rate_limit_notified_lock = threading.Lock()
 RATE_LIMIT_NOTIFY_COOLDOWN = 60  # Only notify once per minute
 
 
@@ -312,6 +315,12 @@ def db_get_lang(user_id: int) -> str:
     return lang
 
 
+def _get_lang_cached(user_id: int) -> str:
+    """Read language from cache only — no DB lock. For background threads."""
+    with _lang_cache_lock:
+        return _lang_cache.get(user_id, 'en')
+
+
 def db_set_lang(user_id: int, lang: str) -> None:
     with db_lock:
         conn = sqlite3.connect(DB_FILE)
@@ -329,6 +338,15 @@ def db_set_lang(user_id: int, lang: str) -> None:
 def T(user_id: int, key: str, **kwargs) -> str:
     """Return the translated string for user's language, with optional .format(**kwargs)."""
     lang = db_get_lang(user_id)
+    text = STRINGS.get(lang, STRINGS['en']).get(key)
+    if text is None:
+        text = STRINGS['en'].get(key, f'[{key}]')
+    return text.format(**kwargs) if kwargs else text
+
+
+def _T_cached(user_id: int, key: str, **kwargs) -> str:
+    """Like T() but uses cached language only — no DB lock. For background threads."""
+    lang = _get_lang_cached(user_id)
     text = STRINGS.get(lang, STRINGS['en']).get(key)
     if text is None:
         text = STRINGS['en'].get(key, f'[{key}]')
@@ -399,7 +417,7 @@ def db_remove_wallet(user_id, address):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("DELETE FROM wallets WHERE user_id=? AND address=?", (user_id, address))
-        affected = conn.total_changes
+        affected = c.rowcount
         conn.commit()
         conn.close()
     return affected > 0
@@ -470,7 +488,7 @@ def db_delete_alert(alert_id, user_id):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("DELETE FROM alerts WHERE id=? AND user_id=?", (alert_id, user_id))
-        affected = conn.total_changes
+        affected = c.rowcount
         conn.commit()
         conn.close()
     return affected > 0
@@ -578,33 +596,36 @@ def _sym(cid: str) -> str:
 
 def register_panel_owner(message_id: int, user_id: int):
     """Register who owns a button panel."""
-    panel_owners[message_id] = {
-        'user_id': user_id,
-        'expires_at': time.time() + PANEL_TIMEOUT
-    }
+    with panel_owners_lock:
+        panel_owners[message_id] = {
+            'user_id': user_id,
+            'expires_at': time.time() + PANEL_TIMEOUT
+        }
 
 def check_panel_owner(message_id: int, user_id: int) -> bool:
     """Check if user owns the panel. Returns True if allowed."""
-    if message_id not in panel_owners:
-        return True  # No restriction if not registered
-    
-    panel = panel_owners[message_id]
-    
-    # Check if expired
-    if time.time() > panel['expires_at']:
-        del panel_owners[message_id]
-        return True  # Expired, allow anyone
-    
-    # Check ownership
-    return panel['user_id'] == user_id
+    with panel_owners_lock:
+        if message_id not in panel_owners:
+            return True  # No restriction if not registered
+        
+        panel = panel_owners[message_id]
+        
+        # Check if expired
+        if time.time() > panel['expires_at']:
+            del panel_owners[message_id]
+            return True  # Expired, allow anyone
+        
+        # Check ownership
+        return panel['user_id'] == user_id
 
 def cleanup_expired_panels():
     """Remove expired panel ownership records."""
     current_time = time.time()
-    expired = [mid for mid, panel in panel_owners.items() 
-               if current_time > panel['expires_at']]
-    for mid in expired:
-        del panel_owners[mid]
+    with panel_owners_lock:
+        expired = [mid for mid, panel in panel_owners.items() 
+                   if current_time > panel['expires_at']]
+        for mid in expired:
+            del panel_owners[mid]
 
 def monitor_group_activity(chat_id: int, message_time: float = None):
     """
@@ -648,7 +669,6 @@ def monitor_group_activity(chat_id: int, message_time: float = None):
                     "🌪️ گردباد پیام! یه نفس عمیق بکشید 😌\n"
                     "Message tornado! Take a deep breath! 😌"
                 ]
-                import random
                 return random.choice(funny_messages)
     
     return None
@@ -680,7 +700,7 @@ def cache_set(key, value, ttl=None):
 
 
 def cache_cleanup():
-    """Remove all expired entries from cache. Called periodically."""
+    """Remove all expired entries from cache."""
     current_time = time.time()
     with _cache_lock:
         expired_keys = [
@@ -691,6 +711,33 @@ def cache_cleanup():
             del _cache[k]
         if expired_keys:
             logger.debug(f"Cache cleanup: removed {len(expired_keys)} expired entries")
+
+
+def cache_cleanup_loop():
+    """Background thread that periodically purges stale cache entries."""
+    while True:
+        time.sleep(300)
+        try:
+            cache_cleanup()
+        except Exception as e:
+            logger.error(f"Cache cleanup error: {e}")
+
+
+def _cleanup_user_state_loop():
+    """Periodically purge expired user state entries (30 min TTL)."""
+    while True:
+        time.sleep(120)
+        try:
+            now = time.time()
+            with _user_state_lock:
+                expired = [uid for uid, expiry in _user_state_ttl.items() if now > expiry]
+                for uid in expired:
+                    user_state.pop(uid, None)
+                    _user_state_ttl.pop(uid, None)
+                if expired:
+                    logger.debug(f"Cleaned {len(expired)} stale user state entries")
+        except Exception as e:
+            logger.error(f"User state cleanup error: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -708,10 +755,10 @@ def rate_limited_api_call(func):
         with _api_lock:
             now = time.time()
             wait = API_COOLDOWN - (now - _last_api_call)
-            if wait > 0:
-                time.sleep(wait)
-            _last_api_call = time.time()   # stamp before releasing lock
-        return func(*args, **kwargs)       # HTTP call outside the lock
+            _last_api_call = time.time() + max(wait, 0)   # stamp before releasing lock
+        if wait > 0:
+            time.sleep(wait)                               # sleep outside lock
+        return func(*args, **kwargs)                       # HTTP call outside the lock
     return wrapper
 
 
@@ -724,15 +771,38 @@ def _fetch_prices_batch(ids: str) -> dict:
             timeout=10
         )
         return resp.json() if resp.status_code == 200 else {}
-    except Exception:
+    except Exception as e:
+        logger.error(f"Batch price fetch failed: {e}")
         return {}
 
 
 # ─────────────────────────────────────────────
-# Per-user state (thread-safe dict access is
-# fine in CPython for simple get/set/del)
+# Per-user state (protected by lock for
+# compound operations)
 # ─────────────────────────────────────────────
 user_state = {}
+_user_state_lock = threading.Lock()
+_user_state_ttl: dict[int, float] = {}
+
+
+def get_user_state(user_id: int):
+    with _user_state_lock:
+        val = user_state.get(user_id)
+        if val is not None:
+            _user_state_ttl[user_id] = time.time() + 1800
+        return val
+
+
+def set_user_state(user_id: int, value):
+    with _user_state_lock:
+        user_state[user_id] = value
+        _user_state_ttl[user_id] = time.time() + 1800
+
+
+def del_user_state(user_id: int):
+    with _user_state_lock:
+        user_state.pop(user_id, None)
+        _user_state_ttl.pop(user_id, None)
 
 # ─────────────────────────────────────────────
 # Per-user rate limiter
@@ -816,25 +886,26 @@ def rate_limit_check(func):
             
             # Only notify once per minute to avoid spam
             current_time = time.time()
-            last_notified = _rate_limit_notified.get(user_id, 0)
-            
-            if current_time - last_notified > RATE_LIMIT_NOTIFY_COOLDOWN:
+            with _rate_limit_notified_lock:
+                last_notified = _rate_limit_notified.get(user_id, 0)
+                if current_time - last_notified <= RATE_LIMIT_NOTIFY_COOLDOWN:
+                    return
                 _rate_limit_notified[user_id] = current_time
-                try:
-                    lang = db_get_lang(user_id)
-                    if lang == 'fa':
-                        msg = "⏳ <b>آروم‌تر!</b>\n\nلطفاً یک لحظه صبر کنید."
-                    else:
-                        msg = "⏳ <b>Slow down!</b>\n\nYou're sending messages too quickly. Please wait a moment before trying again."
-                    bot.reply_to(message, msg, parse_mode='HTML')
-                except:
-                    pass  # If notification fails, just drop silently
+            try:
+                lang = db_get_lang(user_id)
+                if lang == 'fa':
+                    msg = "⏳ <b>آروم‌تر!</b>\n\nلطفاً یک لحظه صبر کنید."
+                else:
+                    msg = "⏳ <b>Slow down!</b>\n\nYou're sending messages too quickly. Please wait a moment before trying again."
+                bot.reply_to(message, msg, parse_mode='HTML')
+            except:
+                pass  # If notification fails, just drop silently
             
             return
 
         # ⭐ Monitor group command rate for slowdown warnings (bot commands only)
         if is_command and message.chat.type in ['group', 'supergroup']:
-            warning = monitor_group_activity(message.chat.id, message.date)
+            warning = monitor_group_activity(message.chat.id, time.time())
             if warning:
                 try:
                     bot.send_message(message.chat.id, warning)
@@ -1852,11 +1923,11 @@ def get_crypto_price(crypto_id):
     # Special handling for Telegram Stars (official rate)
     if crypto_id == 'telegram-stars':
         # Official Telegram Stars rate: 1 Star ≈ $0.015 USD
-        # Source: Telegram official pricing
+        # Source: Telegram official pricing (overridable via STARS_PRICE_USD env)
         cached = cache_get('telegram-stars')
         if cached is not None:
             return cached
-        price = 0.015  # Official rate
+        price = float(os.getenv('STARS_PRICE_USD', '0.015'))
         cache_set('telegram-stars', price)
         return price
     
@@ -2190,9 +2261,8 @@ def evaluate_math(expression, user_id: int = 0):
                 if not sanitized or sanitized == '.':
                     return T(user_id, 'invalid_expression')
                 try:
-                    tree = ast.parse(sanitized, mode='eval')
-                    result = eval(compile(tree, '', 'eval'), {"__builtins__": {}}, {})
-                except Exception:
+                    result = ast.literal_eval(sanitized)
+                except (ValueError, SyntaxError, MemoryError):
                     return T(user_id, 'invalid_expression')
         except (SyntaxError, NameError, TypeError, ValueError):
             return T(user_id, 'invalid_expression')
@@ -2377,7 +2447,7 @@ def start(message):
 def cancel(message):
     user_id = message.from_user.id
     if user_id in user_state:
-        del user_state[user_id]
+        del_user_state(user_id)
         bot.reply_to(message, T(user_id, 'cancelled'), parse_mode='HTML')
     else:
         bot.reply_to(message, T(user_id, 'nothing_to_cancel'))
@@ -2386,8 +2456,8 @@ def cancel(message):
 def _send_language_picker(chat_id):
     """Send the language selection message (used on first /start and /language)."""
     kb = types.InlineKeyboardMarkup([[
-        types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang_en", style="primary"),
-        types.InlineKeyboardButton("🇮🇷 فارسی",   callback_data="set_lang_fa", style="primary"),
+        types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang_en"),
+        types.InlineKeyboardButton("🇮🇷 فارسی",   callback_data="set_lang_fa"),
     ]])
     bot.send_message(
         chat_id,
@@ -2415,8 +2485,8 @@ def privacy_cmd(message):
 def delete_account_cmd(message):
     user_id = message.from_user.id
     kb = types.InlineKeyboardMarkup([[
-        types.InlineKeyboardButton(T(user_id, 'btn_delete_yes'), callback_data="gdpr_delete_confirm", style="danger"),
-        types.InlineKeyboardButton(T(user_id, 'btn_cancel'),     callback_data="gdpr_delete_cancel", style="danger"),
+        types.InlineKeyboardButton(T(user_id, 'btn_delete_yes'), callback_data="gdpr_delete_confirm"),
+        types.InlineKeyboardButton(T(user_id, 'btn_cancel'),     callback_data="gdpr_delete_cancel"),
     ]])
     bot.reply_to(message, T(user_id, 'delete_confirm_prompt'), parse_mode='HTML', reply_markup=kb)
 
@@ -2428,7 +2498,7 @@ def suggest_cmd(message):
     if not SUGGESTION_CHAT_ID:
         bot.reply_to(message, T(user_id, 'suggest_no_config'))
         return
-    user_state[user_id] = 'awaiting_suggestion'
+    set_user_state(user_id, 'awaiting_suggestion')
     bot.reply_to(
         message,
         T(user_id, 'suggest_prompt'),
@@ -2475,7 +2545,7 @@ def _process_add_wallet(message, user_id, address):
         return
     if db_add_wallet(user_id, address):
         kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(T(user_id, 'btn_view_wallets'), callback_data="show_wallets", style="primary"),
+            types.InlineKeyboardButton(T(user_id, 'btn_view_wallets'), callback_data="show_wallets"),
         ]])
         bot.send_message(
             chat_id,
@@ -2499,12 +2569,12 @@ def build_wallets_keyboard(wallets: list[str], user_id: int = 0) -> types.Inline
     for i, addr in enumerate(wallets):
         short = f"{addr[:6]}…{addr[-4:]}"
         keyboard.append([
-            types.InlineKeyboardButton(f"🔗 {short}", callback_data=f"wnoop_{i}", style="primary"),
-            types.InlineKeyboardButton(T(user_id, 'btn_remove'), callback_data=f"wrem_{i}", style="danger"),
+            types.InlineKeyboardButton(f"🔗 {short}", callback_data=f"wnoop_{i}"),
+            types.InlineKeyboardButton(T(user_id, 'btn_remove'), callback_data=f"wrem_{i}"),
         ])
     keyboard.append([
-        types.InlineKeyboardButton(T(user_id, 'btn_add_wallet'), callback_data="wadd", style="success"),
-        types.InlineKeyboardButton(T(user_id, 'btn_close'),      callback_data="wclose", style="danger"),
+        types.InlineKeyboardButton(T(user_id, 'btn_add_wallet'), callback_data="wadd"),
+        types.InlineKeyboardButton(T(user_id, 'btn_close'),      callback_data="wclose"),
     ])
     return types.InlineKeyboardMarkup(keyboard)
 
@@ -2516,19 +2586,19 @@ def build_holdings_keyboard(holdings: dict, user_id: int = 0) -> types.InlineKey
     keyboard = []
     for symbol in holdings:
         keyboard.append([
-            types.InlineKeyboardButton(f"🪙 {symbol}", callback_data=f"hnoop_{symbol}", style="primary"),
-            types.InlineKeyboardButton(T(user_id, 'btn_edit'),      callback_data=f"hedit_{symbol}", style="primary"),
-            types.InlineKeyboardButton(T(user_id, 'btn_buy_price'), callback_data=f"hbuy_{symbol}", style="primary"),
-            types.InlineKeyboardButton("🗑", callback_data=f"hrem_{symbol}", style="danger"),
+            types.InlineKeyboardButton(f"🪙 {symbol}", callback_data=f"hnoop_{symbol}"),
+            types.InlineKeyboardButton(T(user_id, 'btn_edit'),      callback_data=f"hedit_{symbol}"),
+            types.InlineKeyboardButton(T(user_id, 'btn_buy_price'), callback_data=f"hbuy_{symbol}"),
+            types.InlineKeyboardButton("🗑", callback_data=f"hrem_{symbol}"),
         ])
     if holdings:
         keyboard.append([
-            types.InlineKeyboardButton(T(user_id, 'btn_add_coin'),  callback_data="hadd", style="success"),
-            types.InlineKeyboardButton(T(user_id, 'btn_chart'),     callback_data="hchart", style="primary"),
-            types.InlineKeyboardButton(T(user_id, 'btn_clear_all'), callback_data="hclearall", style="danger"),
+            types.InlineKeyboardButton(T(user_id, 'btn_add_coin'),  callback_data="hadd"),
+            types.InlineKeyboardButton(T(user_id, 'btn_chart'),     callback_data="hchart"),
+            types.InlineKeyboardButton(T(user_id, 'btn_clear_all'), callback_data="hclearall"),
         ])
     else:
-        keyboard.append([types.InlineKeyboardButton(T(user_id, 'btn_add_coin'), callback_data="hadd", style="success")])
+        keyboard.append([types.InlineKeyboardButton(T(user_id, 'btn_add_coin'), callback_data="hadd")])
     return types.InlineKeyboardMarkup(keyboard)
 
 
@@ -2623,7 +2693,7 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, "⛔ Owner only", show_alert=True)
             return
         
-        user_state[user_id] = 'admin_broadcast'
+        set_user_state(user_id, 'admin_broadcast')
         bot.answer_callback_query(call.id)
         try:
             bot.edit_message_text(
@@ -2756,7 +2826,7 @@ def handle_callback(call):
             if cid == from_cid:
                 continue
             sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt2_{from_cid}_{cid}", style="primary"))
+            row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt2_{from_cid}_{cid}"))
             if len(row) == 3:
                 rows.append(row)
                 row = []
@@ -2779,7 +2849,7 @@ def handle_callback(call):
         _, from_cid, to_cid = data.split("_", 2)
         from_sym = _sym(from_cid)
         to_sym   = _sym(to_cid)
-        user_state[user_id] = f"convert_{from_cid}_{to_cid}"
+        set_user_state(user_id, f"convert_{from_cid}_{to_cid}")
         bot.answer_callback_query(call.id)
         try:
             bot.edit_message_text(
@@ -2788,7 +2858,7 @@ def handle_callback(call):
                 message_id=call.message.message_id,
                 parse_mode='HTML',
                 reply_markup=types.InlineKeyboardMarkup([[
-                    types.InlineKeyboardButton(T(user_id, "btn_cvt_cancel"), callback_data="cvt_cancel", style="danger")
+                    types.InlineKeyboardButton(T(user_id, "btn_cvt_cancel"), callback_data="cvt_cancel")
                 ]])
             )
         except Exception:
@@ -2802,7 +2872,7 @@ def handle_callback(call):
         except Exception:
             pass
         if user_id in user_state:
-            del user_state[user_id]
+            del_user_state(user_id)
         return
 
     # ── Compare coin picker (step 1 & 2) ─────────────────────────────
@@ -2813,7 +2883,7 @@ def handle_callback(call):
         row = []
         for cid in filtered:
             sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp2_{cid1}_{cid}", style="primary"))
+            row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp2_{cid1}_{cid}"))
             if len(row) == 3:
                 rows.append(row)
                 row = []
@@ -2873,9 +2943,9 @@ def handle_callback(call):
             row = []
             for cid in coins[i:i+3]:
                 sym = _sym(cid)
-                row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}", style="primary"))
+                row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}"))
             rows.append(row)
-        rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel", style="danger")])
+        rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")])
         try:
             bot.send_message(
                 call.message.chat.id,
@@ -2896,10 +2966,10 @@ def handle_callback(call):
         price = get_crypto_price(cid)
         price_str = fmt_price(price) if price else "—"
         kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(T(user_id, 'btn_above'), callback_data=f"alrt2_{cid}_above", style="success"),
-            types.InlineKeyboardButton(T(user_id, 'btn_below'), callback_data=f"alrt2_{cid}_below", style="primary"),
+            types.InlineKeyboardButton(T(user_id, 'btn_above'), callback_data=f"alrt2_{cid}_above"),
+            types.InlineKeyboardButton(T(user_id, 'btn_below'), callback_data=f"alrt2_{cid}_below"),
         ],[
-            types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel", style="danger"),
+            types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel"),
         ]])
         bot.answer_callback_query(call.id)
         try:
@@ -2924,7 +2994,7 @@ def handle_callback(call):
         price = get_crypto_price(cid)
         price_str = fmt_price(price) if price else "—"
         arrow = "📈" if direction == "above" else "📉"
-        user_state[user_id] = f"alert_price_{cid}_{direction}"
+        set_user_state(user_id, f"alert_price_{cid}_{direction}")
         bot.answer_callback_query(call.id)
         try:
             bot.edit_message_text(
@@ -2933,7 +3003,7 @@ def handle_callback(call):
                 message_id=call.message.message_id,
                 parse_mode='HTML',
                 reply_markup=types.InlineKeyboardMarkup([[
-                    types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel", style="danger")
+                    types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")
                 ]])
             )
         except Exception:
@@ -2948,7 +3018,7 @@ def handle_callback(call):
                 call.message.chat.id,
                 T(user_id, 'no_alerts_simple'),
                 reply_markup=types.InlineKeyboardMarkup([[
-                    types.InlineKeyboardButton(T(user_id, 'btn_set_alert'), callback_data="alrt_new", style="success")
+                    types.InlineKeyboardButton(T(user_id, 'btn_set_alert'), callback_data="alrt_new")
                 ]])
             )
             return
@@ -2969,10 +3039,10 @@ def handle_callback(call):
             keyboard.append([types.InlineKeyboardButton(
                 f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                 callback_data=f"alertdel_{a['id']}"
-            , style="danger")])
+            )])
         keyboard.append([
-            types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new", style="success"),
-            types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall", style="danger"),
+            types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
+            types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
         ])
         bot.send_message(
             call.message.chat.id,
@@ -3018,7 +3088,7 @@ def handle_callback(call):
 
     if data == "wadd":
         bot.answer_callback_query(call.id)
-        user_state[user_id] = 'add_wallet_inline'
+        set_user_state(user_id, 'add_wallet_inline')
         bot.send_message(call.message.chat.id, T(user_id, 'send_wallet_addr'))
         return
 
@@ -3062,7 +3132,7 @@ def handle_callback(call):
             chg   = f"{change:+.1f}%" if change is not None else ""
             lines.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
         kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data="refresh_all_prices", style="primary")
+            types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data="refresh_all_prices")
         ]])
         try:
             bot.edit_message_text(
@@ -3095,7 +3165,7 @@ def handle_callback(call):
         price_irr = price_usd * usd_to_irr
         crypto_name = CRYPTO_LIST.get(crypto, crypto.upper())
         refresh_kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data=f"refresh_{crypto}", style="primary")
+            types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data=f"refresh_{crypto}")
         ]])
         new_caption = (f"📊 {crypto_name}\n\n💵 <b>{fmt_price(price_usd)}</b>\n"
                        + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}"))
@@ -3125,7 +3195,7 @@ def handle_callback(call):
             c.execute("DELETE FROM user_languages WHERE user_id=?", (user_id,))
             conn.commit()
             conn.close()
-        user_state.pop(user_id, None)
+        del_user_state(user_id)
         with _lang_cache_lock:
             _lang_cache.pop(user_id, None)
         logger.info(f"GDPR delete: all data removed for user {user_id}")
@@ -3201,14 +3271,14 @@ def handle_callback(call):
     if data.startswith("hedit_"):
         symbol = data[len("hedit_"):]
         bot.answer_callback_query(call.id)
-        user_state[user_id] = f'edit_holding_{symbol}'
+        set_user_state(user_id, f'edit_holding_{symbol}')
         bot.send_message(call.message.chat.id, T(user_id, 'edit_amount_prompt', sym=symbol), parse_mode='HTML')
         return
 
     if data.startswith("hbuy_"):
         symbol = data[len("hbuy_"):]
         bot.answer_callback_query(call.id)
-        user_state[user_id] = f'set_buy_price_{symbol}'
+        set_user_state(user_id, f'set_buy_price_{symbol}')
         bot.send_message(call.message.chat.id, T(user_id, 'buy_price_prompt', sym=symbol), parse_mode='HTML')
         return
 
@@ -3246,7 +3316,7 @@ def handle_callback(call):
         except Exception:
             pass
         if user_id in user_state:
-            del user_state[user_id]
+            del_user_state(user_id)
         return
 
     if data.startswith("hpick_"):
@@ -3257,7 +3327,7 @@ def handle_callback(call):
         sym   = _sym(cid)
         price = get_crypto_price(cid)
         price_str = T(user_id, 'now_price', price=fmt_price(price)) if price else ""
-        user_state[user_id] = f"hpick_amount_{cid}"
+        set_user_state(user_id, f"hpick_amount_{cid}")
         bot.answer_callback_query(call.id)
         try:
             bot.edit_message_text(
@@ -3266,7 +3336,7 @@ def handle_callback(call):
                 message_id=call.message.message_id,
                 parse_mode='HTML',
                 reply_markup=types.InlineKeyboardMarkup([[
-                    types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="hpick_cancel", style="danger")
+                    types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="hpick_cancel")
                 ]])
             )
         except Exception:
@@ -3285,8 +3355,8 @@ def handle_callback(call):
     if data == "hclearall":
         bot.answer_callback_query(call.id)
         kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(T(user_id, 'btn_yes_clear'), callback_data="hclearall_confirm", style="danger"),
-            types.InlineKeyboardButton(T(user_id, 'btn_cancel'),    callback_data="hclearall_cancel", style="danger"),
+            types.InlineKeyboardButton(T(user_id, 'btn_yes_clear'), callback_data="hclearall_confirm"),
+            types.InlineKeyboardButton(T(user_id, 'btn_cancel'),    callback_data="hclearall_cancel"),
         ]])
         bot.send_message(
             call.message.chat.id,
@@ -3395,7 +3465,7 @@ def price(message):
         lines.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
 
     kb = types.InlineKeyboardMarkup([[
-        types.InlineKeyboardButton(T(uid_p, 'btn_refresh'), callback_data="refresh_all_prices", style="primary")
+        types.InlineKeyboardButton(T(uid_p, 'btn_refresh'), callback_data="refresh_all_prices")
     ]])
     msg = bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML', reply_markup=kb)
     register_panel_owner(msg.message_id, message.from_user.id)
@@ -3465,7 +3535,7 @@ def stars_command(message):
     
     stars_price = get_crypto_price('telegram-stars')
     if not stars_price:
-        stars_price = 0.015  # Fallback
+        stars_price = float(os.getenv('STARS_PRICE_USD', '0.015'))
     
     usd_to_irr = get_usd_to_irr()
     ton_price = get_crypto_price('the-open-network')
@@ -3493,13 +3563,13 @@ def _show_holding_coin_picker(chat_id, prompt, user_id=0):
     row = []
     for cid in coins:
         sym = _sym(cid)
-        row.append(types.InlineKeyboardButton(sym, callback_data=f"hpick_{cid}", style="primary"))
+        row.append(types.InlineKeyboardButton(sym, callback_data=f"hpick_{cid}"))
         if len(row) == 3:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="hpick_cancel", style="danger")])
+    rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="hpick_cancel")])
     bot.send_message(chat_id, prompt, parse_mode='HTML', reply_markup=types.InlineKeyboardMarkup(rows))
 
 
@@ -3537,7 +3607,7 @@ def convert_cmd(message):
     row = []
     for cid in coins:
         sym = _sym(cid)
-        row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt1_{cid}", style="primary"))
+        row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt1_{cid}"))
         if len(row) == 3:
             rows.append(row)
             row = []
@@ -3704,65 +3774,6 @@ def inline_query_handler(inline_query):
                     "toman_usd", lbl, desc,
                     f"{EMOJIS['money']} <b>{lbl}</b>\n\n{desc}", html=True
                 ))
-
-        # ── 6. Conversion (10 btc to eth / 100 usd trx) — FASTER ─────
-        conv_m = re.match(
-            r'^([\d.,۰-۹٬٫]+)\s*(\w+|تومان|تومن)\s+(?:to\s+|به\s+)?(\w+|تومان|تومن)$', ql
-        )
-        if usd_m:
-            amt_str = usd_m.group(1) if usd_m.group(1) else "1"
-            amt = parse_number(amt_str)
-            if amt is None:
-                amt = Decimal('1')
-            
-            val = amt * Decimal(str(irr))
-            lbl = T(uid, 'inline_usd_toman')
-            
-            # Format with proper number handling
-            user_lang = db_get_lang(uid)
-            amt_formatted = format_fiat(amt)
-            val_formatted = format_fiat(val, decimals=0)
-            
-            # Apply locale
-            amt_formatted = format_for_locale(amt_formatted, user_lang)
-            val_formatted = format_for_locale(val_formatted, user_lang)
-            
-            toman_label = T(uid, 'toman_label')
-            desc = f"{amt_formatted} USD = {val_formatted} {toman_label}"
-            results.append(article(
-                "usd_toman", lbl, desc,
-                f"{EMOJIS['money']} <b>{lbl}</b>\n\n{desc}", html=True
-            ))
-
-        # ── 5. Toman → USD ────────────────────────────────────────────
-        # Support flexible formats and both تومان and تومن
-        toman_m = re.match(
-            r'^([\d.,۰-۹٬٫]+)\s*(toman|تومان|تومن|ریال|irr)(\s+(to|به)\s*(usd|\$))?$',
-            ql
-        )
-        if toman_m:
-            amt = parse_number(toman_m.group(1))
-            if amt is None:
-                amt = Decimal('0')
-            
-            val = amt / Decimal(str(irr))
-            lbl = T(uid, 'inline_toman_usd')
-            
-            # Format with proper number handling
-            user_lang = db_get_lang(uid)
-            amt_formatted = format_fiat(amt, decimals=0)
-            val_formatted = format_fiat(val)
-            
-            # Apply locale
-            amt_formatted = format_for_locale(amt_formatted, user_lang)
-            val_formatted = format_for_locale(val_formatted, user_lang)
-            
-            toman_label = T(uid, 'toman_label')
-            desc = f"{amt_formatted} {toman_label} = ${val_formatted}"
-            results.append(article(
-                "toman_usd", lbl, desc,
-                f"{EMOJIS['money']} <b>{lbl}</b>\n\n{desc}", html=True
-            ))
 
         # ── 6. Conversion (10 btc to eth / 100 usd trx) — FASTER ─────
         # Support flexible number formats and both "10 btc to eth" and "10btc to eth"
@@ -4031,9 +4042,9 @@ def alert_cmd(message):
         row = []
         for cid in coins[i:i+3]:
             sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}", style="primary"))
+            row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}"))
         rows.append(row)
-    rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel", style="danger")])
+    rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")])
 
     msg = bot.reply_to(
         message,
@@ -4085,8 +4096,8 @@ def _finalize_alert(message, user_id, crypto_id, direction_raw, price_raw):
     diff_pct = (diff / current) * 100 if current else 0.0
 
     kb = types.InlineKeyboardMarkup([[
-        types.InlineKeyboardButton(T(user_id, 'btn_my_alerts'),       callback_data="show_alerts", style="primary"),
-        types.InlineKeyboardButton(T(user_id, 'btn_add_another_alert'), callback_data="alrt_new", style="success"),
+        types.InlineKeyboardButton(T(user_id, 'btn_my_alerts'),       callback_data="show_alerts"),
+        types.InlineKeyboardButton(T(user_id, 'btn_add_another_alert'), callback_data="alrt_new"),
     ]])
     bot.send_message(
         chat_id,
@@ -4107,7 +4118,7 @@ def list_alerts(message):
     alerts = db_get_alerts(user_id)
     if not alerts:
         kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(T(user_id, 'btn_set_alert'), callback_data="alrt_new", style="success")
+            types.InlineKeyboardButton(T(user_id, 'btn_set_alert'), callback_data="alrt_new")
         ]])
         bot.reply_to(message, T(user_id, 'no_alerts'), parse_mode='HTML', reply_markup=kb)
         return
@@ -4129,10 +4140,10 @@ def list_alerts(message):
         keyboard.append([types.InlineKeyboardButton(
             f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
             callback_data=f"alertdel_{a['id']}"
-        , style="danger")])
+        )])
     keyboard.append([
-        types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new", style="success"),
-        types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall", style="danger"),
+        types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
+        types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
     ])
     bot.reply_to(
         message,
@@ -4158,7 +4169,7 @@ def compare_cmd(message):
         row = []
         for cid in coins[i:i+3]:
             sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp1_{cid}", style="primary"))
+            row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp1_{cid}"))
         rows.append(row)
 
     msg = bot.reply_to(
@@ -4249,7 +4260,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         types.InlineKeyboardButton(
             T(cmp_uid, 'btn_refresh'), 
             callback_data=f"cmpref_{ids[0]}_{ids[1]}"
-    , style="primary")
+    )
     ]])
     text = add_timestamp(T(cmp_uid, 'compare_header') + "\n\n".join(blocks) + f"\n{'━'*20}{verdict}")
 
@@ -4305,7 +4316,7 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
     arrow   = '📈' if chg24 >= 0 else '📉'
 
     kb = types.InlineKeyboardMarkup([[
-        types.InlineKeyboardButton(T(uid_m, 'btn_refresh'), callback_data="market_refresh", style="primary")
+        types.InlineKeyboardButton(T(uid_m, 'btn_refresh'), callback_data="market_refresh")
     ]])
     text = add_timestamp(
         T(uid_m, 'market_header') +
@@ -4339,14 +4350,14 @@ def _build_digest_keyboard(enabled, hour, user_id=0):
     time_row = []
     for h in preset_hours:
         label = f"✅ {h:02d}:00" if h == hour else f"{h:02d}:00"
-        time_row.append(types.InlineKeyboardButton(label, callback_data=f"digest_h{h}", style="primary"))
+        time_row.append(types.InlineKeyboardButton(label, callback_data=f"digest_h{h}"))
     return types.InlineKeyboardMarkup([
         [
-            types.InlineKeyboardButton(T(user_id, "digest_enabled") if enabled else T(user_id, "btn_enable"), callback_data="digest_on", style="success"),
-            types.InlineKeyboardButton(T(user_id, "btn_disable") if enabled else T(user_id, "digest_disabled"), callback_data="digest_off", style="danger"),
+            types.InlineKeyboardButton(T(user_id, "digest_enabled") if enabled else T(user_id, "btn_enable"), callback_data="digest_on"),
+            types.InlineKeyboardButton(T(user_id, "btn_disable") if enabled else T(user_id, "digest_disabled"), callback_data="digest_off"),
         ],
         time_row,
-        [types.InlineKeyboardButton(T(user_id, "btn_custom_time"), callback_data="digest_custom", style="primary")],
+        [types.InlineKeyboardButton(T(user_id, "btn_custom_time"), callback_data="digest_custom")],
     ])
 
 
@@ -4596,6 +4607,7 @@ def run_tests(message):
         bot.send_message(chat_id, chunk, parse_mode='HTML')
 
 @bot.message_handler(commands=['admin'])
+@rate_limit_check
 def admin_panel(message):
     global _cache
     if not is_owner(message.from_user.id):
@@ -4629,9 +4641,9 @@ def admin_panel(message):
     cache_size = len(_cache)
     
     kb = types.InlineKeyboardMarkup([
-        [types.InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast", style="primary")],
-        [types.InlineKeyboardButton("🔄 Clear Cache", callback_data="admin_clear_cache", style="danger")],
-        [types.InlineKeyboardButton("📊 Detailed Stats", callback_data="admin_stats", style="primary")]
+        [types.InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast")],
+        [types.InlineKeyboardButton("🔄 Clear Cache", callback_data="admin_clear_cache")],
+        [types.InlineKeyboardButton("📊 Detailed Stats", callback_data="admin_stats")]
     ])
     
     msg = (
@@ -4662,11 +4674,11 @@ def handle_text(message):
     text_lower = text.lower()
 
     # ── State machine ─────────────────────────
-    state = user_state.get(user_id)
+    state = get_user_state(user_id)
 
     # Suggestion forwarding (must be before admin broadcast)
     if state == 'awaiting_suggestion':
-        del user_state[user_id]
+        del_user_state(user_id)
         if SUGGESTION_CHAT_ID:
             try:
                 forward_text = (
@@ -4689,7 +4701,7 @@ def handle_text(message):
         if not is_owner(user_id):
             return
         
-        del user_state[user_id]
+        del_user_state(user_id)
         
         # Get all users
         with db_lock:
@@ -4725,13 +4737,13 @@ def handle_text(message):
 
     # Adding a wallet via the inline ➕ button
     if state == 'add_wallet_inline':
-        del user_state[user_id]
+        del_user_state(user_id)
         _process_add_wallet(message, user_id, text.strip())
         return
 
     # Digest custom time input
     if state == 'digest_custom_hour':
-        del user_state[user_id]
+        del_user_state(user_id)
         try:
             hour = int(text.strip())
             if not 0 <= hour <= 23:
@@ -4752,7 +4764,7 @@ def handle_text(message):
 
     # Convert wizard step 3 — waiting for amount
     if state and state.startswith('convert_'):
-        del user_state[user_id]
+        del_user_state(user_id)
         _, from_cid, to_cid = state.split('_', 2)
         from_sym = _sym(from_cid)
         to_sym   = _sym(to_cid)
@@ -4792,7 +4804,7 @@ def handle_text(message):
 
     # Alert wizard step 3 — waiting for target price
     if state and state.startswith('alert_price_'):
-        del user_state[user_id]
+        del_user_state(user_id)
         parts_s = state.split('_', 3)
         if len(parts_s) != 4:
             bot.reply_to(message, T(user_id, 'alert_state_error'))
@@ -4813,7 +4825,7 @@ def handle_text(message):
         except ValueError:
             bot.reply_to(message, T(user_id, 'invalid_amount'), parse_mode='HTML')
             return  # keep state so user can retry
-        del user_state[user_id]
+        del_user_state(user_id)
         saved = db_get_holdings(user_id) or {}
         old_amt = saved.get(sym, 0)
         saved[sym] = old_amt + amount
@@ -4842,7 +4854,7 @@ def handle_text(message):
             bot.reply_to(message, T(user_id, 'invalid_price'))
             return
         db_set_buy_price(user_id, symbol, buy_price)
-        del user_state[user_id]
+        del_user_state(user_id)
         saved = db_get_holdings(user_id) or {}
         usd_to_irr = get_usd_to_irr()
         buy_prices = db_get_buy_prices(user_id)
@@ -4867,7 +4879,7 @@ def handle_text(message):
         saved = db_get_holdings(user_id) or {}
         saved[symbol] = new_amount
         db_set_holdings(user_id, saved)
-        del user_state[user_id]
+        del_user_state(user_id)
         usd_to_irr = get_usd_to_irr()
         buy_prices = db_get_buy_prices(user_id)
         bot.reply_to(
@@ -5101,8 +5113,8 @@ def handle_text(message):
                 refresh_kb = None
             else:
                 refresh_kb = types.InlineKeyboardMarkup([[
-                    types.InlineKeyboardButton(T(user_id, 'btn_refresh'),   callback_data=f"refresh_{crypto}", style="primary"),
-                    types.InlineKeyboardButton(T(user_id, 'btn_add_coin'),  callback_data=f"hpick_{crypto}", style="primary"),
+                    types.InlineKeyboardButton(T(user_id, 'btn_refresh'),   callback_data=f"refresh_{crypto}"),
+                    types.InlineKeyboardButton(T(user_id, 'btn_add_coin'),  callback_data=f"hpick_{crypto}"),
                 ]])
             try:
                 img_bytes, symbol = get_crypto_chart_image(crypto, user_id=user_id)
@@ -5214,7 +5226,7 @@ def _handle_alert_callbacks(call, data, user_id):
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
                     reply_markup=types.InlineKeyboardMarkup([[
-                        types.InlineKeyboardButton(T(user_id, 'btn_add_alert'), callback_data="alrt_new", style="success")
+                        types.InlineKeyboardButton(T(user_id, 'btn_add_alert'), callback_data="alrt_new")
                     ]])
                 )
             except Exception:
@@ -5237,10 +5249,10 @@ def _handle_alert_callbacks(call, data, user_id):
                 keyboard.append([types.InlineKeyboardButton(
                     f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                     callback_data=f"alertdel_{a['id']}"
-                , style="danger")])
+                )])
             keyboard.append([
-                types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new", style="success"),
-                types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall", style="danger"),
+                types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
+                types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
             ])
             try:
                 bot.edit_message_text(
@@ -5268,7 +5280,7 @@ def _handle_alert_callbacks(call, data, user_id):
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 reply_markup=types.InlineKeyboardMarkup([[
-                    types.InlineKeyboardButton(T(user_id, 'btn_set_new_alert'), callback_data="alrt_new", style="success")
+                    types.InlineKeyboardButton(T(user_id, 'btn_set_new_alert'), callback_data="alrt_new")
                 ]])
             )
         except Exception:
@@ -5287,7 +5299,7 @@ def _handle_alert_callbacks(call, data, user_id):
             bot.answer_callback_query(call.id, T(user_id, 'digest_off_toast'))
         elif action == "custom":
             bot.answer_callback_query(call.id)
-            user_state[user_id] = 'digest_custom_hour'
+            set_user_state(user_id, 'digest_custom_hour')
             bot.send_message(
                 call.message.chat.id,
                 T(user_id, 'digest_time_prompt'),
@@ -5368,14 +5380,14 @@ def _alert_checker_loop():
                         arrow = '📈' if a['direction'] == 'above' else '📉'
                         try:
                             _uid = a['user_id']
-                            _dword = T(_uid, 'above_word') if a['direction'] == 'above' else T(_uid, 'below_word')
+                            _dword = _T_cached(_uid, 'above_word') if a['direction'] == 'above' else _T_cached(_uid, 'below_word')
                             kb = types.InlineKeyboardMarkup([[
-                                types.InlineKeyboardButton(T(_uid, 'btn_set_new_alert'), callback_data='alrt_new', style="success"),
-                                types.InlineKeyboardButton(T(_uid, 'btn_holdings'),     callback_data='show_holdings', style="primary"),
+                                types.InlineKeyboardButton(_T_cached(_uid, 'btn_set_new_alert'), callback_data='alrt_new'),
+                                types.InlineKeyboardButton(_T_cached(_uid, 'btn_holdings'),     callback_data='show_holdings'),
                             ]])
                             bot.send_message(
                                 _uid,
-                                T(_uid, 'alert_triggered', arrow=arrow, sym=a['symbol'],
+                                _T_cached(_uid, 'alert_triggered', arrow=arrow, sym=a['symbol'],
                                   price=fmt_price(price), direction=_dword,
                                   target=fmt_price(a['target_price'])),
                                 parse_mode='HTML',
@@ -5419,7 +5431,7 @@ def _send_digest(user_id):
                 pass
 
         total_usd = 0.0
-        lines = [T(user_id, 'digest_morning')]
+        lines = [_T_cached(user_id, 'digest_morning')]
         for symbol, amount in saved.items():
             cid = detect_currency(symbol.lower())
             if not cid:
@@ -5445,13 +5457,13 @@ def _send_digest(user_id):
 
         if usd_to_irr:
             total_irr = total_usd * usd_to_irr
-            lines.append(T(user_id, 'digest_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
+            lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
         else:
-            lines.append(T(user_id, 'digest_total', usd=fmt_price(total_usd), irr="N/A"))
+            lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr="N/A"))
         lines.append(f"\n<i>📅 {datetime.utcnow().strftime('%b %d, %Y  %H:%M UTC')}</i>")
         kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(T(user_id, 'btn_portfolio'), callback_data="show_holdings", style="primary"),
-            types.InlineKeyboardButton(T(user_id, 'btn_alerts'),    callback_data="show_alerts", style="primary"),
+            types.InlineKeyboardButton(_T_cached(user_id, 'btn_portfolio'), callback_data="show_holdings"),
+            types.InlineKeyboardButton(_T_cached(user_id, 'btn_alerts'),    callback_data="show_alerts"),
         ]])
         bot.send_message(user_id, "\n".join(lines), parse_mode='HTML', reply_markup=kb)
     except Exception as e:
@@ -5475,17 +5487,17 @@ def _digest_loop():
         time.sleep(60)
 
 
-@bot.message_handler(func=lambda m: False)   # never matches — just registers the handler
-def _unused(_):
-    pass
-
-
 def global_exception_handler(exc_type, exc_value, exc_traceback):
-    logger.error("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
+    logger.error("Unhandled exception in main thread", exc_info=(exc_type, exc_value, exc_traceback))
 
 
-import sys
+def thread_exception_handler(args):
+    logger.error(f"Unhandled exception in thread {args.thread.name}",
+                 exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+
 sys.excepthook = global_exception_handler
+threading.excepthook = thread_exception_handler
 
 
 # Patch telebot to catch handler exceptions and reply gracefully
@@ -5531,7 +5543,9 @@ if __name__ == "__main__":
     # Start background threads
     threading.Thread(target=_alert_checker_loop, daemon=True, name="AlertChecker").start()
     threading.Thread(target=_digest_loop, daemon=True, name="DigestSender").start()
-    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest)")
+    threading.Thread(target=cache_cleanup_loop, daemon=True, name="CacheCleanup").start()
+    threading.Thread(target=_cleanup_user_state_loop, daemon=True, name="UserStateCleanup").start()
+    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup)")
 
     logger.info(f"{EMOJIS['star']} Press Ctrl+C to stop")
     logger.info("=" * 50)
