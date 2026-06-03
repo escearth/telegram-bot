@@ -2756,7 +2756,7 @@ def handle_callback(call):
         for crypto_id, count in top_alerts:
             name = CRYPTO_LIST.get(crypto_id, crypto_id)
             if '(' in name:
-                sym = _sym(code)
+                sym = _sym(crypto_id)
             else:
                 sym = crypto_id.upper()
             msg += f"  {sym}: {count} alerts\n"
@@ -3925,7 +3925,110 @@ def inline_query_handler(inline_query):
             except Exception:
                 pass
 
-        # ── 10. Math expression ───────────────────────────────────────
+        # ── 10. Gold prices ────────────────────────────────────────────
+        if ql in ('gold', 'gold price', 'طلا', 'قیمت طلا'):
+            gold = get_gold_prices()
+            if gold and 'xau' in gold:
+                xau = gold['xau']
+                lines = [T(uid, 'gold_global', xau=f"{xau:,.2f}")]
+                if irr:
+                    xau_irr = xau * irr
+                    lines.append(f"\n💰 {xau_irr:,.0f} {T(uid, 'toman_label')}/oz")
+                txt = "".join(lines)
+                results.append(article("gold", "Gold Price", f"XAU/USD: ${xau:,.2f}", txt, html=True))
+
+        # ── 11. Telegram Stars ─────────────────────────────────────────
+        if ql in ('star', 'stars', 'telegram stars', 'استار', 'استارز', 'ستاره'):
+            stars_price = get_crypto_price('telegram-stars')
+            if stars_price:
+                toman_lbl = T(uid, 'toman_label')
+                lines = [f"⭐ <b>Telegram Stars</b>\n\n💵 ${stars_price:.3f} USD"]
+                if irr:
+                    stars_irr = stars_price * irr
+                    lines.append(f"💰 {stars_irr:,.0f} {toman_lbl}")
+                txt = "\n".join(lines)
+                results.append(article("stars", "Telegram Stars", f"${stars_price:.3f}", txt, html=True))
+
+        # ── 12. Market (Fear & Greed) ──────────────────────────────────
+        if ql in ('market', 'fear', 'greed', 'fear and greed', 'fear & greed', 'بازار', 'ترس و طمع'):
+            try:
+                resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=8)
+                g = resp.json().get('data', {})
+                mcap = g.get('total_market_cap', {}).get('usd', 0)
+                vol = g.get('total_volume', {}).get('usd', 0)
+                btc_dom = g.get('market_cap_percentage', {}).get('btc', 0)
+                eth_dom = g.get('market_cap_percentage', {}).get('eth', 0)
+                coins = g.get('active_cryptocurrencies', 0)
+                chg24 = g.get('market_cap_change_percentage_24h_usd', 0)
+                arrow = '📈' if chg24 >= 0 else '📉'
+                lines = [f"🌍 <b>Crypto Market</b>\n"]
+                lines.append(f"💹 Market Cap: <b>${mcap/1e12:.2f}T</b>  {arrow} {chg24:.1f}%")
+                lines.append(f"📊 24h Volume: <b>${vol/1e12:.2f}T</b>")
+                lines.append(f"🟠 BTC Dom: <b>{btc_dom:.1f}%</b>  🔵 ETH Dom: <b>{eth_dom:.1f}%</b>")
+                lines.append(f"🪙 Active coins: <b>{coins}</b>")
+                try:
+                    fg_resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+                    fg_data = fg_resp.json().get('data', [{}])[0]
+                    fg_val = int(fg_data.get('value', 50))
+                    fg_label = fg_data.get('value_classification', '?')
+                    filled = round(fg_val / 10)
+                    bar = '🟢' * filled + '⬜' * (10 - filled)
+                    lines.append(f"\n😨 <b>Fear & Greed</b>\n{bar}\n{fg_val}/100 — <b>{fg_label}</b>")
+                except Exception:
+                    pass
+                txt = "\n".join(lines)
+                results.append(article("market", "Market Overview", f"${mcap/1e12:.2f}T · {chg24:+.1f}%", txt, html=True))
+            except Exception:
+                pass
+
+        # ── 13. TRY to Toman rate ──────────────────────────────────────
+        if ql in ('try', 'tl', 'lira', 'ترک', 'لیر'):
+            try_rate = get_try_to_irr()
+            if try_rate:
+                toman_lbl = T(uid, 'toman_label')
+                txt = f"🇹🇷 <b>1 TRY = {try_rate} {toman_lbl}</b>"
+                results.append(article("try_rate", f"1 TRY = {try_rate} {toman_lbl}", f"TRY → {toman_lbl}", txt, html=True))
+
+        # ── 14. Holdings / Portfolio ────────────────────────────────────
+        if ql in ('holdings', 'portfolio', 'port', 'پرتفو', 'دارایی'):
+            saved = db_get_holdings(uid) or {}
+            if saved:
+                lines = [f"💼 <b>Portfolio</b>\n"]
+                total = 0.0
+                for symbol, amount in saved.items():
+                    cid = detect_currency(symbol.lower())
+                    if not cid:
+                        continue
+                    p = get_crypto_price(cid)
+                    if p:
+                        val = amount * p
+                        total += val
+                        lines.append(f"🪙 <b>{symbol}</b>: {fmt_price(val)}")
+                    else:
+                        lines.append(f"🪙 <b>{symbol}</b>: <i>N/A</i>")
+                if irr:
+                    total_irr = total * irr
+                    lines.append(f"\n💰 <b>Total: {fmt_price(total)}</b> · {total_irr:,.0f} {T(uid, 'toman_label')}")
+                else:
+                    lines.append(f"\n💰 <b>Total: {fmt_price(total)}</b>")
+                txt = "\n".join(lines)
+                results.append(article("holdings", "Portfolio", f"Total: {fmt_price(total)}", txt, html=True))
+
+        # ── 15. Alerts ──────────────────────────────────────────────────
+        if ql in ('alerts', 'alert', 'my alerts', 'my alert', 'هشدار', 'هشدارها'):
+            alerts = db_get_alerts(uid)
+            if alerts:
+                lines = [f"🔔 <b>Active Alerts</b>  ({len(alerts)})\n"]
+                for a in alerts:
+                    arrow = '📈' if a['direction'] == 'above' else '📉'
+                    direction_word = T(uid, 'above_word') if a['direction'] == 'above' else T(uid, 'below_word')
+                    lines.append(f"{arrow} {a['symbol']} {direction_word} {fmt_price(a['target_price'])}")
+                txt = "\n".join(lines)
+                results.append(article("alerts", f"Alerts ({len(alerts)})", f"{len(alerts)} active", txt, html=True))
+            else:
+                results.append(article("no_alerts", T(uid, 'no_alerts_simple'), "", T(uid, 'no_alerts_simple'), html=True))
+
+        # ── 16. Math expression ───────────────────────────────────────
         if re.match(r'^[\d+\-*/().%\s]+$', q) and any(c in q for c in '+-*/'):
             res = evaluate_math(q)
             if res and not res.startswith('❌'):
