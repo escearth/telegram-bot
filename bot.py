@@ -795,7 +795,9 @@ _COINCAP_ID_MAP = {
 
 def _fetch_prices_coincap(ids) -> dict:
     try:
-        id_list = ids.split(',')
+        id_list = [i for i in ids.split(',') if i != 'telegram-stars']
+        if not id_list:
+            return {}
         cap_ids = ','.join(_COINCAP_ID_MAP.get(i, i) for i in id_list)
         resp = requests.get(f"https://api.coincap.io/v2/assets?ids={cap_ids}", timeout=10)
         if resp.status_code != 200:
@@ -816,13 +818,15 @@ def _fetch_prices_coincap(ids) -> dict:
         return {}
 
 
+BINANCE_SKIP = {'tether', 'telegram-stars'}
+
+
 def _fetch_prices_binance(ids) -> dict:
     try:
-        id_list = ids.split(',')
-        symbols = [f"{EXCHANGE_SYMBOL_MAP.get(c, c).upper()}USDT" for c in id_list
-                   if c in EXCHANGE_SYMBOL_MAP]
-        if not symbols:
+        id_list = [c for c in ids.split(',') if c not in BINANCE_SKIP and c in EXCHANGE_SYMBOL_MAP]
+        if not id_list:
             return {}
+        symbols = [f"{EXCHANGE_SYMBOL_MAP[c]}USDT" for c in id_list]
         resp = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr"
             f"?symbols={json.dumps(symbols, separators=(',', ':'))}",
@@ -841,6 +845,8 @@ def _fetch_prices_binance(ids) -> dict:
                 change = float(t.get('priceChangePercent', 0))
                 if usd:
                     result[cid] = {'usd': usd, 'usd_24h_change': change}
+        # Tether is always $1
+        result['tether'] = {'usd': 1.0, 'usd_24h_change': 0}
         return result
     except Exception as e:
         logger.error(f"Binance batch error: {e}")
