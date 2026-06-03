@@ -771,16 +771,27 @@ def rate_limited_api_call(func):
 
 @rate_limited_api_call
 def _fetch_prices_batch(ids: str) -> dict:
-    try:
-        resp = requests.get(
-            f"https://api.coingecko.com/api/v3/simple/price"
-            f"?ids={ids}&vs_currencies=usd&include_24hr_change=true",
-            timeout=10
-        )
-        return resp.json() if resp.status_code == 200 else {}
-    except Exception as e:
-        logger.error(f"Batch price fetch failed: {e}")
-        return {}
+    cache_key = f'prices_batch_{ids}'
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    for attempt in range(3):
+        try:
+            resp = requests.get(
+                f"https://api.coingecko.com/api/v3/simple/price"
+                f"?ids={ids}&vs_currencies=usd&include_24hr_change=true",
+                timeout=10
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                cache_set(cache_key, data, ttl=30)
+                return data
+            elif resp.status_code == 429:
+                time.sleep(2 ** attempt)
+        except Exception as e:
+            logger.error(f"Batch price fetch attempt {attempt+1} failed: {e}")
+            time.sleep(2 ** attempt)
+    return {}
 
 
 # ─────────────────────────────────────────────
@@ -4041,56 +4052,120 @@ def gainers_losers_cmd(message):
 FRAGMENT_CACHE_TTL = 120
 
 FRAGMENT_GIFT_COLLECTIONS = [
+    {'slug': 'artisanbrick', 'name': 'Artisan Bricks'},
     {'slug': 'astralshard', 'name': 'Astral Shards'},
-    {'slug': 'bdaycandle', 'name': 'B-Day Candle'},
-    {'slug': 'berrybomb', 'name': 'Berry Bomb'},
-    {'slug': 'bubblegum', 'name': 'Bubblegum'},
-    {'slug': 'cardinal', 'name': 'Cardinal'},
-    {'slug': 'chillguy', 'name': 'Chill Guy'},
-    {'slug': 'crimson', 'name': 'Crimson'},
-    {'slug': 'cyberpunk', 'name': 'Cyberpunk'},
-    {'slug': 'dawn', 'name': 'Dawn'},
-    {'slug': 'dragonsoul', 'name': 'Dragon Soul'},
-    {'slug': 'dusk', 'name': 'Dusk'},
-    {'slug': 'ember', 'name': 'Ember'},
-    {'slug': 'fairy', 'name': 'Fairy'},
-    {'slug': 'flame', 'name': 'Flame'},
-    {'slug': 'frost', 'name': 'Frost'},
-    {'slug': 'gemstone', 'name': 'Gemstone'},
-    {'slug': 'ghost', 'name': 'Ghost'},
-    {'slug': 'golden', 'name': 'Golden'},
-    {'slug': 'guardian', 'name': 'Guardian'},
-    {'slug': 'ice', 'name': 'Ice'},
-    {'slug': 'jade', 'name': 'Jade'},
-    {'slug': 'lunar', 'name': 'Lunar'},
-    {'slug': 'magma', 'name': 'Magma'},
-    {'slug': 'midnight', 'name': 'Midnight'},
-    {'slug': 'moonstone', 'name': 'Moonstone'},
-    {'slug': 'neon', 'name': 'Neon'},
-    {'slug': 'nightshade', 'name': 'Nightshade'},
-    {'slug': 'ocean', 'name': 'Ocean'},
-    {'slug': 'onix', 'name': 'Onix'},
-    {'slug': 'phantom', 'name': 'Phantom'},
-    {'slug': 'phoenix', 'name': 'Phoenix'},
-    {'slug': 'rainbow', 'name': 'Rainbow'},
-    {'slug': 'ruby', 'name': 'Ruby'},
-    {'slug': 'sakura', 'name': 'Sakura'},
-    {'slug': 'sapphire', 'name': 'Sapphire'},
-    {'slug': 'shadow', 'name': 'Shadow'},
-    {'slug': 'silver', 'name': 'Silver'},
-    {'slug': 'skull', 'name': 'Skull'},
-    {'slug': 'solar', 'name': 'Solar'},
-    {'slug': 'star', 'name': 'Star'},
-    {'slug': 'storm', 'name': 'Storm'},
-    {'slug': 'thunder', 'name': 'Thunder'},
-    {'slug': 'toxic', 'name': 'Toxic'},
-    {'slug': 'vampire', 'name': 'Vampire'},
-    {'slug': 'volt', 'name': 'Volt'},
-    {'slug': 'whisper', 'name': 'Whisper'},
-    {'slug': 'wildfire', 'name': 'Wildfire'},
-    {'slug': 'witch', 'name': 'Witch'},
-    {'slug': 'wolf', 'name': 'Wolf'},
-    {'slug': 'zen', 'name': 'Zen'},
+    {'slug': 'bdaycandle', 'name': 'B-Day Candles'},
+    {'slug': 'berrybox', 'name': 'Berry Boxes'},
+    {'slug': 'bigyear', 'name': 'Big Years'},
+    {'slug': 'blingbinky', 'name': 'Bling Binkies'},
+    {'slug': 'bondedring', 'name': 'Bonded Rings'},
+    {'slug': 'bowtie', 'name': 'Bow Ties'},
+    {'slug': 'bunnymuffin', 'name': 'Bunny Muffins'},
+    {'slug': 'candycane', 'name': 'Candy Canes'},
+    {'slug': 'chillflame', 'name': 'Chill Flames'},
+    {'slug': 'cloverpin', 'name': 'Clover Pins'},
+    {'slug': 'cookieheart', 'name': 'Cookie Hearts'},
+    {'slug': 'crystalball', 'name': 'Crystal Balls'},
+    {'slug': 'cupidcharm', 'name': 'Cupid Charms'},
+    {'slug': 'deskcalendar', 'name': 'Desk Calendars'},
+    {'slug': 'diamondring', 'name': 'Diamond Rings'},
+    {'slug': 'durovscap', 'name': "Durov's Caps"},
+    {'slug': 'easteregg', 'name': 'Easter Eggs'},
+    {'slug': 'electricskull', 'name': 'Electric Skulls'},
+    {'slug': 'eternalcandle', 'name': 'Eternal Candles'},
+    {'slug': 'eternalrose', 'name': 'Eternal Roses'},
+    {'slug': 'evileye', 'name': 'Evil Eyes'},
+    {'slug': 'faithamulet', 'name': 'Faith Amulets'},
+    {'slug': 'flyingbroom', 'name': 'Flying Brooms'},
+    {'slug': 'freshsocks', 'name': 'Fresh Socks'},
+    {'slug': 'gemsignet', 'name': 'Gem Signets'},
+    {'slug': 'genielamp', 'name': 'Genie Lamps'},
+    {'slug': 'gingercookie', 'name': 'Ginger Cookies'},
+    {'slug': 'hangingstar', 'name': 'Hanging Stars'},
+    {'slug': 'happybrownie', 'name': 'Happy Brownies'},
+    {'slug': 'heartlocket', 'name': 'Heart Lockets'},
+    {'slug': 'heroichelmet', 'name': 'Heroic Helmets'},
+    {'slug': 'hexpot', 'name': 'Hex Pots'},
+    {'slug': 'holidaydrink', 'name': 'Holiday Drinks'},
+    {'slug': 'homemadecake', 'name': 'Homemade Cakes'},
+    {'slug': 'hypnolollipop', 'name': 'Hypno Lollipops'},
+    {'slug': 'icecream', 'name': 'Ice Creams'},
+    {'slug': 'inputkey', 'name': 'Input Keys'},
+    {'slug': 'instantramen', 'name': 'Instant Ramens'},
+    {'slug': 'iongem', 'name': 'Ion Gems'},
+    {'slug': 'ionicdryer', 'name': 'Ionic Dryers'},
+    {'slug': 'jackinthebox', 'name': 'Jacks-in-the-Box'},
+    {'slug': 'jellybunny', 'name': 'Jelly Bunnies'},
+    {'slug': 'jesterhat', 'name': 'Jester Hats'},
+    {'slug': 'jinglebells', 'name': 'Jingle Bells'},
+    {'slug': 'jollychimp', 'name': 'Jolly Chimps'},
+    {'slug': 'joyfulbundle', 'name': 'Joyful Bundles'},
+    {'slug': 'khabibspapakha', 'name': "Khabib's Papakhas"},
+    {'slug': 'kissedfrog', 'name': 'Kissed Frogs'},
+    {'slug': 'lightsword', 'name': 'Light Swords'},
+    {'slug': 'lolpop', 'name': 'Lol Pops'},
+    {'slug': 'lootbag', 'name': 'Loot Bags'},
+    {'slug': 'lovecandle', 'name': 'Love Candles'},
+    {'slug': 'lovepotion', 'name': 'Love Potions'},
+    {'slug': 'lowrider', 'name': 'Low Riders'},
+    {'slug': 'lunarsnake', 'name': 'Lunar Snakes'},
+    {'slug': 'lushbouquet', 'name': 'Lush Bouquets'},
+    {'slug': 'madpumpkin', 'name': 'Mad Pumpkins'},
+    {'slug': 'magicpotion', 'name': 'Magic Potions'},
+    {'slug': 'mightyarm', 'name': 'Mighty Arms'},
+    {'slug': 'minioscar', 'name': 'Mini Oscars'},
+    {'slug': 'moneypot', 'name': 'Money Pots'},
+    {'slug': 'moodpack', 'name': 'Mood Packs'},
+    {'slug': 'moonpendant', 'name': 'Moon Pendants'},
+    {'slug': 'moussecake', 'name': 'Mousse Cakes'},
+    {'slug': 'nailbracelet', 'name': 'Nail Bracelets'},
+    {'slug': 'nekohelmet', 'name': 'Neko Helmets'},
+    {'slug': 'partysparkler', 'name': 'Party Sparklers'},
+    {'slug': 'perfumebottle', 'name': 'Perfume Bottles'},
+    {'slug': 'petsnake', 'name': 'Pet Snakes'},
+    {'slug': 'plushpepe', 'name': 'Plush Pepes'},
+    {'slug': 'poolfloat', 'name': 'Pool Floats'},
+    {'slug': 'preciouspeach', 'name': 'Precious Peaches'},
+    {'slug': 'prettyposy', 'name': 'Pretty Posies'},
+    {'slug': 'rarebird', 'name': 'Rare Birds'},
+    {'slug': 'recordplayer', 'name': 'Record Players'},
+    {'slug': 'restlessjar', 'name': 'Restless Jars'},
+    {'slug': 'sakuraflower', 'name': 'Sakura Flowers'},
+    {'slug': 'santahat', 'name': 'Santa Hats'},
+    {'slug': 'scaredcat', 'name': 'Scared Cats'},
+    {'slug': 'sharptongue', 'name': 'Sharp Tongues'},
+    {'slug': 'signetring', 'name': 'Signet Rings'},
+    {'slug': 'skullflower', 'name': 'Skull Flowers'},
+    {'slug': 'skystilettos', 'name': 'Sky Stilettos'},
+    {'slug': 'sleighbell', 'name': 'Sleigh Bells'},
+    {'slug': 'snakebox', 'name': 'Snake Boxes'},
+    {'slug': 'snoopcigar', 'name': 'Snoop Cigars'},
+    {'slug': 'snoopdogg', 'name': 'Snoop Doggs'},
+    {'slug': 'snowglobe', 'name': 'Snow Globes'},
+    {'slug': 'snowmittens', 'name': 'Snow Mittens'},
+    {'slug': 'spicedwine', 'name': 'Spiced Wines'},
+    {'slug': 'springbasket', 'name': 'Spring Baskets'},
+    {'slug': 'spyagaric', 'name': 'Spy Agarics'},
+    {'slug': 'starnotepad', 'name': 'Star Notepads'},
+    {'slug': 'stellarrocket', 'name': 'Stellar Rockets'},
+    {'slug': 'swagbag', 'name': 'Swag Bags'},
+    {'slug': 'swisswatch', 'name': 'Swiss Watches'},
+    {'slug': 'tamagadget', 'name': 'Tama Gadgets'},
+    {'slug': 'timelessbook', 'name': 'Timeless Books'},
+    {'slug': 'tophat', 'name': 'Top Hats'},
+    {'slug': 'toybear', 'name': 'Toy Bears'},
+    {'slug': 'trappedheart', 'name': 'Trapped Hearts'},
+    {'slug': 'ufcstrike', 'name': 'UFC Strikes'},
+    {'slug': 'valentinebox', 'name': 'Valentine Boxes'},
+    {'slug': 'vicecream', 'name': 'Vice Creams'},
+    {'slug': 'victorymedal', 'name': 'Victory Medals'},
+    {'slug': 'vintagecigar', 'name': 'Vintage Cigars'},
+    {'slug': 'voodoodoll', 'name': 'Voodoo Dolls'},
+    {'slug': 'westsidesign', 'name': 'Westside Signs'},
+    {'slug': 'whipcupcake', 'name': 'Whip Cupcakes'},
+    {'slug': 'winterwreath', 'name': 'Winter Wreaths'},
+    {'slug': 'witchhat', 'name': 'Witch Hats'},
+    {'slug': 'xmasstocking', 'name': 'Xmas Stockings'},
 ]
 
 
@@ -4113,16 +4188,18 @@ def _fragment_username_data(username):
         auction_end = None
         min_bid = None
 
-        if 'This username was sold' in html:
-            status = 'Sold'
-        elif 'This username is not for sale' in html:
-            status = 'Not for sale'
-        elif 'On auction' in html:
-            status = 'On auction'
-        elif 'For sale' in html or 'Buy' in html:
-            status = 'For sale'
-        elif 'Available' in html:
-            status = 'Available'
+        m = re.search(r'tm-section-header-status\s+tm-status-([a-z]+)">([^<]+)', html)
+        if m:
+            css_class = m.group(1)
+            visible_text = m.group(2).strip()
+            if css_class == 'unavail':
+                status = 'Sold' if visible_text == 'Sold' else 'Unavailable'
+            elif css_class == 'taken':
+                status = 'Taken'
+            elif css_class == 'avail':
+                status = visible_text  # "Available" or "On auction"
+            else:
+                status = visible_text
 
         m = re.search(r'(\d+[\d,.]*)\s*TON', html)
         if m:
@@ -4174,12 +4251,15 @@ def _fragment_collection_floor(slug):
         html = resp.text
         floor = None
         total = None
-        m = re.search(r'(\d+[\d,.]*)\s*TON', html)
+        m = re.search(r'tm-value[^>]*icon-ton[^>]*>([\d.,]+)', html)
         if m:
             floor = m.group(1).replace(',', '')
-        m = re.search(r'(\d+[\d,.]*)\s*(?:total|items?|NFTs?)', html, re.IGNORECASE)
-        if m:
-            total = m.group(1).replace(',', '')
+        # Total items: look for "X items" near first filter count
+        for m in re.finditer(r'(\d+[\d,.]*)\s*items?', html, re.IGNORECASE):
+            if total is None:
+                total = m.group(1).replace(',', '')
+            else:
+                break  # first one is the unfiltered total
         result = {'slug': slug, 'floor_ton': floor, 'total': total}
         cache_set(cache_key, result, ttl=FRAGMENT_CACHE_TTL)
         return result
@@ -4229,10 +4309,22 @@ def fragment_cmd(message):
 def gifts_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
-    lines = ["🎁 <b>Telegram Gift Collections</b>\n"]
-    for c in FRAGMENT_GIFT_COLLECTIONS:
-        lines.append(f"• <b>{c['name']}</b> — <code>/gift {c['slug']}</code>")
-    lines.append("\nUse /gift <i>slug</i> for floor price & details")
+    lines = ["🎁 <b>Top Telegram Gift Collections</b>\n"]
+    # Show top 5 by floor price
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        fut = {ex.submit(_fragment_collection_floor, c['slug']): c for c in FRAGMENT_GIFT_COLLECTIONS[:5]}
+        for f in concurrent.futures.as_completed(fut):
+            c = fut[f]
+            data = f.result()
+            floor = float(data['floor_ton']) if data and data.get('floor_ton') else None
+            if floor:
+                ton_price = get_crypto_price('the-open-network')
+                usd = f" (${floor * ton_price:,.2f})" if ton_price else ""
+                lines.append(f"• <b>{c['name']}</b> — <code>{floor} TON</code>{usd}")
+            else:
+                lines.append(f"• <b>{c['name']}</b> — <code>/gift {c['slug']}</code>")
+    lines.append(f"\nAll {len(FRAGMENT_GIFT_COLLECTIONS)} collections available.")
+    lines.append("Use /gift <i>slug</i> for details.")
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 
 
