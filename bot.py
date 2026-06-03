@@ -867,6 +867,11 @@ def _fetch_prices_batch(ids: str) -> dict:
         if data:
             logger.info(f"Batch prices from {source_name}")
             cache_set(cache_key, data, ttl=30)
+            # Seed individual caches so get_crypto_price hits immediately
+            for cid, info in data.items():
+                usd = info.get('usd')
+                if usd:
+                    cache_set(cid, usd)
             return data
         logger.warning(f"{source_name} returned no data, trying next source")
     return {}
@@ -2105,68 +2110,54 @@ def get_crypto_price(crypto_id):
     if cached is not None:
         return cached
     
-    # Try multiple sources in order
     # 1) CoinGecko
     try:
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd"
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(
+            f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd",
+            timeout=8
+        )
         if resp.status_code == 200:
             data = resp.json()
             if crypto_id in data:
                 price = data[crypto_id]['usd']
                 cache_set(crypto_id, price)
                 return price
-    except Exception as e:
-        logger.error(f"CG single {crypto_id}: {e}")
+    except Exception:
+        pass
     
-    # 2) CoinCap
-    try:
-        cap_id = _COINCAP_ID_MAP.get(crypto_id, crypto_id)
-        resp = requests.get(f"https://api.coincap.io/v2/assets/{cap_id}", timeout=10)
-        if resp.status_code == 200:
-            d = resp.json().get('data', {})
-            price = float(d.get('priceUsd', 0))
-            if price:
-                cache_set(crypto_id, price)
-                return price
-    except Exception as e:
-        logger.error(f"CoinCap single {crypto_id}: {e}")
-    
-    # 3) Binance (via exchange ticker)
+    # 2) Binance
     try:
         sym = EXCHANGE_SYMBOL_MAP.get(crypto_id)
         if sym:
             resp = requests.get(
                 "https://api.binance.com/api/v3/ticker/price",
                 params={'symbol': f"{sym}USDT"},
-                timeout=10
+                timeout=8
             )
             if resp.status_code == 200:
                 price = float(resp.json().get('price', 0))
                 if price:
                     cache_set(crypto_id, price)
                     return price
-    except Exception as e:
-        logger.error(f"Binance single {crypto_id}: {e}")
+    except Exception:
+        pass
     
-    # 4) CryptoCompare (existing fallback)
+    # 3) CryptoCompare
     try:
-        symbol_map = {
+        sym_map = {
             'bitcoin': 'BTC', 'ethereum': 'ETH', 'tether': 'USDT', 'binancecoin': 'BNB',
             'cardano': 'ADA', 'ripple': 'XRP', 'solana': 'SOL', 'polkadot': 'DOT',
             'dogecoin': 'DOGE', 'shiba-inu': 'SHIB', 'tron': 'TRX', 'the-open-network': 'TON'
         }
-        symbol = symbol_map.get(crypto_id)
-        if symbol:
-            resp = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={symbol}&tsyms=USD", timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                if 'USD' in data:
-                    price = float(data['USD'])
-                    cache_set(crypto_id, price)
-                    return price
-    except Exception as e:
-        logger.error(f"CryptoCompare {crypto_id}: {e}")
+        sym = sym_map.get(crypto_id)
+        if sym:
+            resp = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={sym}&tsyms=USD", timeout=8)
+            if resp.status_code == 200 and 'USD' in resp.json():
+                price = float(resp.json()['USD'])
+                cache_set(crypto_id, price)
+                return price
+    except Exception:
+        pass
     
     return None
 
