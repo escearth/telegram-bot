@@ -4038,6 +4038,59 @@ def gainers_losers_cmd(message):
 # ═══════════════════════════════════════════════
 FRAGMENT_CACHE_TTL = 120
 
+FRAGMENT_GIFT_COLLECTIONS = [
+    {'slug': 'astralshard', 'name': 'Astral Shards'},
+    {'slug': 'bdaycandle', 'name': 'B-Day Candle'},
+    {'slug': 'berrybomb', 'name': 'Berry Bomb'},
+    {'slug': 'bubblegum', 'name': 'Bubblegum'},
+    {'slug': 'cardinal', 'name': 'Cardinal'},
+    {'slug': 'chillguy', 'name': 'Chill Guy'},
+    {'slug': 'crimson', 'name': 'Crimson'},
+    {'slug': 'cyberpunk', 'name': 'Cyberpunk'},
+    {'slug': 'dawn', 'name': 'Dawn'},
+    {'slug': 'dragonsoul', 'name': 'Dragon Soul'},
+    {'slug': 'dusk', 'name': 'Dusk'},
+    {'slug': 'ember', 'name': 'Ember'},
+    {'slug': 'fairy', 'name': 'Fairy'},
+    {'slug': 'flame', 'name': 'Flame'},
+    {'slug': 'frost', 'name': 'Frost'},
+    {'slug': 'gemstone', 'name': 'Gemstone'},
+    {'slug': 'ghost', 'name': 'Ghost'},
+    {'slug': 'golden', 'name': 'Golden'},
+    {'slug': 'guardian', 'name': 'Guardian'},
+    {'slug': 'ice', 'name': 'Ice'},
+    {'slug': 'jade', 'name': 'Jade'},
+    {'slug': 'lunar', 'name': 'Lunar'},
+    {'slug': 'magma', 'name': 'Magma'},
+    {'slug': 'midnight', 'name': 'Midnight'},
+    {'slug': 'moonstone', 'name': 'Moonstone'},
+    {'slug': 'neon', 'name': 'Neon'},
+    {'slug': 'nightshade', 'name': 'Nightshade'},
+    {'slug': 'ocean', 'name': 'Ocean'},
+    {'slug': 'onix', 'name': 'Onix'},
+    {'slug': 'phantom', 'name': 'Phantom'},
+    {'slug': 'phoenix', 'name': 'Phoenix'},
+    {'slug': 'rainbow', 'name': 'Rainbow'},
+    {'slug': 'ruby', 'name': 'Ruby'},
+    {'slug': 'sakura', 'name': 'Sakura'},
+    {'slug': 'sapphire', 'name': 'Sapphire'},
+    {'slug': 'shadow', 'name': 'Shadow'},
+    {'slug': 'silver', 'name': 'Silver'},
+    {'slug': 'skull', 'name': 'Skull'},
+    {'slug': 'solar', 'name': 'Solar'},
+    {'slug': 'star', 'name': 'Star'},
+    {'slug': 'storm', 'name': 'Storm'},
+    {'slug': 'thunder', 'name': 'Thunder'},
+    {'slug': 'toxic', 'name': 'Toxic'},
+    {'slug': 'vampire', 'name': 'Vampire'},
+    {'slug': 'volt', 'name': 'Volt'},
+    {'slug': 'whisper', 'name': 'Whisper'},
+    {'slug': 'wildfire', 'name': 'Wildfire'},
+    {'slug': 'witch', 'name': 'Witch'},
+    {'slug': 'wolf', 'name': 'Wolf'},
+    {'slug': 'zen', 'name': 'Zen'},
+]
+
 
 def _fragment_username_data(username):
     clean = username.lstrip('@').strip()
@@ -4046,27 +4099,59 @@ def _fragment_username_data(username):
     if cached:
         return cached
     try:
-        resp = requests.get(f'https://fragment.com/username?query={clean}', timeout=10,
-                            headers={'User-Agent': 'Mozilla/5.0'})
+        resp = requests.get(f'https://fragment.com/username/{clean}', timeout=10,
+                            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
         if resp.status_code != 200:
             return None
         html = resp.text
+
         status = "Unknown"
-        price = None
+        price_ton = None
         owner = None
-        if 'is not for sale' in html.lower() or 'This username was sold' in html:
-            status = "Owned / Not for sale"
-        elif 'for sale' in html.lower():
-            status = "For sale"
-        elif 'auction' in html.lower():
-            status = "On auction"
+        auction_end = None
+        min_bid = None
+
+        if 'This username was sold' in html:
+            status = 'Sold'
+        elif 'This username is not for sale' in html:
+            status = 'Not for sale'
+        elif 'On auction' in html:
+            status = 'On auction'
+        elif 'For sale' in html or 'Buy' in html:
+            status = 'For sale'
+        elif 'Available' in html:
+            status = 'Available'
+
         m = re.search(r'(\d+[\d,.]*)\s*TON', html)
         if m:
-            price = m.group(1).replace(',', '')
-        m = re.search(r'wallet addresses[^<]*<[^>]*>([^<]+)', html, re.DOTALL)
+            price_ton = m.group(1).replace(',', '')
+
+        m = re.search(r'(?:Ends? in|Auction ends? in|Time left)[:\s]*([^<]+)', html, re.IGNORECASE)
+        if m:
+            auction_end = m.group(1).strip()[:60]
+
+        m = re.search(r'Min(?:imum)?\s*(?:bid)?[:\s]*(\d+[\d,.]*)\s*TON', html, re.IGNORECASE)
+        if m:
+            min_bid = m.group(1).replace(',', '')
+
+        owner = None
+        m = re.search(r'(?:Owner|Wallet)[:\s]*<[^>]*>([^<]+)', html, re.DOTALL)
         if m:
             owner = m.group(1).strip()
-        result = {'username': clean, 'status': status, 'price_ton': price, 'owner': owner}
+        if not owner:
+            m = re.search(r'[A-Za-z0-9_-]{48,}', html)
+            if m:
+                owner = m.group(0)
+
+        result = {
+            'username': clean,
+            'status': status,
+            'price_ton': price_ton,
+            'owner': owner,
+            'auction_end': auction_end,
+            'min_bid': min_bid,
+            'url': f'https://fragment.com/username/{clean}',
+        }
         cache_set(cache_key, result, ttl=FRAGMENT_CACHE_TTL)
         return result
     except Exception as e:
@@ -4074,24 +4159,30 @@ def _fragment_username_data(username):
         return None
 
 
-def _fragment_gift_collections():
-    cached = cache_get('frag_gift_collections')
+def _fragment_collection_floor(slug):
+    cache_key = f'frag_floor_{slug}'
+    cached = cache_get(cache_key)
     if cached:
         return cached
     try:
-        resp = requests.get('https://fragment.com/gifts', timeout=10,
-                            headers={'User-Agent': 'Mozilla/5.0'})
+        resp = requests.get(f'https://fragment.com/gifts/{slug}', timeout=10,
+                            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
         if resp.status_code != 200:
             return None
         html = resp.text
-        collections = []
-        for m in re.finditer(r'/gifts/([a-z0-9-]+)[^<]*?<[^>]*?>([^<]+)</a>', html):
-            slug, name = m.group(1), m.group(2).strip()
-            collections.append({'slug': slug, 'name': name})
-        cache_set('frag_gift_collections', collections, ttl=FRAGMENT_CACHE_TTL)
-        return collections
+        floor = None
+        total = None
+        m = re.search(r'(\d+[\d,.]*)\s*TON', html)
+        if m:
+            floor = m.group(1).replace(',', '')
+        m = re.search(r'(\d+[\d,.]*)\s*(?:total|items?|NFTs?)', html, re.IGNORECASE)
+        if m:
+            total = m.group(1).replace(',', '')
+        result = {'slug': slug, 'floor_ton': floor, 'total': total}
+        cache_set(cache_key, result, ttl=FRAGMENT_CACHE_TTL)
+        return result
     except Exception as e:
-        logger.error(f"Gift collections fetch failed: {e}")
+        logger.error(f"Collection floor fetch failed for {slug}: {e}")
         return None
 
 
@@ -4112,13 +4203,22 @@ def fragment_cmd(message):
         return
     lines = [f"🏷 <b>@{data['username']}</b>\n"]
     lines.append(f"📌 Status: <b>{data['status']}</b>")
-    if data['price_ton']:
+    if data['min_bid']:
+        ton_price = get_crypto_price('the-open-network')
+        usd = float(data['min_bid']) * ton_price if ton_price else None
+        usd_str = f" (${usd:,.2f})" if usd else ""
+        lines.append(f"💰 Min bid: <b>{data['min_bid']} TON</b>{usd_str}")
+    if data['price_ton'] and not data['min_bid']:
         ton_price = get_crypto_price('the-open-network')
         price_usd = float(data['price_ton']) * ton_price if ton_price else None
         usd_str = f" (${price_usd:,.2f})" if price_usd else ""
         lines.append(f"💰 Price: <b>{data['price_ton']} TON</b>{usd_str}")
+    if data['auction_end']:
+        lines.append(f"⏳ Ends: <b>{data['auction_end']}</b>")
     if data['owner']:
-        lines.append(f"👤 Owner: <code>{data['owner'][:12]}...</code>")
+        addr = data['owner']
+        lines.append(f"👤 Owner: <code>{addr[:8]}...{addr[-4:]}</code>")
+    lines.append(f"🔗 <a href='{data['url']}'>View on Fragment</a>")
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 
 
@@ -4127,15 +4227,10 @@ def fragment_cmd(message):
 def gifts_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
-    bot.send_message(message.chat.id, "🔍 Fetching gift collections from Fragment...", parse_mode='HTML')
-    data = _fragment_gift_collections()
-    if not data:
-        bot.reply_to(message, "❌ Could not fetch gift collections.")
-        return
     lines = ["🎁 <b>Telegram Gift Collections</b>\n"]
-    for c in data[:20]:
-        lines.append(f"• <b>{c['name']}</b> — /gift_{c['slug']}")
-    lines.append("\nUse /gift_collectionname for details (e.g. /gift_astralshard)")
+    for c in FRAGMENT_GIFT_COLLECTIONS:
+        lines.append(f"• <b>{c['name']}</b> — <code>/gift {c['slug']}</code>")
+    lines.append("\nUse /gift <i>slug</i> for floor price & details")
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 
 
@@ -4149,16 +4244,20 @@ def gift_cmd(message):
         bot.reply_to(message, "Usage: /gift collection_slug\nExample: /gift astralshard")
         return
     slug = args[1].strip().lower()
-    bot.send_message(message.chat.id, f"🔍 Fetching <b>{slug}</b> details...", parse_mode='HTML')
-    data = _fragment_gift_collections()
-    if not data:
-        bot.reply_to(message, "❌ Could not fetch data.")
-        return
-    match = next((c for c in data if c['slug'] == slug), None)
+    match = next((c for c in FRAGMENT_GIFT_COLLECTIONS if c['slug'] == slug), None)
     if not match:
         bot.reply_to(message, f"❌ Collection <b>{slug}</b> not found. Use /gifts to see all.", parse_mode='HTML')
         return
+    bot.send_message(message.chat.id, f"🔍 Fetching <b>{match['name']}</b> floor price...", parse_mode='HTML')
+    floor = _fragment_collection_floor(slug)
     lines = [f"🎁 <b>{match['name']}</b>\n"]
+    if floor and floor.get('floor_ton'):
+        ton_price = get_crypto_price('the-open-network')
+        usd = float(floor['floor_ton']) * ton_price if ton_price else None
+        usd_str = f" (${usd:,.2f})" if usd else ""
+        lines.append(f"💎 Floor: <b>{floor['floor_ton']} TON</b>{usd_str}")
+    if floor and floor.get('total'):
+        lines.append(f"📦 Total items: <b>{floor['total']}</b>")
     lines.append(f"🔗 <a href='https://fragment.com/gifts/{slug}'>View on Fragment</a>")
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 @bot.inline_handler(lambda query: len(query.query.strip()) > 0)
