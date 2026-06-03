@@ -288,6 +288,12 @@ def init_db():
                 lang    TEXT NOT NULL DEFAULT 'en'
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_prefs (
+                user_id INTEGER PRIMARY KEY,
+                exchange TEXT NOT NULL DEFAULT 'coingecko'
+            )
+        """)
         conn.commit()
         conn.close()
     logger.info("Database initialised")
@@ -1267,6 +1273,34 @@ STRINGS = {
         'inline_toman_usd':    "Toman → USD",
         'usd_simple':          "1 USD = {rate} Toman",
         'usd_amount':          "{amount} USD = {rate} Toman",
+
+        # ── Exchange / Chart / Trending / Fragment ─────────────
+        'exch_set':            "✅ Default price source set to <b>{name}</b>",
+        'exch_unknown':        "❌ Unknown exchange. Choose: {list}",
+        'exch_usage':          "Usage: /setexchange binance\nOr add @exchange to any query: btc @binance",
+        'exch_prompt':         "💱 <b>Select your default price source:</b>",
+        'chart_usage':         "Usage:\n/chart btc\n/chart btc 7d\n/chart btc 90d",
+        'chart_fail':          "❌ Chart generation failed. Try again later.",
+        'compare_usage':       "Usage: /compare btc eth\n/compare btc sol 90d",
+        'compare_fail':        "❌ Comparison failed. Try again later.",
+        'trending_header':     "🔥 <b>Trending on CoinGecko</b>\n",
+        'trending_fail':       "❌ Could not fetch trending data. Try again later.",
+        'gainers_header':      "📈 <b>Top Gainers (24h)</b>\n",
+        'losers_header':       "📉 <b>Top Losers (24h)</b>\n",
+        'movers_fail':         "❌ Could not fetch market data. Try again later.",
+        'fragment_usage':      "Usage: /fragment @username\nLook up a Telegram username on Fragment.com",
+        'fragment_looking':    "🔍 Looking up <b>{target}</b> on Fragment...",
+        'fragment_fail':       "❌ Could not fetch data from Fragment. The username may not exist.",
+        'fragment_owned':      "Owned / Not for sale",
+        'fragment_for_sale':   "For sale",
+        'fragment_auction':    "On auction",
+        'fragment_status':     "📌 Status: <b>{status}</b>",
+        'fragment_price':      "💰 Price: <b>{ton} TON</b>{usd}",
+        'fragment_owner':      "👤 Owner: <code>{wallet}</code>",
+        'gifts_header':        "🎁 <b>Telegram Gift Collections</b>\n",
+        'gifts_fail':          "❌ Could not fetch gift collections.",
+        'gifts_usage':         "Usage: /gift collection_slug\nExample: /gift astralshard",
+        'gift_not_found':      "❌ Collection <b>{slug}</b> not found. Use /gifts to see all.",
     },
 
     'fa': {
@@ -1613,6 +1647,34 @@ STRINGS = {
         'inline_toman_usd':    "تومان → دلار",
         'usd_simple':          "1 USD = {rate} Toman",
         'usd_amount':          "{amount} USD = {rate} Toman",
+
+        # ── Exchange / Chart / Trending / Fragment ─────────────
+        'exch_set':            "✅ منبع قیمت پیش‌فرض به <b>{name}</b> تغییر یافت",
+        'exch_unknown':        "❌ صرافی ناشناخته. انتخاب کنید: {list}",
+        'exch_usage':          "نحوه استفاده: /setexchange binance\nیا @exchange به هر query اضافه کنید: btc @binance",
+        'exch_prompt':         "💱 <b>منبع قیمت پیش‌فرض را انتخاب کنید:</b>",
+        'chart_usage':         "نحوه استفاده:\n/chart btc\n/chart btc 7d\n/chart btc 90d",
+        'chart_fail':          "❌ تولید نمودار ناموفق بود. دوباره تلاش کنید.",
+        'compare_usage':       "نحوه استفاده: /compare btc eth\n/compare btc sol 90d",
+        'compare_fail':        "❌ مقایسه ناموفق بود. دوباره تلاش کنید.",
+        'trending_header':     "🔥 <b>محبوب‌های CoinGecko</b>\n",
+        'trending_fail':       "❌ دریافت داده محبوب‌ها ناموفق بود.",
+        'gainers_header':      "📈 <b>بیشترین افزایش (24h)</b>\n",
+        'losers_header':       "📉 <b>بیشترین کاهش (24h)</b>\n",
+        'movers_fail':         "❌ دریافت داده بازار ناموفق بود.",
+        'fragment_usage':      "نحوه استفاده: /fragment @username\nبررسی نام کاربری تلگرام در Fragment.com",
+        'fragment_looking':    "🔍 در حال بررسی <b>{target}</b> در Fragment...",
+        'fragment_fail':       "❌ دریافت داده از Fragment ناموفق بود.",
+        'fragment_owned':      "مالکیت / قابل فروش نیست",
+        'fragment_for_sale':   "برای فروش",
+        'fragment_auction':    "در حراج",
+        'fragment_status':     "📌 وضعیت: <b>{status}</b>",
+        'fragment_price':      "💰 قیمت: <b>{ton} TON</b>{usd}",
+        'fragment_owner':      "👤 مالک: <code>{wallet}</code>",
+        'gifts_header':        "🎁 <b>مجموعه هدایای تلگرام</b>\n",
+        'gifts_fail':          "❌ دریافت مجموعه هدایا ناموفق بود.",
+        'gifts_usage':         "نحوه استفاده: /gift collection_slug\nمثال: /gift astralshard",
+        'gift_not_found':      "❌ مجموعه <b>{slug}</b> یافت نشد. از /gifts استفاده کنید.",
     }
 }
 
@@ -1969,6 +2031,93 @@ def get_crypto_price(crypto_id):
     except Exception as e:
         logger.error(f"CryptoCompare error for {crypto_id}: {e}")
     return None
+
+
+EXCHANGE_SYMBOL_MAP = {
+    'bitcoin': 'BTC', 'ethereum': 'ETH', 'tether': 'USDT',
+    'binancecoin': 'BNB', 'cardano': 'ADA', 'ripple': 'XRP',
+    'solana': 'SOL', 'polkadot': 'DOT', 'dogecoin': 'DOGE',
+    'shiba-inu': 'SHIB', 'tron': 'TRX', 'the-open-network': 'TON',
+}
+
+EXCHANGES = {
+    'binance': {
+        'url': 'https://api.binance.com/api/v3/ticker/price?symbol={}USDT',
+        'parse': lambda j: float(j['price']),
+        'name': 'Binance',
+    },
+    'crypto.com': {
+        'url': 'https://api.crypto.com/v2/public/get-ticker?instrument={}_USD',
+        'parse': lambda j: float(j['result']['data']['a']),
+        'name': 'Crypto.com',
+    },
+    'kraken': {
+        'url': 'https://api.kraken.com/0/public/Ticker?pair={}USD',
+        'parse': lambda j: float(list(j['result'].values())[0]['c'][0]),
+        'name': 'Kraken',
+    },
+}
+
+EXCHANGE_NAMES = {e: info['name'] for e, info in EXCHANGES.items()}
+
+
+def get_exchange_symbol(crypto_id):
+    return EXCHANGE_SYMBOL_MAP.get(crypto_id)
+
+
+def _fetch_exchange_price(symbol, exchange_id):
+    info = EXCHANGES.get(exchange_id)
+    if not info or not symbol:
+        return None
+    url = info['url'].format(symbol)
+    try:
+        resp = requests.get(url, timeout=8)
+        resp.raise_for_status()
+        return info['parse'](resp.json())
+    except Exception:
+        return None
+
+
+def get_exchange_price(crypto_id, exchange='coingecko'):
+    if exchange == 'coingecko':
+        return get_crypto_price(crypto_id)
+    symbol = get_exchange_symbol(crypto_id)
+    if not symbol:
+        return None
+    cache_key = f'exch_{exchange}_{crypto_id}'
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    price = _fetch_exchange_price(symbol, exchange)
+    if price:
+        cache_set(cache_key, price, ttl=60)
+    return price
+
+
+def get_user_exchange(user_id):
+    with db_lock:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT exchange FROM exchange_prefs WHERE user_id=?", (user_id,))
+        row = c.fetchone()
+        conn.close()
+    return row[0] if row else 'coingecko'
+
+
+def set_user_exchange(user_id, exchange):
+    with db_lock:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO exchange_prefs (user_id, exchange) VALUES (?,?)", (user_id, exchange))
+        conn.commit()
+        conn.close()
+
+
+def _fmt_price_with_exchange(price, exchange):
+    if exchange and exchange != 'coingecko':
+        name = EXCHANGE_NAMES.get(exchange, exchange.upper())
+        return f"{fmt_price(price)} ({name})"
+    return fmt_price(price)
 
 
 def _sparkline(prices, width=15):
@@ -3428,6 +3577,47 @@ def handle_callback(call):
             pass
         return
 
+    # ── Chart range selector ──────────────────────────────────
+    if data.startswith("chart_"):
+        parts = data.split("_", 2)
+        if len(parts) == 3:
+            _, crypto, days_label = parts
+            days = CHART_DAYS.get(days_label, 30)
+            bot.answer_callback_query(call.id, T(user_id, 'generating_chart'))
+            try:
+                img_bytes, symbol = get_crypto_chart_image(crypto, days, user_id)
+                price = get_crypto_price(crypto)
+                kb = types.InlineKeyboardMarkup(row_width=4)
+                kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{crypto}_{d}") for d in CHART_DAYS])
+                caption = f"📊 <b>{symbol}</b> — {days}d"
+                if price:
+                    caption += f"\n💵 <b>{fmt_price(price)}</b>"
+                bot.edit_message_media(
+                    types.InputMediaPhoto(BytesIO(img_bytes), caption=add_timestamp(caption), parse_mode='HTML'),
+                    chat_id=call.message.chat.id, message_id=call.message.message_id,
+                    reply_markup=kb
+                )
+            except Exception as e:
+                logger.error(f"Chart callback failed: {e}")
+        return
+
+    # ── Exchange selector ─────────────────────────────────────
+    if data.startswith("setex_"):
+        exch = data.split("_", 1)[1]
+        if exch in EXCHANGES or exch == 'coingecko':
+            set_user_exchange(user_id, exch)
+            name = EXCHANGE_NAMES.get(exch, 'CoinGecko')
+            bot.answer_callback_query(call.id, f"✅ Source set to {name}")
+            try:
+                bot.edit_message_text(
+                    f"✅ Default price source set to <b>{name}</b>",
+                    chat_id=call.message.chat.id, message_id=call.message.message_id,
+                    parse_mode='HTML'
+                )
+            except Exception:
+                pass
+        return
+
     bot.answer_callback_query(call.id)
 
 
@@ -3659,9 +3849,300 @@ def convert_cmd(message):
     register_panel_owner(msg.message_id, message.from_user.id)
 
 
-# ─────────────────────────────────────────────
-# Inline handler
-# ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════
+# Exchange Price Source
+# ═══════════════════════════════════════════════
+@bot.message_handler(commands=['setexchange'])
+@rate_limit_check
+def set_exchange_cmd(message):
+    uid = message.from_user.id
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        btns = [types.InlineKeyboardButton(info['name'], callback_data=f"setex_{e}") for e, info in EXCHANGES.items()]
+        btns.append(types.InlineKeyboardButton("CoinGecko", callback_data="setex_coingecko"))
+        kb.add(*btns)
+        bot.reply_to(message, "💱 <b>Select your default price source:</b>", parse_mode='HTML', reply_markup=kb)
+        return
+    exch = args[1].strip().lower()
+    if exch not in EXCHANGES and exch != 'coingecko':
+        bot.reply_to(message, f"❌ Unknown exchange. Choose: coingecko, {', '.join(EXCHANGES.keys())}")
+        return
+    set_user_exchange(uid, exch)
+    name = EXCHANGE_NAMES.get(exch, 'CoinGecko')
+    bot.reply_to(message, f"✅ Default price source set to <b>{name}</b>", parse_mode='HTML')
+    logger.info(f"User {uid} set exchange to {exch}")
+
+
+# ═══════════════════════════════════════════════
+# Better Charts
+# ═══════════════════════════════════════════════
+CHART_DAYS = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}
+
+
+@bot.message_handler(commands=['chart'])
+@rate_limit_check
+def chart_cmd(message):
+    bot.send_chat_action(message.chat.id, 'upload_photo')
+    uid = message.from_user.id
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "Usage:\n/chart btc\n/chart btc 7d\n/chart btc 90d")
+        return
+    crypto = detect_currency(args[1])
+    if not crypto or crypto not in CRYPTO_LIST:
+        bot.reply_to(message, T(uid, 'unknown_coin'))
+        return
+    days = 30
+    if len(args) >= 3:
+        days = CHART_DAYS.get(args[2].lower(), 30)
+    try:
+        img_bytes, symbol = get_crypto_chart_image(crypto, days, uid)
+        price = get_crypto_price(crypto)
+        kb = types.InlineKeyboardMarkup(row_width=4)
+        kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{crypto}_{d}") for d in CHART_DAYS])
+        caption = f"📊 <b>{symbol}</b> — {days}d"
+        if price:
+            caption += f"\n💵 <b>{fmt_price(price)}</b>"
+        bot.send_photo(
+            message.chat.id, photo=BytesIO(img_bytes), caption=add_timestamp(caption),
+            parse_mode='HTML', reply_markup=kb
+        )
+    except Exception as e:
+        logger.error(f"Chart failed: {e}")
+        bot.reply_to(message, "❌ Chart generation failed. Try again later.")
+
+
+
+
+# ═══════════════════════════════════════════════
+# Trending & Market Movers
+# ═══════════════════════════════════════════════
+TRENDING_CACHE_TTL = 300
+
+
+def _fetch_trending():
+    cached = cache_get('trending_coins')
+    if cached:
+        return cached
+    try:
+        resp = requests.get('https://api.coingecko.com/api/v3/search/trending', timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json().get('coins', [])
+        result = []
+        for item in data[:10]:
+            coin = item.get('item', {})
+            result.append({
+                'id': coin.get('id'),
+                'symbol': coin.get('symbol', '').upper(),
+                'name': coin.get('name'),
+                'market_cap_rank': coin.get('market_cap_rank'),
+                'price_btc': coin.get('price_btc'),
+                'thumb': coin.get('thumb'),
+            })
+        cache_set('trending_coins', result, ttl=TRENDING_CACHE_TTL)
+        return result
+    except Exception as e:
+        logger.error(f"Trending fetch failed: {e}")
+        return None
+
+
+def _fetch_gainers_losers():
+    cached = cache_get('gainers_losers')
+    if cached:
+        return cached
+    try:
+        resp = requests.get(
+            'https://api.coingecko.com/api/v3/coins/markets'
+            '?vs_currency=usd&order=volume_desc&per_page=50&page=1'
+            '&sparkline=false&price_change_percentage=24h',
+            timeout=10
+        )
+        if resp.status_code != 200:
+            return None
+        coins = resp.json()
+        coins = [c for c in coins if c.get('price_change_percentage_24h') is not None]
+        coins.sort(key=lambda c: c['price_change_percentage_24h'], reverse=True)
+        return {
+            'gainers': coins[:5],
+            'losers': coins[-5:][::-1],
+        }
+    except Exception as e:
+        logger.error(f"Gainers/losers fetch failed: {e}")
+        return None
+
+
+@bot.message_handler(commands=['trending'])
+@rate_limit_check
+def trending_cmd(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    data = _fetch_trending()
+    if not data:
+        bot.reply_to(message, "❌ Could not fetch trending data. Try again later.")
+        return
+    lines = ["🔥 <b>Trending on CoinGecko</b>\n"]
+    for i, coin in enumerate(data, 1):
+        rank = coin.get('market_cap_rank')
+        rank_str = f"#{rank}" if rank else "—"
+        lines.append(f"{i}. <b>{coin['name']}</b> ({coin['symbol']})  ─  Rank {rank_str}")
+    bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
+
+
+@bot.message_handler(commands=['gainers', 'losers'])
+@rate_limit_check
+def gainers_losers_cmd(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    data = _fetch_gainers_losers()
+    if not data:
+        bot.reply_to(message, "❌ Could not fetch market data. Try again later.")
+        return
+    cmd = message.text.strip().lower()
+    show_gainers = cmd.startswith('/gainers')
+
+    coins = data['gainers'] if show_gainers else data['losers']
+    emoji = '📈' if show_gainers else '📉'
+    title = "Top Gainers (24h)" if show_gainers else "Top Losers (24h)"
+    lines = [f"{emoji} <b>{title}</b>\n"]
+    for c in coins:
+        chg = c['price_change_percentage_24h']
+        arrow = '📈' if chg >= 0 else '📉'
+        price = c.get('current_price')
+        price_str = fmt_price(price) if price else '—'
+        lines.append(f"{arrow} <b>{c['symbol'].upper()}</b>  {price_str}  <i>{chg:+.2f}%</i>")
+    bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
+
+
+# ═══════════════════════════════════════════════
+# Fragment / Telegram NFT Tracker
+# ═══════════════════════════════════════════════
+FRAGMENT_CACHE_TTL = 120
+
+
+def _fragment_username_data(username):
+    clean = username.lstrip('@').strip()
+    cache_key = f'frag_user_{clean}'
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        resp = requests.get(f'https://fragment.com/username?query={clean}', timeout=10,
+                            headers={'User-Agent': 'Mozilla/5.0'})
+        if resp.status_code != 200:
+            return None
+        html = resp.text
+        status = "Unknown"
+        price = None
+        owner = None
+        if 'is not for sale' in html.lower() or 'This username was sold' in html:
+            status = "Owned / Not for sale"
+        elif 'for sale' in html.lower():
+            status = "For sale"
+        elif 'auction' in html.lower():
+            status = "On auction"
+        m = re.search(r'(\d+[\d,.]*)\s*TON', html)
+        if m:
+            price = m.group(1).replace(',', '')
+        m = re.search(r'wallet addresses[^<]*<[^>]*>([^<]+)', html, re.DOTALL)
+        if m:
+            owner = m.group(1).strip()
+        result = {'username': clean, 'status': status, 'price_ton': price, 'owner': owner}
+        cache_set(cache_key, result, ttl=FRAGMENT_CACHE_TTL)
+        return result
+    except Exception as e:
+        logger.error(f"Fragment lookup failed for {clean}: {e}")
+        return None
+
+
+def _fragment_gift_collections():
+    cached = cache_get('frag_gift_collections')
+    if cached:
+        return cached
+    try:
+        resp = requests.get('https://fragment.com/gifts', timeout=10,
+                            headers={'User-Agent': 'Mozilla/5.0'})
+        if resp.status_code != 200:
+            return None
+        html = resp.text
+        collections = []
+        for m in re.finditer(r'/gifts/([a-z0-9-]+)[^<]*?<[^>]*?>([^<]+)</a>', html):
+            slug, name = m.group(1), m.group(2).strip()
+            collections.append({'slug': slug, 'name': name})
+        cache_set('frag_gift_collections', collections, ttl=FRAGMENT_CACHE_TTL)
+        return collections
+    except Exception as e:
+        logger.error(f"Gift collections fetch failed: {e}")
+        return None
+
+
+@bot.message_handler(commands=['fragment', 'username'])
+@rate_limit_check
+def fragment_cmd(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "Usage: /fragment @username\nLook up a Telegram username on Fragment.com")
+        return
+    target = args[1].strip()
+    bot.send_message(message.chat.id, f"🔍 Looking up <b>{target}</b> on Fragment...", parse_mode='HTML')
+    data = _fragment_username_data(target)
+    if not data:
+        bot.reply_to(message, "❌ Could not fetch data from Fragment. The username may not exist.")
+        return
+    lines = [f"🏷 <b>@{data['username']}</b>\n"]
+    lines.append(f"📌 Status: <b>{data['status']}</b>")
+    if data['price_ton']:
+        ton_price = get_crypto_price('the-open-network')
+        price_usd = float(data['price_ton']) * ton_price if ton_price else None
+        usd_str = f" (${price_usd:,.2f})" if price_usd else ""
+        lines.append(f"💰 Price: <b>{data['price_ton']} TON</b>{usd_str}")
+    if data['owner']:
+        lines.append(f"👤 Owner: <code>{data['owner'][:12]}...</code>")
+    bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
+
+
+@bot.message_handler(commands=['gifts'])
+@rate_limit_check
+def gifts_cmd(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    bot.send_message(message.chat.id, "🔍 Fetching gift collections from Fragment...", parse_mode='HTML')
+    data = _fragment_gift_collections()
+    if not data:
+        bot.reply_to(message, "❌ Could not fetch gift collections.")
+        return
+    lines = ["🎁 <b>Telegram Gift Collections</b>\n"]
+    for c in data[:20]:
+        lines.append(f"• <b>{c['name']}</b> — /gift_{c['slug']}")
+    lines.append("\nUse /gift_collectionname for details (e.g. /gift_astralshard)")
+    bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
+
+
+@bot.message_handler(commands=['gift'])
+@rate_limit_check
+def gift_cmd(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "Usage: /gift collection_slug\nExample: /gift astralshard")
+        return
+    slug = args[1].strip().lower()
+    bot.send_message(message.chat.id, f"🔍 Fetching <b>{slug}</b> details...", parse_mode='HTML')
+    data = _fragment_gift_collections()
+    if not data:
+        bot.reply_to(message, "❌ Could not fetch data.")
+        return
+    match = next((c for c in data if c['slug'] == slug), None)
+    if not match:
+        bot.reply_to(message, f"❌ Collection <b>{slug}</b> not found. Use /gifts to see all.", parse_mode='HTML')
+        return
+    lines = [f"🎁 <b>{match['name']}</b>\n"]
+    lines.append(f"🔗 <a href='https://fragment.com/gifts/{slug}'>View on Fragment</a>")
+    bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 @bot.inline_handler(lambda query: len(query.query.strip()) > 0)
 def inline_query_handler(inline_query):
     q     = inline_query.query.strip()
@@ -4295,9 +4776,57 @@ def list_alerts(message):
 @rate_limit_check
 def compare_cmd(message):
     parts = message.text.strip().split()
-    if len(parts) >= 3:
-        # Direct usage: /compare BTC ETH
-        _do_compare(message, parts[1], parts[2], message.from_user.id)
+    chart_mode = '--chart' in parts or '-c' in parts
+    args = [p for p in parts if not p.startswith('-')]
+    if len(args) >= 3 and chart_mode:
+        bot.send_chat_action(message.chat.id, 'upload_photo')
+        uid = message.from_user.id
+        c1 = detect_currency(args[1])
+        c2 = detect_currency(args[2])
+        if not c1 or not c2:
+            bot.reply_to(message, T(uid, 'unknown_coin'))
+            return
+        days = 30
+        if len(args) >= 4:
+            days = CHART_DAYS.get(args[3].lower(), 30)
+        try:
+            raw1 = _fetch_chart_data(c1, days)
+            raw2 = _fetch_chart_data(c2, days)
+            if not raw1 or not raw2:
+                bot.reply_to(message, "❌ Failed to fetch chart data.")
+                return
+            dates1 = [datetime.fromtimestamp(p[0] / 1000) for p in raw1]
+            prices1 = [p[1] for p in raw1]
+            dates2 = [datetime.fromtimestamp(p[0] / 1000) for p in raw2]
+            prices2 = [p[1] for p in raw2]
+            fig, ax = plt.subplots(figsize=(6, 3.8))
+            fig.patch.set_facecolor('#0e1117')
+            ax.set_facecolor('#0e1117')
+            ax.plot(dates1, prices1, color='#00cc96', linewidth=1.5, label=_sym(c1))
+            ax.plot(dates2, prices2, color='#636efa', linewidth=1.5, label=_sym(c2))
+            ax.grid(True, color='gray', linestyle='--', linewidth=0.3, alpha=0.3)
+            ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#555'); ax.spines['bottom'].set_color('#555')
+            ax.tick_params(axis='x', colors='#aaa', labelsize=8, rotation=30)
+            ax.tick_params(axis='y', colors='#aaa', labelsize=8)
+            ax.set_title(f"{_sym(c1)} vs {_sym(c2)} — {days}d", color='#ccc', fontsize=11, pad=8)
+            ax.legend(facecolor='#1a1a2e', edgecolor='none', labelcolor='white', fontsize=9)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+            buf = BytesIO()
+            plt.savefig(buf, format='png', bbox_inches='tight', dpi=80,
+                        facecolor=fig.get_facecolor(), edgecolor='none')
+            buf.seek(0); plt.close(fig)
+            p1 = get_crypto_price(c1); p2 = get_crypto_price(c2)
+            caption = f"📊 <b>{_sym(c1)}</b> {fmt_price(p1) if p1 else '—'}  vs  <b>{_sym(c2)}</b> {fmt_price(p2) if p2 else '—'}  ({days}d)"
+            bot.send_photo(message.chat.id, photo=BytesIO(buf.getvalue()),
+                           caption=add_timestamp(caption), parse_mode='HTML')
+            return
+        except Exception as e:
+            logger.error(f"Compare chart failed: {e}")
+            bot.reply_to(message, "❌ Comparison chart failed. Try again later.")
+            return
+    if len(args) >= 3:
+        _do_compare(message, args[1], args[2], message.from_user.id)
         return
 
     # No args — show coin picker
@@ -5235,6 +5764,14 @@ def handle_text(message):
         return
 
     # Single crypto symbol → instant sparkline + chart
+    parts_raw = text.split()
+    text_clean = parts_raw[0] if parts_raw else text
+    exchange_override = None
+    if len(parts_raw) == 2 and parts_raw[1].startswith('@'):
+        exch = parts_raw[1][1:].lower()
+        if exch in EXCHANGES or exch == 'coingecko':
+            exchange_override = exch
+            text = text_clean
     if not re.search(r'\d', text) and len(text.split()) == 1:
         crypto = detect_currency(text)
         if crypto and crypto in CRYPTO_LIST:
@@ -5249,10 +5786,11 @@ def handle_text(message):
                     types.InlineKeyboardButton(T(user_id, 'btn_add_coin'),  callback_data=f"hpick_{crypto}"),
                 ]])
 
+            exch = exchange_override or get_user_exchange(user_id)
             price_usd = None
             chart_bytes = None
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                price_fut = pool.submit(get_crypto_price, crypto)
+                price_fut = pool.submit(get_exchange_price, crypto, exch)
                 chart_fut = pool.submit(get_crypto_chart_image, crypto, 30, user_id)
                 price_usd = price_fut.result()
                 try:
@@ -5271,7 +5809,7 @@ def handle_text(message):
                 bot.send_chat_action(message.chat.id, 'upload_photo')
                 caption = add_timestamp(
                     f"📊 <b>{crypto_name}</b>\n\n"
-                    f"💵 <b>{fmt_price(price_usd)}</b>\n"
+                    f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>\n"
                     + toman_line
                 )
                 bot.send_photo(
@@ -5287,7 +5825,7 @@ def handle_text(message):
                     message,
                     add_timestamp(
                         f"📊 <b>{crypto_name}</b>\n\n"
-                        f"💵 <b>{fmt_price(price_usd)}</b>\n"
+                        f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>\n"
                         + toman_line
                     ),
                     parse_mode='HTML',
