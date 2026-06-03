@@ -22,6 +22,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from io import BytesIO
+import concurrent.futures
 from decimal import Decimal
 import random
 import pytz
@@ -1970,50 +1971,84 @@ def get_crypto_price(crypto_id):
     return None
 
 
+def _sparkline(prices, width=15):
+    """Generate a text sparkline bar from a list of float prices."""
+    if not prices:
+        return ""
+    mn, mx = min(prices), max(prices)
+    rng = mx - mn or 1
+    bars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+    return ''.join(bars[min(int((p - mn) / rng * (len(bars) - 1)), len(bars) - 1)] for p in prices)
+
+
+@rate_limited_api_call
+def _fetch_chart_data(crypto_id, days=30):
+    """Fetch chart data from CoinGecko as raw list of [timestamp, price] pairs."""
+    data = cg.get_coin_market_chart_by_id(id=crypto_id, vs_currency='usd', days=days)
+    return data.get('prices', [])
+
+
 def get_crypto_chart_image(crypto_id, days=30, user_id=0):
     cache_key = f'chart_{crypto_id}_{days}'
     cached = cache_get(cache_key)
     if cached is not None:
         return cached, crypto_id.upper()
     try:
-        data = cg.get_coin_market_chart_by_id(
-            id=crypto_id,
-            vs_currency='usd',
-            days=days
-        )
-        df = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
+        raw_prices = _fetch_chart_data(crypto_id, days)
+        if not raw_prices:
+            raise ValueError("No price data returned")
 
-        fig, ax = plt.subplots(figsize=(7, 4.5))
+        timestamps = [p[0] for p in raw_prices]
+        prices = [p[1] for p in raw_prices]
+        dates = [datetime.fromtimestamp(ts / 1000) for ts in timestamps]
+
+        fig, ax = plt.subplots(figsize=(6, 3.8))
         fig.patch.set_facecolor('#0e1117')
         ax.set_facecolor('#0e1117')
-        ax.plot(df.index, df['price'], color='#00cc96', linewidth=2, label='Price (USD)')
-        ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.5)
+        ax.plot(dates, prices, color='#00cc96', linewidth=1.5)
+        ax.grid(True, color='gray', linestyle='--', linewidth=0.3, alpha=0.3)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('white')
-        ax.spines['bottom'].set_color('white')
-        ax.tick_params(axis='x', colors='white', rotation=45)
-        ax.tick_params(axis='y', colors='white')
-        ax.set_title(f"{crypto_id.upper()} — {days}d Price Chart",
-                     color='white', fontsize=13, pad=12)
-        ax.set_xlabel("Date", color='white')
-        ax.set_ylabel("Price (USD)", color='white')
+        ax.spines['left'].set_color('#555')
+        ax.spines['bottom'].set_color('#555')
+        ax.tick_params(axis='x', colors='#aaa', labelsize=8, rotation=30)
+        ax.tick_params(axis='y', colors='#aaa', labelsize=8)
+        ax.set_title(f"{crypto_id.upper()} — {days}d", color='#ccc', fontsize=11, pad=8)
+        ax.set_ylabel("USD", color='#aaa', fontsize=9)
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-        fig.autofmt_xdate()
 
         buf = BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=90,
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=80,
                     facecolor=fig.get_facecolor(), edgecolor='none')
         buf.seek(0)
         plt.close(fig)
         result = buf.getvalue()
-        cache_set(cache_key, result, ttl=3600)
+        cache_set(cache_key, result, ttl=21600)
         return result, crypto_id.upper()
     except Exception as e:
         logger.error(f"Chart generation failed for {crypto_id}: {e}")
         raise
+
+
+TOP_COINS_FOR_CHART = [
+    'bitcoin', 'ethereum', 'tether', 'binancecoin', 'cardano',
+    'ripple', 'solana', 'polkadot', 'dogecoin', 'shiba-inu',
+    'tron', 'the-open-network',
+]
+
+
+def _prewarm_charts():
+    """Pre-generate charts for top coins so the first request is instant."""
+    logger.info("Pre-warming chart cache for top coins...")
+    for cid in TOP_COINS_FOR_CHART:
+        try:
+            cache_key = f'chart_{cid}_30'
+            if cache_get(cache_key) is None:
+                get_crypto_chart_image(cid)
+                logger.debug(f"Pre-warmed chart for {cid}")
+        except Exception as e:
+            logger.debug(f"Pre-warm skipped for {cid}: {e}")
+    logger.info("Chart pre-warming complete")
 
 
 def get_portfolio_chart_image(holdings: dict, prices: dict, user_id: int = 0) -> bytes:
@@ -5199,19 +5234,13 @@ def handle_text(message):
         bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
         return
 
-    # Single crypto symbol → price + chart
+    # Single crypto symbol → instant sparkline + chart
     if not re.search(r'\d', text) and len(text.split()) == 1:
         crypto = detect_currency(text)
         if crypto and crypto in CRYPTO_LIST:
-            bot.send_chat_action(message.chat.id, 'upload_photo')
-            price_usd = get_crypto_price(crypto)
-            usd_to_irr = get_usd_to_irr()
-            if not price_usd:
-                bot.reply_to(message, T(user_id, 'price_fetch_fail'))
-                return
+            bot.send_chat_action(message.chat.id, 'typing')
             crypto_name = CRYPTO_LIST.get(crypto, crypto)
             sym = _sym(crypto)
-            toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
             if crypto == 'telegram-stars':
                 refresh_kb = None
             else:
@@ -5219,8 +5248,27 @@ def handle_text(message):
                     types.InlineKeyboardButton(T(user_id, 'btn_refresh'),   callback_data=f"refresh_{crypto}"),
                     types.InlineKeyboardButton(T(user_id, 'btn_add_coin'),  callback_data=f"hpick_{crypto}"),
                 ]])
-            try:
-                img_bytes, symbol = get_crypto_chart_image(crypto, user_id=user_id)
+
+            price_usd = None
+            chart_bytes = None
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                price_fut = pool.submit(get_crypto_price, crypto)
+                chart_fut = pool.submit(get_crypto_chart_image, crypto, 30, user_id)
+                price_usd = price_fut.result()
+                try:
+                    chart_result = chart_fut.result()
+                    chart_bytes, symbol = chart_result
+                except Exception:
+                    chart_bytes = None
+
+            usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
+            if not price_usd:
+                bot.reply_to(message, T(user_id, 'price_fetch_fail'))
+                return
+            toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
+
+            if chart_bytes:
+                bot.send_chat_action(message.chat.id, 'upload_photo')
                 caption = add_timestamp(
                     f"📊 <b>{crypto_name}</b>\n\n"
                     f"💵 <b>{fmt_price(price_usd)}</b>\n"
@@ -5228,14 +5276,13 @@ def handle_text(message):
                 )
                 bot.send_photo(
                     message.chat.id,
-                    photo=BytesIO(img_bytes),
+                    photo=BytesIO(chart_bytes),
                     caption=caption,
                     parse_mode='HTML',
                     reply_to_message_id=message.message_id,
                     reply_markup=refresh_kb
                 )
-            except Exception as e:
-                logger.error(f"Chart failed for {crypto}: {e}")
+            else:
                 bot.reply_to(
                     message,
                     add_timestamp(
@@ -5648,7 +5695,8 @@ if __name__ == "__main__":
     threading.Thread(target=_digest_loop, daemon=True, name="DigestSender").start()
     threading.Thread(target=cache_cleanup_loop, daemon=True, name="CacheCleanup").start()
     threading.Thread(target=_cleanup_user_state_loop, daemon=True, name="UserStateCleanup").start()
-    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup)")
+    threading.Thread(target=_prewarm_charts, daemon=True, name="ChartPrewarm").start()
+    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm)")
 
     logger.info(f"{EMOJIS['star']} Press Ctrl+C to stop")
     logger.info("=" * 50)
