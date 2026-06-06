@@ -2242,7 +2242,7 @@ def _get_ton_tx_fallback(hash_value):
 # API helpers
 # ─────────────────────────────────────────────
 @rate_limited_api_call
-def get_crypto_price(crypto_id):
+def get_crypto_price(crypto_id, cache_only=False):
     # Special handling for Telegram Stars (official rate)
     if crypto_id == 'telegram-stars':
         cached = cache_get('telegram-stars')
@@ -2255,6 +2255,8 @@ def get_crypto_price(crypto_id):
     cached = cache_get(crypto_id)
     if cached is not None:
         return cached
+    if cache_only:
+        return None
     
     # 1) CoinGecko
     if not cache_get('cg_rate_limited'):
@@ -4840,16 +4842,16 @@ def inline_query_handler(inline_query):
                 # FASTER: Pre-fetch prices, don't call convert_amount (which re-fetches)
                 # Use Decimal for all arithmetic to avoid precision loss
                 if src in CRYPTO_LIST and dst in CRYPTO_LIST:
-                    p_src = get_crypto_price(src)
-                    p_dst = get_crypto_price(dst)
+                    p_src = get_crypto_price(src, cache_only=True)
+                    p_dst = get_crypto_price(dst, cache_only=True)
                     if p_src and p_dst:
                         result_val = amt * Decimal(str(p_src)) / Decimal(str(p_dst))
                 elif src == 'usd' and dst in CRYPTO_LIST:
-                    p_dst = get_crypto_price(dst)
+                    p_dst = get_crypto_price(dst, cache_only=True)
                     if p_dst:
                         result_val = amt / Decimal(str(p_dst))
                 elif src in CRYPTO_LIST and dst == 'usd':
-                    p_src = get_crypto_price(src)
+                    p_src = get_crypto_price(src, cache_only=True)
                     if p_src:
                         result_val = amt * Decimal(str(p_src))
                 elif _irr() is not None and src == 'toman' and dst == 'usd':
@@ -4857,11 +4859,11 @@ def inline_query_handler(inline_query):
                 elif _irr() is not None and src == 'usd' and dst == 'toman':
                     result_val = amt * Decimal(str(_irr()))
                 elif _irr() is not None and src == 'toman' and dst in CRYPTO_LIST:
-                    p_dst = get_crypto_price(dst)
+                    p_dst = get_crypto_price(dst, cache_only=True)
                     if p_dst:
                         result_val = amt / Decimal(str(_irr())) / Decimal(str(p_dst))
                 elif _irr() is not None and src in CRYPTO_LIST and dst == 'toman':
-                    p_src = get_crypto_price(src)
+                    p_src = get_crypto_price(src, cache_only=True)
                     if p_src:
                         result_val = amt * Decimal(str(p_src)) * Decimal(str(_irr()))
                 
@@ -4912,7 +4914,7 @@ def inline_query_handler(inline_query):
             amt = Decimal(amt_m.group(1))
             cur = detect_currency(amt_m.group(2), check_u_alias=True)
             if cur and cur in CRYPTO_LIST:
-                p = get_crypto_price(cur)
+                p = get_crypto_price(cur, cache_only=True)
                 if p:
                     v_usd = amt * Decimal(str(p))
                     v_usd_f = float(v_usd)
@@ -4932,7 +4934,7 @@ def inline_query_handler(inline_query):
         # ── 8. Single crypto name (btc / eth / trx / u …) ────────────
         crypto = detect_currency(ql, check_u_alias=True)
         if crypto and crypto in CRYPTO_LIST:
-            p = get_crypto_price(crypto)
+            p = get_crypto_price(crypto, cache_only=True)
             if p:
                 irr_v = _irr()
                 p_irr = p * irr_v if irr_v else 0
@@ -4981,7 +4983,7 @@ def inline_query_handler(inline_query):
 
         # ── 11. Telegram Stars ─────────────────────────────────────────
         if ql in ('star', 'stars', 'telegram stars', 'استار', 'استارز', 'ستاره'):
-            stars_price = get_crypto_price('telegram-stars')
+            stars_price = get_crypto_price('telegram-stars', cache_only=True)
             if stars_price:
                 toman_lbl = T(uid, 'toman_label')
                 lines = [f"⭐ <b>Telegram Stars</b>\n\n💵 ${stars_price:.3f} USD"]
@@ -5043,7 +5045,7 @@ def inline_query_handler(inline_query):
                     cid = detect_currency(symbol.lower())
                     if not cid:
                         continue
-                    p = get_crypto_price(cid)
+                    p = get_crypto_price(cid, cache_only=True)
                     if p:
                         val = amount * p
                         total += val
