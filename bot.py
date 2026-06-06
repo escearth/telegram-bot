@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from io import BytesIO
 import concurrent.futures
+import html
 from decimal import Decimal
 import random
 import pytz
@@ -685,7 +686,7 @@ def monitor_group_activity(chat_id: int, message_time: float = None):
 # ─────────────────────────────────────────────
 _cache = {}
 _cache_lock = threading.Lock()
-CACHE_TIMEOUT = 120  # 2 minute default cache for price data
+CACHE_TIMEOUT = 300  # 5 minute default cache for price data
 
 
 def cache_get(key):
@@ -789,6 +790,31 @@ def _fetch_prices_coingecko(ids) -> dict:
             logger.error(f"CoinGecko batch error: {e}")
             time.sleep(1)
     return {}
+
+
+@rate_limited_api_call
+def _fetch_coingecko_global() -> dict:
+    """Fetch global market data from CoinGecko (rate-limited)."""
+    try:
+        resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=8)
+        if resp.status_code == 200:
+            return resp.json().get('data', {})
+    except Exception as e:
+        logger.error(f"CoinGecko global error: {e}")
+    return {}
+
+
+@rate_limited_api_call
+def _fetch_fear_greed() -> dict | None:
+    """Fetch Fear & Greed index (rate-limited)."""
+    try:
+        resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json().get('data', [{}])[0]
+            return data
+    except Exception:
+        pass
+    return None
 
 
 _COINCAP_ID_MAP = {
@@ -929,17 +955,22 @@ def is_user_rate_limited(user_id: int) -> bool:
     """
     Returns True if the user has exceeded USER_RATE_LIMIT
     requests in the last USER_RATE_WINDOW seconds.
-    Cleans up old timestamps on each call.
+    Does NOT record the timestamp — call record_user_request() after the handler runs.
     """
     now = time.time()
     with _user_rate_lock:
         times = _user_request_times[user_id]
-        # Drop timestamps outside the window
         _user_request_times[user_id] = [t for t in times if now - t < USER_RATE_WINDOW]
         if len(_user_request_times[user_id]) >= USER_RATE_LIMIT:
             return True
-        _user_request_times[user_id].append(now)
         return False
+
+
+def record_user_request(user_id: int):
+    """Record a completed request timestamp for rate limiting."""
+    now = time.time()
+    with _user_rate_lock:
+        _user_request_times[user_id].append(now)
 
 
 # ─────────────────────────────────────────────
@@ -973,14 +1004,64 @@ def is_refresh_allowed(user_id: int) -> tuple[bool, str]:
         return True, ""
 
 
+_last_memory_cleanup = 0.0
+MEMORY_CLEANUP_INTERVAL = 300  # 5 minutes
+
+
+def _cleanup_stale_dicts():
+    """Remove stale entries from all unbounded dicts to prevent memory leaks."""
+    now = time.time()
+    # _rate_limit_notified
+    with _rate_limit_notified_lock:
+        stale = [uid for uid, ts in _rate_limit_notified.items()
+                 if now - ts > RATE_LIMIT_NOTIFY_COOLDOWN]
+        for uid in stale:
+            del _rate_limit_notified[uid]
+    # _joined_cache
+    with _joined_cache_lock:
+        stale = [uid for uid, (_, ts) in _joined_cache.items()
+                 if now - ts > 3600]
+        for uid in stale:
+            del _joined_cache[uid]
+    # _user_request_times — remove users with no recent activity
+    with _user_rate_lock:
+        stale = [uid for uid, times in _user_request_times.items()
+                 if not times or now - max(times) > USER_RATE_WINDOW * 2]
+        for uid in stale:
+            del _user_request_times[uid]
+    # _refresh_count and _last_refresh_time
+    with _refresh_limit_lock:
+        stale = [uid for uid, times in _refresh_count.items()
+                 if not times or now - max(times) > REFRESH_WINDOW * 2]
+        for uid in stale:
+            del _refresh_count[uid]
+            _last_refresh_time.pop(uid, None)
+    # group_message_history and group_slowdown_last_warning
+    with group_activity_lock:
+        stale = [cid for cid, times in group_message_history.items()
+                 if not times or now - max(times) > 120]
+        for cid in stale:
+            del group_message_history[cid]
+            group_slowdown_last_warning.pop(cid, None)
+
+
 def rate_limit_check(func):
     """Decorator — drops rate-limited updates and notifies user once per minute.
     Only counts bot commands (messages starting with /) toward the rate limit.
     Also monitors group command frequency for slowdown warnings.
+    Records the request timestamp AFTER the handler completes so slow commands
+    don't inflate the rate-limit window.
     """
     @functools.wraps(func)
     def wrapper(message, *args, **kwargs):
+        global _last_memory_cleanup
         user_id = message.from_user.id
+
+        # Periodic memory cleanup
+        now = time.time()
+        if now - _last_memory_cleanup > MEMORY_CLEANUP_INTERVAL:
+            _cleanup_stale_dicts()
+            _last_memory_cleanup = now
 
         is_command = (hasattr(message, 'text') and message.text
                       and message.text.startswith('/'))
@@ -1016,7 +1097,12 @@ def rate_limit_check(func):
                 except:
                     pass
 
-        return func(message, *args, **kwargs)
+        try:
+            result = func(message, *args, **kwargs)
+            return result
+        finally:
+            if is_command:
+                record_user_request(user_id)
     return wrapper
 
 
@@ -2324,14 +2410,20 @@ TOP_COINS_FOR_CHART = [
 def _prewarm_charts():
     """Pre-generate charts for top coins so the first request is instant."""
     logger.info("Pre-warming chart cache for top coins...")
-    for cid in TOP_COINS_FOR_CHART:
-        try:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        fut_map = {}
+        for cid in TOP_COINS_FOR_CHART:
             cache_key = f'chart_{cid}_30'
             if cache_get(cache_key) is None:
-                get_crypto_chart_image(cid)
+                fut = ex.submit(get_crypto_chart_image, cid)
+                fut_map[fut] = cid
+        for fut in concurrent.futures.as_completed(fut_map):
+            cid = fut_map[fut]
+            try:
+                fut.result()
                 logger.debug(f"Pre-warmed chart for {cid}")
-        except Exception as e:
-            logger.debug(f"Pre-warm skipped for {cid}: {e}")
+            except Exception as e:
+                logger.debug(f"Pre-warm skipped for {cid}: {e}")
     logger.info("Chart pre-warming complete")
 
 
@@ -2577,11 +2669,21 @@ def evaluate_math(expression, user_id: int = 0):
                 from simpleeval import simple_eval
                 result = simple_eval(sanitized)
             else:
-                if not sanitized or sanitized == '.':
-                    return T(user_id, 'invalid_expression')
+                # Fallback: restrict AST to arithmetic-only nodes
+                allowed_node_types = (
+                    ast.Expression, ast.BinOp, ast.UnaryOp,
+                    ast.Add, ast.Sub, ast.Mult, ast.Div,
+                    ast.Pow, ast.FloorDiv, ast.Mod,
+                    ast.USub, ast.UAdd, ast.Constant,
+                )
                 try:
-                    result = ast.literal_eval(sanitized)
-                except (ValueError, SyntaxError, MemoryError):
+                    tree = ast.parse(sanitized, mode='eval')
+                    for node in ast.walk(tree):
+                        if not isinstance(node, allowed_node_types):
+                            return T(user_id, 'invalid_expression')
+                    code = compile(tree, '<math>', mode='eval')
+                    result = eval(code, {'__builtins__': {}}, {})
+                except Exception:
                     return T(user_id, 'invalid_expression')
         except (SyntaxError, NameError, TypeError, ValueError):
             return T(user_id, 'invalid_expression')
@@ -2936,6 +3038,10 @@ def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, u
     buy_prices = buy_prices or {}
     lines = [T(user_id, 'portfolio_header')]
     total_usd = 0.0
+    # Batch-fetch all prices at once to avoid N+1 API calls
+    hold_ids = [detect_currency(s.lower()) for s in holdings if detect_currency(s.lower())]
+    if hold_ids:
+        _fetch_prices_batch(','.join(set(hold_ids)))
     for symbol, amount in holdings.items():
         crypto_id = detect_currency(symbol.lower())
         if crypto_id and crypto_id in CRYPTO_LIST:
@@ -3096,17 +3202,14 @@ def handle_callback(call):
     if not data.startswith("set_lang_"):
         cleanup_expired_panels()
         
-        # Check if panel is registered and belongs to someone else
-        if message_id in panel_owners:
-            panel = panel_owners[message_id]
-            if panel['user_id'] != user_id:
-                bot.answer_callback_query(
-                    call.id,
-                    "⚠️ This panel belongs to another user.\n"
-                    "این پنل متعلق به کاربر دیگری است.",
-                    show_alert=True
-                )
-                return
+        if not check_panel_owner(message_id, user_id):
+            bot.answer_callback_query(
+                call.id,
+                "⚠️ This panel belongs to another user.\n"
+                "این پنل متعلق به کاربر دیگری است.",
+                show_alert=True
+            )
+            return
 
     # ── Language selection ────────────────────────────────────────────
     if data in ("set_lang_en", "set_lang_fa"):
@@ -3345,6 +3448,10 @@ def handle_callback(call):
         above_w = T(user_id, 'above_word')
         below_w = T(user_id, 'below_word')
         lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+        # Batch-fetch all alert prices at once
+        alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
+        if alert_ids:
+            _fetch_prices_batch(','.join(set(alert_ids)))
         for a in alerts:
             arrow = '📈' if a['direction'] == 'above' else '📉'
             cur   = get_crypto_price(a['crypto_id'])
@@ -3790,9 +3897,13 @@ def show_wallets_with_balance(message):
         return
     bot.send_chat_action(message.chat.id, 'typing')
     reply = T(user_id, 'wallets_balances_hdr')
-    for address in wallets:
-        balance_msg = get_tron_wallet_trx(address, user_id)
-        reply += f"🔗 <code>{address}</code>\n {balance_msg}\n\n"
+    # Fetch all wallet balances in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        fut_map = {ex.submit(get_tron_wallet_trx, addr, user_id): addr for addr in wallets}
+        for fut in concurrent.futures.as_completed(fut_map):
+            addr = fut_map[fut]
+            balance_msg = fut.result()
+            reply += f"🔗 <code>{addr}</code>\n {balance_msg}\n\n"
     bot.reply_to(message, reply, parse_mode='HTML')
     logger.info(f"User {user_id} viewed wallets with balances")
 
@@ -4153,7 +4264,7 @@ def gainers_losers_cmd(message):
 # ═══════════════════════════════════════════════
 # Fragment / Telegram NFT Tracker
 # ═══════════════════════════════════════════════
-FRAGMENT_CACHE_TTL = 120
+FRAGMENT_CACHE_TTL = 300  # 5 min cache to minimize requests
 
 FRAGMENT_GIFT_COLLECTIONS = [
     {'slug': 'artisanbrick', 'name': 'Artisan Bricks'},
@@ -4280,8 +4391,10 @@ def _fragment_username_data(username):
     if cached:
         return cached
     try:
+        # Polite delay — one request at a time, no bulk
+        time.sleep(1)
         resp = requests.get(f'https://fragment.com/username/{clean}', timeout=10,
-                            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+                            headers={'User-Agent': 'EscEarthBot/1.0 (+https://t.me/EscEarthBot; friendly data lookup)'})
         if resp.status_code != 200:
             return None
         html = resp.text
@@ -4292,39 +4405,68 @@ def _fragment_username_data(username):
         auction_end = None
         min_bid = None
 
-        m = re.search(r'tm-section-header-status\s+tm-status-([a-z]+)">([^<]+)', html)
-        if m:
-            css_class = m.group(1)
-            visible_text = m.group(2).strip()
-            if css_class == 'unavail':
-                status = 'Sold' if visible_text == 'Sold' else 'Unavailable'
-            elif css_class == 'taken':
-                status = 'Taken'
-            elif css_class == 'avail':
-                status = visible_text  # "Available" or "On auction"
-            else:
-                status = visible_text
-
-        m = re.search(r'(\d+[\d,.]*)\s*TON', html)
-        if m:
-            price_ton = m.group(1).replace(',', '')
-
-        m = re.search(r'(?:Ends? in|Auction ends? in|Time left)[:\s]*([^<]+)', html, re.IGNORECASE)
-        if m:
-            auction_end = m.group(1).strip()[:60]
-
-        m = re.search(r'Min(?:imum)?\s*(?:bid)?[:\s]*(\d+[\d,.]*)\s*TON', html, re.IGNORECASE)
-        if m:
-            min_bid = m.group(1).replace(',', '')
-
-        owner = None
-        m = re.search(r'(?:Owner|Wallet)[:\s]*<[^>]*>([^<]+)', html, re.DOTALL)
-        if m:
-            owner = m.group(1).strip()
-        if not owner:
-            m = re.search(r'[A-Za-z0-9_-]{48,}', html)
+        # Status — try multiple selectors
+        try:
+            m = re.search(r'tm-section-header-status\s+tm-status-([a-z]+)">([^<]+)', html)
             if m:
-                owner = m.group(0)
+                css_class = m.group(1)
+                visible_text = m.group(2).strip()
+                if css_class == 'unavail':
+                    status = 'Sold' if visible_text == 'Sold' else 'Unavailable'
+                elif css_class == 'taken':
+                    status = 'Taken'
+                elif css_class == 'avail':
+                    status = visible_text
+                else:
+                    status = visible_text
+        except Exception:
+            logger.warning(f"Fragment status regex failed for {clean}")
+
+        # Price — look for TON amounts near price-related keywords
+        try:
+            m = re.search(r'price[:\s]*([\d,]+(?:\.\d+)?)\s*TON', html, re.IGNORECASE)
+            if not m:
+                m = re.search(r'([\d,]+(?:\.\d+)?)\s*TON', html)
+            if m:
+                price_ton = m.group(1).replace(',', '')
+        except Exception:
+            logger.warning(f"Fragment price regex failed for {clean}")
+
+        # Auction end time
+        try:
+            end_patterns = [
+                r'(?:Ends? in|Auction ends? in|Time left)[:\s]*([^<]+)',
+                r'tm-auction-end[^>]*>([^<]+)',
+            ]
+            m = None
+            for pat in end_patterns:
+                m = re.search(pat, html, re.IGNORECASE)
+                if m:
+                    break
+            if m:
+                auction_end = html.unescape(m.group(1).strip()[:60])
+        except Exception:
+            logger.warning(f"Fragment auction-end regex failed for {clean}")
+
+        # Minimum bid
+        try:
+            m = re.search(r'Min(?:imum)?\s*(?:bid)?[:\s]*([\d,]+(?:\.\d+)?)\s*TON', html, re.IGNORECASE)
+            if m:
+                min_bid = m.group(1).replace(',', '')
+        except Exception:
+            logger.warning(f"Fragment min-bid regex failed for {clean}")
+
+        # Owner / wallet address
+        try:
+            owner_m = re.search(r'(?:Owner|Wallet)[:\s]*<[^>]*>([^<]+)', html, re.DOTALL)
+            if owner_m:
+                owner = html.unescape(owner_m.group(1).strip())
+            if not owner:
+                owner_m = re.search(r'[A-Za-z0-9_-]{48,}', html)
+                if owner_m:
+                    owner = owner_m.group(0)
+        except Exception:
+            logger.warning(f"Fragment owner regex failed for {clean}")
 
         result = {
             'username': clean,
@@ -4348,8 +4490,10 @@ def _fragment_collection_floor(slug):
     if cached:
         return cached
     try:
+        # Polite delay — one request at a time, no bulk
+        time.sleep(1)
         resp = requests.get(f'https://fragment.com/gifts/{slug}?filter=sale', timeout=10,
-                            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+                            headers={'User-Agent': 'EscEarthBot/1.0 (+https://t.me/EscEarthBot; friendly data lookup)'})
         if resp.status_code != 200:
             return None
         html = resp.text
@@ -4632,31 +4776,32 @@ def inline_query_handler(inline_query):
                     result_val = None
                 
                 # FASTER: Pre-fetch prices, don't call convert_amount (which re-fetches)
+                # Use Decimal for all arithmetic to avoid precision loss
                 if src in CRYPTO_LIST and dst in CRYPTO_LIST:
                     p_src = get_crypto_price(src)
                     p_dst = get_crypto_price(dst)
                     if p_src and p_dst:
-                        result_val = (float(amt) * p_src) / p_dst
+                        result_val = amt * Decimal(str(p_src)) / Decimal(str(p_dst))
                 elif src == 'usd' and dst in CRYPTO_LIST:
                     p_dst = get_crypto_price(dst)
                     if p_dst:
-                        result_val = float(amt) / p_dst
+                        result_val = amt / Decimal(str(p_dst))
                 elif src in CRYPTO_LIST and dst == 'usd':
                     p_src = get_crypto_price(src)
                     if p_src:
-                        result_val = float(amt) * p_src
+                        result_val = amt * Decimal(str(p_src))
                 elif irr is not None and src == 'toman' and dst == 'usd':
-                    result_val = float(amt) / irr
+                    result_val = amt / Decimal(str(irr))
                 elif irr is not None and src == 'usd' and dst == 'toman':
-                    result_val = float(amt) * irr
+                    result_val = amt * Decimal(str(irr))
                 elif irr is not None and src == 'toman' and dst in CRYPTO_LIST:
                     p_dst = get_crypto_price(dst)
                     if p_dst:
-                        result_val = (float(amt) / irr) / p_dst
+                        result_val = amt / Decimal(str(irr)) / Decimal(str(p_dst))
                 elif irr is not None and src in CRYPTO_LIST and dst == 'toman':
                     p_src = get_crypto_price(src)
                     if p_src:
-                        result_val = (float(amt) * p_src) * irr
+                        result_val = amt * Decimal(str(p_src)) * Decimal(str(irr))
                 
                 if result_val is not None:
                     toman_lbl = T(uid, 'toman_label')
@@ -4702,21 +4847,24 @@ def inline_query_handler(inline_query):
         # Support both "10 trx" and "10trx" (no space), and "10u" for USDT
         amt_m = re.match(r'^(\d+(?:\.\d+)?)\s*(\w+)$', ql)
         if amt_m:
-            amt = float(amt_m.group(1))
+            amt = Decimal(amt_m.group(1))
             cur = detect_currency(amt_m.group(2), check_u_alias=True)
             if cur and cur in CRYPTO_LIST:
                 p = get_crypto_price(cur)
                 if p:
-                    v_usd = amt * p
-                    v_irr = v_usd * irr
+                    v_usd = amt * Decimal(str(p))
+                    v_irr = v_usd * Decimal(str(irr))
+                    v_usd_f = float(v_usd)
+                    v_irr_f = float(v_irr)
+                    amt_f = float(amt)
                     name  = _sym(cur)
                     toman_lbl = T(uid, 'toman_label')
-                    desc  = f"${v_usd:,.2f} | {v_irr:,.0f} {toman_lbl}"
+                    desc  = f"${v_usd_f:,.2f} | {v_irr_f:,.0f} {toman_lbl}"
                     results.append(article(
-                        "amt_coin", f"{amt:,.6g} {name}",
+                        "amt_coin", f"{amt_f:,.6g} {name}",
                         desc,
-                        f"{EMOJIS['money']} <b>{amt:,.6g} {name}</b>\n\n"
-                        f"💵 ${v_usd:,.2f}\n💰 {v_irr:,.0f} {toman_lbl}", html=True
+                        f"{EMOJIS['money']} <b>{amt_f:,.6g} {name}</b>\n\n"
+                        f"💵 ${v_usd_f:,.2f}\n💰 {v_irr_f:,.0f} {toman_lbl}", html=True
                     ))
 
         # ── 8. Single crypto name (btc / eth / trx / u …) ────────────
@@ -4737,22 +4885,19 @@ def inline_query_handler(inline_query):
         # ── 9. "price" keyword → full price list ─────────────────────
         if ql in ('price', 'prices', 'قیمت', 'قیمت‌ها'):
             try:
-                ids = ','.join(CRYPTO_LIST.keys())
-                resp = requests.get(
-                    f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd",
-                    timeout=10
-                )
-                prices = resp.json()
-                lines = [f"{EMOJIS['chart']} <b>Crypto Prices</b>\n"]
-                for code, cname in CRYPTO_LIST.items():
-                    pr = prices.get(code, {}).get('usd')
-                    if pr:
-                        lines.append(f"{cname}\n💵 {fmt_price(pr)} | 💰 {pr*irr:,.0f} T\n")
-                txt = "\n".join(lines)
-                results.append(article(
-                    "all_prices", "All Crypto Prices",
-                    "Tap to share full price list", txt, html=True
-                ))
+                ids_str = ','.join(CRYPTO_LIST.keys())
+                prices = _fetch_prices_coingecko(ids_str)
+                if prices:
+                    lines = [f"{EMOJIS['chart']} <b>Crypto Prices</b>\n"]
+                    for code, cname in CRYPTO_LIST.items():
+                        pr = prices.get(code, {}).get('usd')
+                        if pr:
+                            lines.append(f"{cname}\n💵 {fmt_price(pr)} | 💰 {pr*irr:,.0f} T\n")
+                    txt = "\n".join(lines)
+                    results.append(article(
+                        "all_prices", "All Crypto Prices",
+                        "Tap to share full price list", txt, html=True
+                    ))
             except Exception:
                 pass
 
@@ -4783,32 +4928,29 @@ def inline_query_handler(inline_query):
         # ── 12. Market (Fear & Greed) ──────────────────────────────────
         if ql in ('market', 'fear', 'greed', 'fear and greed', 'fear & greed', 'بازار', 'ترس و طمع'):
             try:
-                resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=8)
-                g = resp.json().get('data', {})
-                mcap = g.get('total_market_cap', {}).get('usd', 0)
-                vol = g.get('total_volume', {}).get('usd', 0)
-                btc_dom = g.get('market_cap_percentage', {}).get('btc', 0)
-                eth_dom = g.get('market_cap_percentage', {}).get('eth', 0)
-                coins = g.get('active_cryptocurrencies', 0)
-                chg24 = g.get('market_cap_change_percentage_24h_usd', 0)
-                arrow = '📈' if chg24 >= 0 else '📉'
-                lines = [f"🌍 <b>Crypto Market</b>\n"]
-                lines.append(f"💹 Market Cap: <b>${mcap/1e12:.2f}T</b>  {arrow} {chg24:.1f}%")
-                lines.append(f"📊 24h Volume: <b>${vol/1e12:.2f}T</b>")
-                lines.append(f"🟠 BTC Dom: <b>{btc_dom:.1f}%</b>  🔵 ETH Dom: <b>{eth_dom:.1f}%</b>")
-                lines.append(f"🪙 Active coins: <b>{coins}</b>")
-                try:
-                    fg_resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
-                    fg_data = fg_resp.json().get('data', [{}])[0]
-                    fg_val = int(fg_data.get('value', 50))
-                    fg_label = fg_data.get('value_classification', '?')
-                    filled = round(fg_val / 10)
-                    bar = '🟢' * filled + '⬜' * (10 - filled)
-                    lines.append(f"\n😨 <b>Fear & Greed</b>\n{bar}\n{fg_val}/100 — <b>{fg_label}</b>")
-                except Exception:
-                    pass
-                txt = "\n".join(lines)
-                results.append(article("market", "Market Overview", f"${mcap/1e12:.2f}T · {chg24:+.1f}%", txt, html=True))
+                g = _fetch_coingecko_global()
+                if g:
+                    mcap = g.get('total_market_cap', {}).get('usd', 0)
+                    vol = g.get('total_volume', {}).get('usd', 0)
+                    btc_dom = g.get('market_cap_percentage', {}).get('btc', 0)
+                    eth_dom = g.get('market_cap_percentage', {}).get('eth', 0)
+                    coins = g.get('active_cryptocurrencies', 0)
+                    chg24 = g.get('market_cap_change_percentage_24h_usd', 0)
+                    arrow = '📈' if chg24 >= 0 else '📉'
+                    lines = [f"🌍 <b>Crypto Market</b>\n"]
+                    lines.append(f"💹 Market Cap: <b>${mcap/1e12:.2f}T</b>  {arrow} {chg24:.1f}%")
+                    lines.append(f"📊 24h Volume: <b>${vol/1e12:.2f}T</b>")
+                    lines.append(f"🟠 BTC Dom: <b>{btc_dom:.1f}%</b>  🔵 ETH Dom: <b>{eth_dom:.1f}%</b>")
+                    lines.append(f"🪙 Active coins: <b>{coins}</b>")
+                    fg_data = _fetch_fear_greed()
+                    if fg_data:
+                        fg_val = int(fg_data.get('value', 50))
+                        fg_label = fg_data.get('value_classification', '?')
+                        filled = round(fg_val / 10)
+                        bar = '🟢' * filled + '⬜' * (10 - filled)
+                        lines.append(f"\n😨 <b>Fear & Greed</b>\n{bar}\n{fg_val}/100 — <b>{fg_label}</b>")
+                    txt = "\n".join(lines)
+                    results.append(article("market", "Market Overview", f"${mcap/1e12:.2f}T · {chg24:+.1f}%", txt, html=True))
             except Exception:
                 pass
 
@@ -4826,6 +4968,10 @@ def inline_query_handler(inline_query):
             if saved:
                 lines = [f"💼 <b>Portfolio</b>\n"]
                 total = 0.0
+                # Batch-fetch all prices at once
+                hold_ids = [detect_currency(s.lower()) for s in saved if detect_currency(s.lower())]
+                if hold_ids:
+                    _fetch_prices_batch(','.join(set(hold_ids)))
                 for symbol, amount in saved.items():
                     cid = detect_currency(symbol.lower())
                     if not cid:
@@ -4931,7 +5077,7 @@ def inline_query_handler(inline_query):
     bot.answer_inline_query(
         inline_query.id, 
         results, 
-        cache_time=1, 
+        cache_time=30, 
         is_personal=True,
         switch_pm_text=T(uid, 'inline_help_button'),
         switch_pm_parameter='inline_help'
@@ -5061,6 +5207,10 @@ def list_alerts(message):
     above_w = T(user_id, 'above_word')
     below_w = T(user_id, 'below_word')
     lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+    # Batch-fetch all alert prices at once
+    alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
+    if alert_ids:
+        _fetch_prices_batch(','.join(set(alert_ids)))
     for a in alerts:
         arrow  = '📈' if a['direction'] == 'above' else '📉'
         cur    = get_crypto_price(a['crypto_id'])
@@ -5189,34 +5339,36 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
     usd_to_irr = get_usd_to_irr()
     cmp_uid = user_id or getattr(getattr(message, "from_user", None), "id", 0)
     
-    # Multi-source 24h change via batch fallback
+    # Multi-source batch fetch (rate-limited)
     batch = _fetch_prices_batch(','.join(ids))
     
-    # Vol & market cap only from CoinGecko (nice-to-have, fall back to —)
+    # CoinGecko extra data (market cap, volume) — rate-limited
     extra = {}
-    for attempt in range(2):
-        try:
-            r = requests.get(
-                "https://api.coingecko.com/api/v3/simple/price"
-                f"?ids={','.join(ids)}&vs_currencies=usd"
-                f"&include_market_cap=true&include_24hr_vol=true",
-                timeout=8
-            )
-            if r.status_code == 200:
+    try:
+        ids_str = ','.join(ids)
+        if ids_str:
+            from functools import partial
+            @rate_limited_api_call
+            def _fetch_extra():
+                return requests.get(
+                    "https://api.coingecko.com/api/v3/simple/price"
+                    f"?ids={ids_str}&vs_currencies=usd"
+                    f"&include_market_cap=true&include_24hr_vol=true",
+                    timeout=8
+                )
+            r = _fetch_extra()
+            if r and r.status_code == 200:
                 extra = r.json()
-                break
-            elif r.status_code == 429:
-                time.sleep(2)
-        except Exception:
-            break
+    except Exception:
+        pass
 
     blocks = []
     prices = []
     changes = []
     for cid, name in zip(ids, names):
-        price  = get_crypto_price(cid) or 0
-        prices.append(price)
         bp = batch.get(cid, {})
+        price = bp.get('usd', 0)
+        prices.append(price)
         change = bp.get('usd_24h_change')
         cd = extra.get(cid, {})
         mcap = cd.get('usd_market_cap', 0)
@@ -6032,37 +6184,36 @@ def handle_text(message):
             result = get_ton_wallet_balance(text, user_id)
             bot.reply_to(message, add_timestamp(result), parse_mode='HTML')
             return
+        else:
+            bot.reply_to(message, T(user_id, 'invalid_address'))
+            return
 
-    # TON transaction hash or link (Tonscan / TonViewer)
+    # Transaction hash or link — try TRON first, then TON (both use 64-char hex)
     ton_tx_match = re.match(r'^[A-Fa-f0-9]{64}$', text)
+    tronscan_match = re.match(r'https?://tronscan\.org/#/transaction/([A-Fa-f0-9]{64})', text)
     tonscan_match = re.match(r'https?://tonscan\.org/tx/([A-Fa-f0-9]{64})', text)
     tonviewer_match = re.match(r'https?://tonviewer\.com/transaction/([A-Fa-f0-9]{64})', text)
 
-    if ton_tx_match or tonscan_match or tonviewer_match:
-        tx_hash = text if ton_tx_match else (tonscan_match or tonviewer_match).group(1)
-        
+    tx_hash = None
+    if ton_tx_match:
+        tx_hash = text
+    elif tronscan_match:
+        tx_hash = tronscan_match.group(1)
+    elif tonscan_match:
+        tx_hash = tonscan_match.group(1)
+    elif tonviewer_match:
+        tx_hash = tonviewer_match.group(1)
+
+    if tx_hash:
         bot.send_chat_action(message.chat.id, 'typing')
-        
-        # Try as TRON first (both use 64-char hex)
+        # Try as TRON first
         tron_result = get_tron_transaction_details(tx_hash, user_id)
         if tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower():
             bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
             return
-        
         # If TRON failed, try TON
         ton_result = get_ton_transaction_details(tx_hash, user_id)
         bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
-        return   
-
-    # TRON transaction hash OR Tronscan link
-    tx_hash_match = re.match(r'^[A-Fa-f0-9]{64}$', text)
-    tronscan_match = re.match(r'https?://tronscan\.org/#/transaction/([A-Fa-f0-9]{64})', text)
-    
-    if tx_hash_match or tronscan_match:
-        tx_hash = text if tx_hash_match else tronscan_match.group(1)
-        bot.send_chat_action(message.chat.id, 'typing')
-        result = get_tron_transaction_details(tx_hash, user_id)
-        bot.reply_to(message, result, parse_mode='HTML')
         return
 
     # Standalone "try" → show TRY rate
@@ -6263,6 +6414,10 @@ def _handle_alert_callbacks(call, data, user_id):
             above_w = T(user_id, 'above_word')
             below_w = T(user_id, 'below_word')
             lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+            # Batch-fetch all alert prices at once
+            alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
+            if alert_ids:
+                _fetch_prices_batch(','.join(set(alert_ids)))
             for a in alerts:
                 arrow = '📈' if a['direction'] == 'above' else '📉'
                 cur = get_crypto_price(a['crypto_id'])
@@ -6443,19 +6598,13 @@ def _send_digest(user_id):
         usd_to_irr = get_usd_to_irr()
         buy_prices = db_get_buy_prices(user_id)
 
-        # Fetch 24h change for each held coin
+        # Batch-fetch prices + 24h change for all held coins (seeds individual caches too)
         crypto_ids = [detect_currency(s.lower()) for s in saved if detect_currency(s.lower())]
         change_map = {}
         if crypto_ids:
-            try:
-                url = (f"https://api.coingecko.com/api/v3/simple/price"
-                       f"?ids={','.join(set(crypto_ids))}&vs_currencies=usd&include_24hr_change=true")
-                resp = requests.get(url, timeout=10)
-                data = resp.json()
-                for cid in crypto_ids:
-                    change_map[cid] = data.get(cid, {}).get('usd_24h_change')
-            except Exception:
-                pass
+            batch = _fetch_prices_batch(','.join(set(crypto_ids)))
+            for cid in crypto_ids:
+                change_map[cid] = batch.get(cid, {}).get('usd_24h_change')
 
         total_usd = 0.0
         lines = [_T_cached(user_id, 'digest_morning')]
