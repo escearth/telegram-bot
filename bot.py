@@ -1981,7 +1981,7 @@ CRYPTO_ALIASES = {
     'شیبا اینو': 'shiba-inu',
     'trx': 'tron', 'ترون': 'tron', 'tron': 'tron',
     'تی آر ایکس': 'tron',
-    'ton': 'the-open-network', 'تون': 'the-open-network', 'toncoin': 'the-open-network',
+    'ton': 'the-open-network', 'تون': 'the-open-network', 'toncoin': 'the-open-network', 'gram': 'the-open-network',
     'تانکوین': 'the-open-network',
     'stars': 'telegram-stars', 'star': 'telegram-stars', 'استار': 'telegram-stars', 
     'استارز': 'telegram-stars', 'ستاره': 'telegram-stars', 'telegram': 'telegram-stars',
@@ -2448,7 +2448,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
 
         buf = BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=80,
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=150,
                     facecolor=fig.get_facecolor(), edgecolor='none')
         buf.seek(0)
         plt.close(fig)
@@ -2485,6 +2485,17 @@ def _prewarm_charts():
             except Exception as e:
                 logger.debug(f"Pre-warm skipped for {cid}: {e}")
     logger.info("Chart pre-warming complete")
+
+
+def _prewarm_prices():
+    """Pre-fetch all crypto prices so inline mode is instant."""
+    ids = ','.join(k for k in CRYPTO_LIST if k != 'telegram-stars')
+    prices = _fetch_prices_coingecko(ids)
+    if prices:
+        for cid in CRYPTO_LIST:
+            if cid != 'telegram-stars' and cid in prices and 'usd' in prices[cid]:
+                cache_set(cid, prices[cid]['usd'])
+        logger.info(f"Pre-warmed {len(prices)} price(s)")
 
 
 def get_portfolio_chart_image(holdings: dict, prices: dict, user_id: int = 0) -> bytes:
@@ -6795,8 +6806,9 @@ if __name__ == "__main__":
     threading.Thread(target=cache_cleanup_loop, daemon=True, name="CacheCleanup").start()
     threading.Thread(target=_cleanup_user_state_loop, daemon=True, name="UserStateCleanup").start()
     threading.Thread(target=_prewarm_charts, daemon=True, name="ChartPrewarm").start()
+    threading.Thread(target=_prewarm_prices, daemon=True, name="PricePrewarm").start()
     threading.Thread(target=lambda: get_usd_to_irr(), daemon=True, name="IRRPreWarm").start()
-    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, IRR pre-warm)")
+    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, price pre-warm, IRR pre-warm)")
 
     logger.info(f"{EMOJIS['star']} Press Ctrl+C to stop")
     logger.info("=" * 50)
