@@ -611,7 +611,7 @@ def get_iran_time_str():
 def add_timestamp(text: str) -> str:
     """Add Iran local date/time timestamp to message."""
     time_str = get_iran_time_str()
-    return f"{text}\n\n🕐 {time_str} (Iran)"
+    return f"{text}\n🕐 {time_str} (Iran)"
 
 
 def _sym(cid: str) -> str:
@@ -2239,7 +2239,6 @@ def _get_ton_tx_fallback(hash_value):
 # ─────────────────────────────────────────────
 # API helpers
 # ─────────────────────────────────────────────
-@rate_limited_api_call
 def get_crypto_price(crypto_id, cache_only=False):
     # Special handling for Telegram Stars (official rate)
     if crypto_id == 'telegram-stars':
