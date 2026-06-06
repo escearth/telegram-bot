@@ -39,7 +39,7 @@ from number_utils import (
     normalize_digits
 )
 
-# Animated emoji support (optional — requires Telethon + TG_API_ID/HASH)
+# Animated emoji support (optional - requires Telethon + TG_API_ID/HASH)
 from emoji_utils import apply_emoji, ensure_emoji_map
 
 # Safe math evaluation - replaces eval()
@@ -344,7 +344,7 @@ def db_get_lang(user_id: int) -> str:
 
 
 def _get_lang_cached(user_id: int) -> str:
-    """Read language from cache only — no DB lock. For background threads."""
+    """Read language from cache only - no DB lock. For background threads."""
     with _lang_cache_lock:
         return _lang_cache.get(user_id, 'en')
 
@@ -373,7 +373,7 @@ def T(user_id: int, key: str, **kwargs) -> str:
 
 
 def _T_cached(user_id: int, key: str, **kwargs) -> str:
-    """Like T() but uses cached language only — no DB lock. For background threads."""
+    """Like T() but uses cached language only - no DB lock. For background threads."""
     lang = _get_lang_cached(user_id)
     text = STRINGS.get(lang, STRINGS['en']).get(key)
     if text is None:
@@ -975,7 +975,7 @@ def is_user_rate_limited(user_id: int) -> bool:
     """
     Returns True if the user has exceeded USER_RATE_LIMIT
     requests in the last USER_RATE_WINDOW seconds.
-    Does NOT record the timestamp — call record_user_request() after the handler runs.
+    Does NOT record the timestamp - call record_user_request() after the handler runs.
     """
     now = time.time()
     with _user_rate_lock:
@@ -1043,7 +1043,7 @@ def _cleanup_stale_dicts():
                  if now - ts > 3600]
         for uid in stale:
             del _joined_cache[uid]
-    # _user_request_times — remove users with no recent activity
+    # _user_request_times - remove users with no recent activity
     with _user_rate_lock:
         stale = [uid for uid, times in _user_request_times.items()
                  if not times or now - max(times) > USER_RATE_WINDOW * 2]
@@ -1066,7 +1066,7 @@ def _cleanup_stale_dicts():
 
 
 def rate_limit_check(func):
-    """Decorator — drops rate-limited updates and notifies user once per minute.
+    """Decorator - drops rate-limited updates and notifies user once per minute.
     Only counts bot commands (messages starting with /) toward the rate limit.
     Also monitors group command frequency for slowdown warnings.
     Records the request timestamp AFTER the handler completes so slow commands
@@ -1134,7 +1134,7 @@ def rate_limit_check(func):
 
 # ─────────────────────────────────────────────
 # i18n string table  (en + fa)
-# Add new strings here — never hardcode in handlers
+# Add new strings here - never hardcode in handlers
 # ─────────────────────────────────────────────
 STRINGS = {
     'en': {
@@ -1170,38 +1170,38 @@ STRINGS = {
             "<i>Prices · Charts · Portfolio · Alerts · Wallets · NFTs</i>\n\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "📈 <b>Market</b>\n"
-            "  /price — All coin prices\n"
-            "  /chart — Price chart (e.g. /chart btc 90d)\n"
-            "  /compare — Compare two coins\n"
-            "  /market — Fear &amp; Greed overview\n"
-            "  /trending — Top trending coins\n"
-            "  /gainers — Top gainers (24h)\n"
-            "  /losers — Top losers (24h)\n"
-            "  /gold — Gold prices (global)\n\n"
+            "  /price - All coin prices\n"
+            "  /chart - Price chart (e.g. /chart btc 90d)\n"
+            "  /compare - Compare two coins\n"
+            "  /market - Fear &amp; Greed overview\n"
+            "  /trending - Top trending coins\n"
+            "  /gainers - Top gainers (24h)\n"
+            "  /losers - Top losers (24h)\n"
+            "  /gold - Gold prices (global)\n\n"
             "💱 <b>Currency</b>\n"
-            "  /usd — USD ↔ Toman\n"
-            "  /try — TRY ↔ Toman\n"
-            "  /convert — Coins · USD · Toman\n"
-            "  /star — Telegram Stars\n"
-            "  /setexchange — Price source (Binance/Crypto.com/Kraken)\n\n"
+            "  /usd - USD ↔ Toman\n"
+            "  /try - TRY ↔ Toman\n"
+            "  /convert - Coins · USD · Toman\n"
+            "  /star - Telegram Stars\n"
+            "  /setexchange - Price source (Binance/Crypto.com/Kraken)\n\n"
             "💼 <b>Portfolio</b>\n"
-            "  /holdings — Live P&amp;L snapshot\n"
-            "  /set — Update your holdings\n"
-            "  /digest — Daily summary\n\n"
+            "  /holdings - Live P&amp;L snapshot\n"
+            "  /set - Update your holdings\n"
+            "  /digest - Daily summary\n\n"
             "🔔 <b>Alerts</b>\n"
-            "  /alert — New price alert\n"
-            "  /alerts — Manage alerts\n\n"
+            "  /alert - New price alert\n"
+            "  /alerts - Manage alerts\n\n"
             "👛 <b>Wallet Checker</b>\n"
-            "  /wallets — Manage TRON addresses\n"
-            "  /mywallets — Live TRX balances\n"
+            "  /wallets - Manage TRON addresses\n"
+            "  /mywallets - Live TRX balances\n"
             "  Send TRON/TON address → balance\n"
             "  Send TRX/TON tx hash → details\n\n"
             "🏷 <b>Telegram NFTs (Fragment)</b>\n"
-            "  /fragment — Lookup a username\n"
-            "  /gifts — Gift collections\n"
-            "  /gift — Collection details\n\n"
+            "  /fragment - Lookup a username\n"
+            "  /gifts - Gift collections\n"
+            "  /gift - Collection details\n\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "⚡ <b>Just type — no command needed:</b>\n"
+            "⚡ <b>Just type - no command needed:</b>\n"
             "  <code>btc</code>  →  price + chart\n"
             "  <code>btc @binance</code>  →  price from Binance\n"
             "  <code>10 trx</code>  →  USD + Toman value\n"
@@ -1235,12 +1235,12 @@ STRINGS = {
         'privacy_text':
             "🔒 <b>Privacy &amp; Data</b>\n\n"
             "Earth Crypto stores the following data linked to your Telegram user ID:\n\n"
-            "• <b>Holdings</b> — coin amounts you set via /set or /holdings\n"
-            "• <b>Buy prices</b> — average buy prices for P&amp;L tracking\n"
-            "• <b>Wallets</b> — TRON wallet addresses you add via /wallets\n"
-            "• <b>Alerts</b> — price alert targets you set via /alert\n"
-            "• <b>Digest preference</b> — your daily digest on/off setting and time\n"
-            "• <b>Language</b> — your chosen interface language\n\n"
+            "• <b>Holdings</b> - coin amounts you set via /set or /holdings\n"
+            "• <b>Buy prices</b> - average buy prices for P&amp;L tracking\n"
+            "• <b>Wallets</b> - TRON wallet addresses you add via /wallets\n"
+            "• <b>Alerts</b> - price alert targets you set via /alert\n"
+            "• <b>Digest preference</b> - your daily digest on/off setting and time\n"
+            "• <b>Language</b> - your chosen interface language\n\n"
             "No names, messages, or personal information are stored beyond what you explicitly provide.\n\n"
             "Your data is stored on the server running this bot and is never sold or shared with third parties.\n\n"
             "To delete all your data permanently, use:\n"
@@ -1269,7 +1269,7 @@ STRINGS = {
         'wallet_limit':        "⚠️ Wallet limit reached ({max} max).\nUse /wallets to remove one first.",
         'wallet_invalid':      "❌ <b>Invalid address</b>\n\n<code>{address}</code>\n\nA TRON address starts with <b>T</b> and is exactly <b>34 characters</b> long. Please double-check and try again.",
         'wallet_already_saved':"⚠️ This wallet is already saved.",
-        'wallet_not_found':    "Wallet not found — list may have changed.",
+        'wallet_not_found':    "Wallet not found - list may have changed.",
         'wallet_removed_toast':"✅ Wallet removed.",
         'no_wallets_yet':      "⚠️ No saved wallets yet.\nUse /wallets to manage them.",
         'wallets_balances_hdr':"👛 <b>Wallets &amp; Balances</b>\n\n",
@@ -1362,21 +1362,21 @@ STRINGS = {
         'compare_vol':         "📦 Vol 24h: {vol}\n",
         'compare_mcap':        "🏦 MCap: {mcap}",
         'compare_winner':      "\n🏆 <b>{name}</b> performed better in the last 24h",
-        'compare_tied':        "\n🤝 <b>Tied</b> — same 24h performance",
+        'compare_tied':        "\n🤝 <b>Tied</b> - same 24h performance",
 
         # ── /convert ──────────────────────────────────────────
-        'convert_step1':       "💱 <b>Convert</b>\n\nStep 1 of 3 — Pick the coin to convert <b>from</b>:",
-        'convert_step2':       "💱 <b>Convert</b>\n\n✅ From: <b>{sym}</b>\n\nStep 2 of 3 — Pick the coin to convert <b>to</b>:",
-        'convert_step3':       "💱 <b>Convert</b>\n\n✅ From: <b>{from_sym}</b>\n✅ To: <b>{to_sym}</b>\n\nStep 3 of 3 — How much <b>{from_sym}</b>?\n<i>e.g. 10</i>\n\nType /cancel to abort.",
+        'convert_step1':       "💱 <b>Convert</b>\n\nStep 1 of 3 - Pick the coin to convert <b>from</b>:",
+        'convert_step2':       "💱 <b>Convert</b>\n\n✅ From: <b>{sym}</b>\n\nStep 2 of 3 - Pick the coin to convert <b>to</b>:",
+        'convert_step3':       "💱 <b>Convert</b>\n\n✅ From: <b>{from_sym}</b>\n✅ To: <b>{to_sym}</b>\n\nStep 3 of 3 - How much <b>{from_sym}</b>?\n<i>e.g. 10</i>\n\nType /cancel to abort.",
         'convert_result':      "💱 <b>{amount} {from_sym}</b>  →  <b>{result} {to_sym}</b>",
         'convert_fail':        "❌ Conversion failed: {err}",
         'inline_conv_header':  "💱 Conversion",
         'btn_cvt_cancel':      "❌ Cancel",
 
         # ── /alert ────────────────────────────────────────────
-        'alert_step1':         "🔔 <b>Set Price Alert</b>\n\nStep 1 of 3 — Pick a coin:",
-        'alert_step2':         "🔔 <b>Set Price Alert</b>\n\n✅ Coin: <b>{sym}</b>  (now {price})\n\nStep 2 of 3 — Notify me when price:",
-        'alert_step3':         "🔔 <b>Set Price Alert</b>\n\n✅ Coin: <b>{sym}</b>  (now {price})\n✅ Direction: {arrow} <b>{direction}</b>\n\nStep 3 of 3 — Send the target price:\n<i>e.g. 95000</i>\n\nType /cancel to abort.",
+        'alert_step1':         "🔔 <b>Set Price Alert</b>\n\nStep 1 of 3 - Pick a coin:",
+        'alert_step2':         "🔔 <b>Set Price Alert</b>\n\n✅ Coin: <b>{sym}</b>  (now {price})\n\nStep 2 of 3 - Notify me when price:",
+        'alert_step3':         "🔔 <b>Set Price Alert</b>\n\n✅ Coin: <b>{sym}</b>  (now {price})\n✅ Direction: {arrow} <b>{direction}</b>\n\nStep 3 of 3 - Send the target price:\n<i>e.g. 95000</i>\n\nType /cancel to abort.",
         'alert_set':
             "✅ <b>Alert set!</b>\n\n"
             "🪙 <b>{sym}</b>\n"
@@ -1452,36 +1452,35 @@ STRINGS = {
         'tx_error':            "❌ Could not fetch transaction. Check the hash and try again.",
 
         # ── inline / misc ─────────────────────────────────────
-        'inline_tips_title':   "Crypto Bot — Inline Guide",
+        'inline_tips_title':   "Crypto Bot - Inline Guide",
         'inline_tips_desc':    "btc · 10trx · usd100 to eth · wallets · hash · gold",
         'inline_tips_body':
             "<b>🪙 Prices & Values</b>\n"
-            "• <code>btc</code> — price of any crypto\n"
-            "• <code>10trx</code> or <code>10 trx</code> — value in USD/IRR\n"
-            "• <code>u</code> or <code>10u</code> — USDT alias\n"
-            "• <code>100usd to eth</code> or <code>0.5btc to usd</code> — convert\n"
-            "• <code>1000toman to usd</code> or <code>10usd to toman</code> — fiat convert\n\n"
+            "• <code>btc</code> - price of any crypto\n"
+            "• <code>10trx</code> or <code>10 trx</code> - value in USD/IRR\n"
+            "• <code>u</code> or <code>10u</code> - USDT alias\n"
+            "• <code>100usd to eth</code> or <code>0.5btc to usd</code> - convert\n"
+            "• <code>1000toman to usd</code> or <code>10usd to toman</code> - fiat convert\n\n"
             "<b>📊 Market</b>\n"
-            "• <code>price</code> or <code>prices</code> — all crypto prices\n"
-            "• <code>gold</code> or <code>gold price</code> — XAU/USD\n"
-            "• <code>market</code> or <code>fear</code> — market overview & Fear & Greed\n"
-            "• <code>star</code> or <code>stars</code> — Telegram Stars price\n"
-            "• <code>try</code> or <code>tl</code> — TRY to Toman rate\n\n"
+            "• <code>price</code> or <code>prices</code> - all crypto prices\n"
+            "• <code>gold</code> or <code>gold price</code> - XAU/USD\n"
+            "• <code>market</code> or <code>fear</code> - market overview & Fear & Greed\n"
+            "• <code>star</code> or <code>stars</code> - Telegram Stars price\n"
+            "• <code>try</code> or <code>tl</code> - TRY to Toman rate\n\n"
             "<b>💰 Portfolio & Alerts</b>\n"
-            "• <code>holdings</code> or <code>portfolio</code> — your portfolio\n"
-            "• <code>alerts</code> or <code>my alerts</code> — active price alerts\n"
-            "• <code>wallets</code> — wallets with balance\n"
-            "• <code>wallets addr</code> — wallet addresses only\n\n"
+            "• <code>holdings</code> or <code>portfolio</code> - your portfolio\n"
+            "• <code>alerts</code> or <code>my alerts</code> - active price alerts\n"
+            "• <code>wallets</code> - wallets with balance\n"
+            "• <code>wallets addr</code> - wallet addresses only\n\n"
             "<b>🔗 Blockchain</b>\n"
-            "• Paste TRON tx hash or Tronscan link — TX details\n"
-            "• Paste TON tx hash or tonviewer/tonscan link — TX details\n"
-            "• Paste TRON wallet address (34 chars) — balance\n"
-            "• Paste TON wallet address (48 chars, EQ/UQ) — balance\n\n"
+            "• Paste TRON tx hash or Tronscan link - TX details\n"
+            "• Paste TON tx hash or tonviewer/tonscan link - TX details\n"
+            "• Paste TRON wallet address (34 chars) - balance\n"
+            "• Paste TON wallet address (48 chars, EQ/UQ) - balance\n\n"
             "<b>🧮 Tools</b>\n"
-            "• <code>10+20*3</code> or <code>(5+3)*2</code> — calculator\n"
-            "• <code>15% of 200</code>  |  <code>100+5%</code>  |  <code>80-20%</code> — percentages\n"
-            "• <code>usd</code> — USD to Toman rate\n"
-            "• <code>toman</code> — Toman to USD rate",
+            "• <code>10+20*3</code> or <code>(5+3)*2</code> - calculator\n"
+            "• <code>15% of 200</code>  |  <code>100+5%</code>  |  <code>80-20%</code> - percentages\n"
+            "• <code>usd</code> - USD to Toman rate",
         'inline_help_button':  "❓ Help",
         'all_prices_title':    "All Crypto Prices",
         'all_prices_tap':      "Tap to share full price list",
@@ -1496,7 +1495,7 @@ STRINGS = {
         'invalid_data':        "Invalid data.",
         'all_wallets_removed': "✅ All wallets removed.",
         'no_wallets_to_remove':"⚠️ No wallets saved yet.",
-        'gdpr_cancelled':      "Cancelled — your data is safe.",
+        'gdpr_cancelled':      "Cancelled - your data is safe.",
 
         # ── Currency / price display ──────────────────────────
         'toman_label':         "Toman",
@@ -1570,36 +1569,36 @@ STRINGS = {
             "<i>قیمت · نمودار · پرتفو · هشدار · کیف پول · NFT</i>\n\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "📈 <b>بازار</b>\n"
-            "  /price — قیمت لحظه‌ای ارزها\n"
-            "  /chart — نمودار قیمت (مثال: /chart btc 90d)\n"
-            "  /compare — مقایسه دو ارز\n"
-            "  /market — شاخص ترس و طمع\n"
-            "  /trending — محبوب‌ترین ارزها\n"
-            "  /gainers — پربازده‌ترین‌ها (24h)\n"
-            "  /losers — پرضررترین‌ها (24h)\n"
-            "  /gold — قیمت طلا\n\n"
+            "  /price - قیمت لحظه‌ای ارزها\n"
+            "  /chart - نمودار قیمت (مثال: /chart btc 90d)\n"
+            "  /compare - مقایسه دو ارز\n"
+            "  /market - شاخص ترس و طمع\n"
+            "  /trending - محبوب‌ترین ارزها\n"
+            "  /gainers - پربازده‌ترین‌ها (24h)\n"
+            "  /losers - پرضررترین‌ها (24h)\n"
+            "  /gold - قیمت طلا\n\n"
             "💱 <b>ارز</b>\n"
-            "  /usd — دلار ↔ تومان\n"
-            "  /try — لیر ترکیه ↔ تومان\n"
-            "  /convert — ارز · دلار · تومان\n"
-            "  /star — Telegram Stars\n"
-            "  /setexchange — منبع قیمت (Binance/Crypto.com/Kraken)\n\n"
+            "  /usd - دلار ↔ تومان\n"
+            "  /try - لیر ترکیه ↔ تومان\n"
+            "  /convert - ارز · دلار · تومان\n"
+            "  /star - Telegram Stars\n"
+            "  /setexchange - منبع قیمت (Binance/Crypto.com/Kraken)\n\n"
             "💼 <b>پرتفو</b>\n"
-            "  /holdings — سود/زیان لحظه‌ای\n"
-            "  /set — ثبت دارایی‌ها\n"
-            "  /digest — خلاصه روزانه\n\n"
+            "  /holdings - سود/زیان لحظه‌ای\n"
+            "  /set - ثبت دارایی‌ها\n"
+            "  /digest - خلاصه روزانه\n\n"
             "🔔 <b>هشدار قیمت</b>\n"
-            "  /alert — هشدار جدید\n"
-            "  /alerts — مدیریت هشدارها\n\n"
+            "  /alert - هشدار جدید\n"
+            "  /alerts - مدیریت هشدارها\n\n"
             "👛 <b>بررسی کیف پول</b>\n"
-            "  /wallets — مدیریت آدرس‌های TRON\n"
-            "  /mywallets — موجودی TRX\n"
+            "  /wallets - مدیریت آدرس‌های TRON\n"
+            "  /mywallets - موجودی TRX\n"
             "  آدرس TRON/TON → موجودی\n"
             "  هش تراکنش TRX/TON → جزئیات\n\n"
             "🏷 <b>NFT تلگرام (Fragment)</b>\n"
-            "  /fragment — بررسی نام کاربری\n"
-            "  /gifts — مجموعه هدایا\n"
-            "  /gift — جزئیات مجموعه\n\n"
+            "  /fragment - بررسی نام کاربری\n"
+            "  /gifts - مجموعه هدایا\n"
+            "  /gift - جزئیات مجموعه\n\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "⚡ <b>فقط تایپ کنید:</b>\n"
             "  <code>بیتکوین</code>  ←  قیمت + نمودار\n"
@@ -1635,12 +1634,12 @@ STRINGS = {
         'privacy_text':
             "🔒 <b>حریم خصوصی و داده‌ها</b>\n\n"
             "Earth Crypto اطلاعات زیر را مرتبط با شناسه تلگرام شما ذخیره می‌کند:\n\n"
-            "• <b>دارایی‌ها</b> — مقادیر ارز که از طریق /set یا /holdings وارد کردید\n"
-            "• <b>قیمت خرید</b> — میانگین قیمت خرید برای محاسبه سود/زیان\n"
-            "• <b>کیف پول‌ها</b> — آدرس‌های ترون که اضافه کردید\n"
-            "• <b>هشدارها</b> — اهداف قیمتی که تنظیم کردید\n"
-            "• <b>تنظیمات خلاصه</b> — وضعیت و زمان خلاصه روزانه\n"
-            "• <b>زبان</b> — زبان انتخابی شما\n\n"
+            "• <b>دارایی‌ها</b> - مقادیر ارز که از طریق /set یا /holdings وارد کردید\n"
+            "• <b>قیمت خرید</b> - میانگین قیمت خرید برای محاسبه سود/زیان\n"
+            "• <b>کیف پول‌ها</b> - آدرس‌های ترون که اضافه کردید\n"
+            "• <b>هشدارها</b> - اهداف قیمتی که تنظیم کردید\n"
+            "• <b>تنظیمات خلاصه</b> - وضعیت و زمان خلاصه روزانه\n"
+            "• <b>زبان</b> - زبان انتخابی شما\n\n"
             "هیچ نام، پیام یا اطلاعات شخصی دیگری ذخیره نمی‌شود.\n\n"
             "داده‌های شما روی سرور این ربات ذخیره می‌شوند و هرگز به اشخاص ثالث فروخته یا منتقل نمی‌شوند.\n\n"
             "برای حذف دائمی همه داده‌هایتان از دستور زیر استفاده کنید:\n"
@@ -1669,7 +1668,7 @@ STRINGS = {
         'wallet_limit':        "⚠️ به حداکثر تعداد کیف پول ({max}) رسیدید.\nاول یکی را با /wallets حذف کنید.",
         'wallet_invalid':      "❌ <b>آدرس نامعتبر</b>\n\n<code>{address}</code>\n\nآدرس ترون با <b>T</b> شروع می‌شود و دقیقاً <b>۳۴ کاراکتر</b> دارد. لطفاً دوباره بررسی کنید.",
         'wallet_already_saved':"⚠️ این کیف پول قبلاً ذخیره شده.",
-        'wallet_not_found':    "کیف پول پیدا نشد — لیست ممکن است تغییر کرده باشد.",
+        'wallet_not_found':    "کیف پول پیدا نشد - لیست ممکن است تغییر کرده باشد.",
         'wallet_removed_toast':"✅ کیف پول حذف شد.",
         'no_wallets_yet':      "⚠️ هنوز کیف پولی ذخیره نشده.\nاز /wallets برای مدیریت استفاده کنید.",
         'wallets_balances_hdr':"👛 <b>کیف پول‌ها و موجودی</b>\n\n",
@@ -1762,21 +1761,21 @@ STRINGS = {
         'compare_vol':         "📦 Vol 24h: {vol}\n",
         'compare_mcap':        "🏦 ارزش بازار: {mcap}",
         'compare_winner':      "\n🏆 <b>{name}</b> در ۲۴ ساعت گذشته بهتر عمل کرد",
-        'compare_tied':        "\n🤝 <b>مساوی</b> — عملکرد یکسان در ۲۴ ساعت",
+        'compare_tied':        "\n🤝 <b>مساوی</b> - عملکرد یکسان در ۲۴ ساعت",
 
         # ── /convert ──────────────────────────────────────────
-        'convert_step1':       "💱 <b>تبدیل ارز</b>\n\nمرحله ۱ از ۳ — ارز مبدا را انتخاب کنید:",
-        'convert_step2':       "💱 <b>تبدیل ارز</b>\n\n✅ از: <b>{sym}</b>\n\nمرحله ۲ از ۳ — ارز مقصد را انتخاب کنید:",
-        'convert_step3':       "💱 <b>تبدیل ارز</b>\n\n✅ از: <b>{from_sym}</b>\n✅ به: <b>{to_sym}</b>\n\nمرحله ۳ از ۳ — چقدر <b>{from_sym}</b>؟\n<i>مثال: 10</i>\n\nبرای لغو /cancel بزنید.",
+        'convert_step1':       "💱 <b>تبدیل ارز</b>\n\nمرحله ۱ از ۳ - ارز مبدا را انتخاب کنید:",
+        'convert_step2':       "💱 <b>تبدیل ارز</b>\n\n✅ از: <b>{sym}</b>\n\nمرحله ۲ از ۳ - ارز مقصد را انتخاب کنید:",
+        'convert_step3':       "💱 <b>تبدیل ارز</b>\n\n✅ از: <b>{from_sym}</b>\n✅ به: <b>{to_sym}</b>\n\nمرحله ۳ از ۳ - چقدر <b>{from_sym}</b>؟\n<i>مثال: 10</i>\n\nبرای لغو /cancel بزنید.",
         'convert_result':      "💱 <b>{amount} {from_sym}</b>  →  <b>{result} {to_sym}</b>",
         'convert_fail':        "❌ خطا در تبدیل: {err}",
         'inline_conv_header':  "💱 تبدیل ارز",
         'btn_cvt_cancel':      "❌ لغو",
 
         # ── /alert ────────────────────────────────────────────
-        'alert_step1':         "🔔 <b>تنظیم هشدار قیمت</b>\n\nمرحله ۱ از ۳ — ارز را انتخاب کنید:",
-        'alert_step2':         "🔔 <b>تنظیم هشدار قیمت</b>\n\n✅ ارز: <b>{sym}</b>  (اکنون {price})\n\nمرحله ۲ از ۳ — هشدار بده وقتی قیمت:",
-        'alert_step3':         "🔔 <b>تنظیم هشدار قیمت</b>\n\n✅ ارز: <b>{sym}</b>  (اکنون {price})\n✅ جهت: {arrow} <b>{direction}</b>\n\nمرحله ۳ از ۳ — قیمت هدف را بفرستید:\n<i>مثال: 95000</i>\n\nبرای لغو /cancel بزنید.",
+        'alert_step1':         "🔔 <b>تنظیم هشدار قیمت</b>\n\nمرحله ۱ از ۳ - ارز را انتخاب کنید:",
+        'alert_step2':         "🔔 <b>تنظیم هشدار قیمت</b>\n\n✅ ارز: <b>{sym}</b>  (اکنون {price})\n\nمرحله ۲ از ۳ - هشدار بده وقتی قیمت:",
+        'alert_step3':         "🔔 <b>تنظیم هشدار قیمت</b>\n\n✅ ارز: <b>{sym}</b>  (اکنون {price})\n✅ جهت: {arrow} <b>{direction}</b>\n\nمرحله ۳ از ۳ - قیمت هدف را بفرستید:\n<i>مثال: 95000</i>\n\nبرای لغو /cancel بزنید.",
         'alert_set':
             "✅ <b>هشدار تنظیم شد!</b>\n\n"
             "🪙 <b>{sym}</b>\n"
@@ -1852,36 +1851,35 @@ STRINGS = {
         'tx_error':            "❌ دریافت تراکنش ممکن نشد. هش را بررسی کنید.",
 
         # ── inline / misc ─────────────────────────────────────
-        'inline_tips_title':   "ربات کریپتو — راهنمای اینلاین",
+        'inline_tips_title':   "ربات کریپتو - راهنمای اینلاین",
         'inline_tips_desc':    "btc · 10trx · usd100 to eth · ولت · hash · طلا",
         'inline_tips_body':
             "<b>🪙 قیمت‌ها و ارزش</b>\n"
-            "• <code>btc</code> — قیمت هر ارز\n"
-            "• <code>10trx</code> یا <code>10 trx</code> — ارزش به دلار/تومان\n"
-            "• <code>u</code> یا <code>10u</code> — USDT\n"
-            "• <code>100usd to eth</code> یا <code>0.5btc to usd</code> — تبدیل\n"
-            "• <code>1000تومان to usd</code> یا <code>10usd to تومان</code> — تبدیل ارز\n\n"
+            "• <code>btc</code> - قیمت هر ارز\n"
+            "• <code>10trx</code> یا <code>10 trx</code> - ارزش به دلار/تومان\n"
+            "• <code>u</code> یا <code>10u</code> - USDT\n"
+            "• <code>100usd to eth</code> یا <code>0.5btc to usd</code> - تبدیل\n"
+            "• <code>1000تومان to usd</code> یا <code>10usd to تومان</code> - تبدیل ارز\n\n"
             "<b>📊 بازار</b>\n"
-            "• <code>price</code> یا <code>قیمت</code> — قیمت همه ارزها\n"
-            "• <code>gold</code> یا <code>طلا</code> — قیمت طلا (XAU/USD)\n"
-            "• <code>market</code> یا <code>بازار</code> — نمای کلی بازار و ترس و طمع\n"
-            "• <code>star</code> یا <code>استارز</code> — قیمت Telegram Stars\n"
-            "• <code>try</code> یا <code>لیر</code> — نرخ لیر ترکیه به تومان\n\n"
+            "• <code>price</code> یا <code>قیمت</code> - قیمت همه ارزها\n"
+            "• <code>gold</code> یا <code>طلا</code> - قیمت طلا (XAU/USD)\n"
+            "• <code>market</code> یا <code>بازار</code> - نمای کلی بازار و ترس و طمع\n"
+            "• <code>star</code> یا <code>استارز</code> - قیمت Telegram Stars\n"
+            "• <code>try</code> یا <code>لیر</code> - نرخ لیر ترکیه به تومان\n\n"
             "<b>💰 پرتفو و هشدارها</b>\n"
-            "• <code>holdings</code> یا <code>دارایی</code> — پرتفوی شما\n"
-            "• <code>alerts</code> یا <code>هشدارها</code> — هشدارهای قیمتی فعال\n"
-            "• <code>ولت</code> — کیف پول‌ها با موجودی\n"
-            "• <code>ولت آدرس</code> — فقط آدرس کیف پول‌ها\n\n"
+            "• <code>holdings</code> یا <code>دارایی</code> - پرتفوی شما\n"
+            "• <code>alerts</code> یا <code>هشدارها</code> - هشدارهای قیمتی فعال\n"
+            "• <code>ولت</code> - کیف پول‌ها با موجودی\n"
+            "• <code>ولت آدرس</code> - فقط آدرس کیف پول‌ها\n\n"
             "<b>🔗 بلاکچین</b>\n"
-            "• لینک تراکنش TRON یا hash — جزئیات تراکنش\n"
-            "• لینک تراکنش TON یا hash — جزئیات تراکنش\n"
-            "• آدرس کیف پول TRON (34 کاراکتر) — موجودی\n"
-            "• آدرس کیف پول TON (48 کاراکتر, EQ/UQ) — موجودی\n\n"
+            "• لینک تراکنش TRON یا hash - جزئیات تراکنش\n"
+            "• لینک تراکنش TON یا hash - جزئیات تراکنش\n"
+            "• آدرس کیف پول TRON (34 کاراکتر) - موجودی\n"
+            "• آدرس کیف پول TON (48 کاراکتر, EQ/UQ) - موجودی\n\n"
             "<b>🧮 ابزارها</b>\n"
-            "• <code>10+20*3</code> یا <code>(5+3)*2</code> — ماشین حساب\n"
-            "• <code>15% of 200</code>  |  <code>100+5%</code>  |  <code>80-20%</code> — درصد\n"
-            "• <code>usd</code> — نرخ دلار به تومان\n"
-            "• <code>تومان</code> — نرخ تومان به دلار",
+            "• <code>10+20*3</code> یا <code>(5+3)*2</code> - ماشین حساب\n"
+            "• <code>15% of 200</code>  |  <code>100+5%</code>  |  <code>80-20%</code> - درصد\n"
+            "• <code>usd</code> - نرخ دلار به تومان",
         'inline_help_button':  "❓ راهنما",
         'all_prices_title':    "همه قیمت‌های ارز",
         'all_prices_tap':      "ضربه بزنید تا لیست کامل را به اشتراک بگذارید",
@@ -1896,7 +1894,7 @@ STRINGS = {
         'invalid_data':        "داده نامعتبر.",
         'all_wallets_removed': "✅ همه کیف پول‌ها حذف شدند.",
         'no_wallets_to_remove':"⚠️ هنوز کیف پولی ذخیره نشده.",
-        'gdpr_cancelled':      "لغو شد — داده‌های شما در امان هستند.",
+        'gdpr_cancelled':      "لغو شد - داده‌های شما در امان هستند.",
 
         # ── Currency / price display ──────────────────────────
         'toman_label':         "تومان",
@@ -2443,7 +2441,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         ax.spines['bottom'].set_color('#555')
         ax.tick_params(axis='x', colors='#aaa', labelsize=8, rotation=30)
         ax.tick_params(axis='y', colors='#aaa', labelsize=8)
-        ax.set_title(f"{crypto_id.upper()} — {days}d", color='#ccc', fontsize=11, pad=8)
+        ax.set_title(f"{crypto_id.upper()} - {days}d", color='#ccc', fontsize=11, pad=8)
         ax.set_ylabel("USD", color='#aaa', fontsize=9)
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
 
@@ -2575,7 +2573,7 @@ def get_usd_to_irr():
     except Exception as e:
         logger.error(f"Error fetching USD/IRR: {e}")
 
-    logger.warning("All USD/IRR sources failed — rate unavailable.")
+    logger.warning("All USD/IRR sources failed - rate unavailable.")
     if OWNER_USER_ID:
         try:
             bot.send_message(
@@ -2598,7 +2596,7 @@ def get_gold_prices():
         return {'xau': cached}
     
     try:
-        # CoinGecko: Gold (XAU) in USD — via rate-limited batch fetcher
+        # CoinGecko: Gold (XAU) in USD - via rate-limited batch fetcher
         data = _fetch_prices_coingecko('pax-gold')
         if data and 'pax-gold' in data and 'usd' in data['pax-gold']:
             xau_price = data['pax-gold']['usd']
@@ -2662,7 +2660,7 @@ def fmt_price(price) -> str:
     Small (<0.01): $0.000412
     """
     if price is None:
-        return "—"
+        return "-"
     if price >= 1:
         return f"${price:,.2f}"
     elif price >= 0.0001:
@@ -3455,7 +3453,7 @@ def handle_callback(call):
             return
         sym = _sym(cid)
         price = get_crypto_price(cid)
-        price_str = fmt_price(price) if price else "—"
+        price_str = fmt_price(price) if price else "-"
         kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(T(user_id, 'btn_above'), callback_data=f"alrt2_{cid}_above"),
             types.InlineKeyboardButton(T(user_id, 'btn_below'), callback_data=f"alrt2_{cid}_below"),
@@ -3483,7 +3481,7 @@ def handle_callback(call):
         cid, direction = parts[1], parts[2]
         sym = _sym(cid)
         price = get_crypto_price(cid)
-        price_str = fmt_price(price) if price else "—"
+        price_str = fmt_price(price) if price else "-"
         arrow = "📈" if direction == "above" else "📉"
         set_user_state(user_id, f"alert_price_{cid}_{direction}")
         bot.answer_callback_query(call.id)
@@ -3900,7 +3898,7 @@ def handle_callback(call):
                 price = get_crypto_price(crypto)
                 kb = types.InlineKeyboardMarkup(row_width=4)
                 kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{crypto}_{d}") for d in CHART_DAYS])
-                caption = f"📊 <b>{symbol}</b> — {days}d"
+                caption = f"📊 <b>{symbol}</b> - {days}d"
                 if price:
                     caption += f"\n💵 <b>{fmt_price(price)}</b>"
                 bot.edit_message_media(
@@ -4216,7 +4214,7 @@ def chart_cmd(message):
         price = get_crypto_price(crypto)
         kb = types.InlineKeyboardMarkup(row_width=4)
         kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{crypto}_{d}") for d in CHART_DAYS])
-        caption = f"📊 <b>{symbol}</b> — {days}d"
+        caption = f"📊 <b>{symbol}</b> - {days}d"
         if price:
             caption += f"\n💵 <b>{fmt_price(price)}</b>"
         bot.send_photo(
@@ -4300,7 +4298,7 @@ def trending_cmd(message):
     lines = ["🔥 <b>Trending on CoinGecko</b>\n"]
     for i, coin in enumerate(data, 1):
         rank = coin.get('market_cap_rank')
-        rank_str = f"#{rank}" if rank else "—"
+        rank_str = f"#{rank}" if rank else "-"
         lines.append(f"{i}. <b>{coin['name']}</b> ({coin['symbol']})  ─  Rank {rank_str}")
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 
@@ -4325,7 +4323,7 @@ def gainers_losers_cmd(message):
         chg = c['price_change_percentage_24h']
         arrow = '📈' if chg >= 0 else '📉'
         price = c.get('current_price')
-        price_str = fmt_price(price) if price else '—'
+        price_str = fmt_price(price) if price else '-'
         lines.append(f"{arrow} <b>{c['symbol'].upper()}</b>  {price_str}  <i>{chg:+.2f}%</i>")
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 
@@ -4460,7 +4458,7 @@ def _fragment_username_data(username):
     if cached:
         return cached
     try:
-        # Polite delay — one request at a time, no bulk
+        # Polite delay - one request at a time, no bulk
         time.sleep(1)
         resp = requests.get(f'https://fragment.com/username/{clean}', timeout=10,
                             headers={'User-Agent': 'EscEarthBot/1.0 (+https://t.me/EscEarthBot; friendly data lookup)'})
@@ -4474,7 +4472,7 @@ def _fragment_username_data(username):
         auction_end = None
         min_bid = None
 
-        # Status — try multiple selectors
+        # Status - try multiple selectors
         try:
             m = re.search(r'tm-section-header-status\s+tm-status-([a-z]+)">([^<]+)', html)
             if m:
@@ -4491,7 +4489,7 @@ def _fragment_username_data(username):
         except Exception:
             logger.warning(f"Fragment status regex failed for {clean}")
 
-        # Price — look for TON amounts near price-related keywords
+        # Price - look for TON amounts near price-related keywords
         try:
             m = re.search(r'price[:\s]*([\d,]+(?:\.\d+)?)\s*TON', html, re.IGNORECASE)
             if not m:
@@ -4559,7 +4557,7 @@ def _fragment_collection_floor(slug):
     if cached:
         return cached
     try:
-        # Polite delay — one request at a time, no bulk
+        # Polite delay - one request at a time, no bulk
         time.sleep(1)
         resp = requests.get(f'https://fragment.com/gifts/{slug}?filter=sale', timeout=10,
                             headers={'User-Agent': 'EscEarthBot/1.0 (+https://t.me/EscEarthBot; friendly data lookup)'})
@@ -4637,9 +4635,9 @@ def gifts_cmd(message):
             if floor:
                 ton_price = get_crypto_price('the-open-network')
                 usd = f" (${floor * ton_price:,.2f})" if ton_price else ""
-                lines.append(f"• <b>{c['name']}</b> — <code>{floor} TON</code>{usd}")
+                lines.append(f"• <b>{c['name']}</b> - <code>{floor} TON</code>{usd}")
             else:
-                lines.append(f"• <b>{c['name']}</b> — <code>/gift {c['slug']}</code>")
+                lines.append(f"• <b>{c['name']}</b> - <code>/gift {c['slug']}</code>")
     lines.append(f"\nAll {len(FRAGMENT_GIFT_COLLECTIONS)} collections available.")
     lines.append("Use /gift <i>slug</i> for details.")
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
@@ -4765,7 +4763,7 @@ def inline_query_handler(inline_query):
         def _irr():
             nonlocal _irr_val
             if _irr_val is None:
-                _irr_val = cache_get('usd_to_irr')  # cache only — never blocks on network
+                _irr_val = cache_get('usd_to_irr')  # cache only - never blocks on network
             return _irr_val
 
         # ── 4. USD / Toman rate ───────────────────────────────────────
@@ -4825,7 +4823,7 @@ def inline_query_handler(inline_query):
                     f"{EMOJIS['money']} <b>{lbl}</b>\n\n{desc}", html=True
                 ))
 
-        # ── 6. Conversion (10 btc to eth / 100 usd trx) — FASTER ─────
+        # ── 6. Conversion (10 btc to eth / 100 usd trx) - FASTER ─────
         # Support flexible number formats and both "10 btc to eth" and "10btc to eth"
         conv_m = re.match(
             r'^([\d.,۰-۹٬٫]+)\s*(\w+|تومان|تومن)\s+(?:to\s+|به\s+)?(\w+|تومان|تومن)$', ql
@@ -5028,7 +5026,7 @@ def inline_query_handler(inline_query):
                         fg_label = fg_data.get('value_classification', '?')
                         filled = round(fg_val / 10)
                         bar = '🟢' * filled + '⬜' * (10 - filled)
-                        lines.append(f"\n😨 <b>Fear & Greed</b>\n{bar}\n{fg_val}/100 — <b>{fg_label}</b>")
+                        lines.append(f"\n😨 <b>Fear & Greed</b>\n{bar}\n{fg_val}/100 - <b>{fg_label}</b>")
                     txt = "\n".join(lines)
                     results.append(article("market", "Market Overview", f"${mcap/1e12:.2f}T · {chg24:+.1f}%", txt, html=True))
             except Exception:
@@ -5118,7 +5116,7 @@ def inline_query_handler(inline_query):
                     short = f"{addr[:8]}...{addr[-6:]}"
                     wlbl = T(uid, 'wallet_label', n=i+1)
                     if addr_only_trigger:
-                        # Address-only mode — instant, no API call
+                        # Address-only mode - instant, no API call
                         results.append(article(
                             f"waddr_{i}", f"📋 {wlbl}  {short}",
                             T(uid, 'wallet_addr_only_desc'),
@@ -5128,7 +5126,7 @@ def inline_query_handler(inline_query):
                     else:
                         # Show both: address-only first, then with balance
                         results.append(article(
-                            f"waddr_{i}", f"📋 {wlbl} — {T(uid, 'wallet_addr_only_label')}",
+                            f"waddr_{i}", f"📋 {wlbl} - {T(uid, 'wallet_addr_only_label')}",
                             short,
                             f"{EMOJIS['wallet']} <b>{wlbl}</b>\n\n<code>{addr}</code>",
                             html=True
@@ -5136,7 +5134,7 @@ def inline_query_handler(inline_query):
                         try:
                             bal = get_tron_wallet_trx(addr, uid)
                             results.append(article(
-                                f"wbal_{i}", f"👛 {wlbl} — {T(uid, 'wallet_with_balance_label')}",
+                                f"wbal_{i}", f"👛 {wlbl} - {T(uid, 'wallet_with_balance_label')}",
                                 bal,
                                 f"{EMOJIS['wallet']} <b>{wlbl}</b>\n\n"
                                 f"<code>{addr}</code>\n\n{bal}", html=True
@@ -5194,7 +5192,7 @@ def alert_cmd(message):
         _finalize_alert(message, user_id, crypto_id, direction_raw, price_raw)
         return
 
-    # No args — show coin picker
+    # No args - show coin picker
     existing = db_get_alerts(user_id)
     if len(existing) >= MAX_ALERTS_PER_USER:
         bot.reply_to(message, T(message.from_user.id, 'alert_limit', max=MAX_ALERTS_PER_USER), parse_mode='HTML')
@@ -5358,7 +5356,7 @@ def compare_cmd(message):
             ax.spines['left'].set_color('#555'); ax.spines['bottom'].set_color('#555')
             ax.tick_params(axis='x', colors='#aaa', labelsize=8, rotation=30)
             ax.tick_params(axis='y', colors='#aaa', labelsize=8)
-            ax.set_title(f"{_sym(c1)} vs {_sym(c2)} — {days}d", color='#ccc', fontsize=11, pad=8)
+            ax.set_title(f"{_sym(c1)} vs {_sym(c2)} - {days}d", color='#ccc', fontsize=11, pad=8)
             ax.legend(facecolor='#1a1a2e', edgecolor='none', labelcolor='white', fontsize=9)
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
             buf = BytesIO()
@@ -5366,7 +5364,7 @@ def compare_cmd(message):
                         facecolor=fig.get_facecolor(), edgecolor='none')
             buf.seek(0); plt.close(fig)
             p1 = get_crypto_price(c1); p2 = get_crypto_price(c2)
-            caption = f"📊 <b>{_sym(c1)}</b> {fmt_price(p1) if p1 else '—'}  vs  <b>{_sym(c2)}</b> {fmt_price(p2) if p2 else '—'}  ({days}d)"
+            caption = f"📊 <b>{_sym(c1)}</b> {fmt_price(p1) if p1 else '-'}  vs  <b>{_sym(c2)}</b> {fmt_price(p2) if p2 else '-'}  ({days}d)"
             bot.send_photo(message.chat.id, photo=BytesIO(buf.getvalue()),
                            caption=add_timestamp(caption), parse_mode='HTML')
             return
@@ -5378,7 +5376,7 @@ def compare_cmd(message):
         _do_compare(message, args[1], args[2], message.from_user.id)
         return
 
-    # No args — show coin picker
+    # No args - show coin picker
     coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
     rows = []
     for i in range(0, len(coins), 3):
@@ -5426,7 +5424,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
     # Multi-source batch fetch (rate-limited)
     batch = _fetch_prices_batch(','.join(ids))
     
-    # CoinGecko extra data (market cap, volume) — rate-limited
+    # CoinGecko extra data (market cap, volume) - rate-limited
     extra = {}
     try:
         ids_str = ','.join(ids)
@@ -5461,8 +5459,8 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         arrow  = '📈' if (change or 0) >= 0 else '📉'
         # Format change in English always (not Persian digits)
         chg    = f"{arrow} {change:+.2f}% (24h)" if change is not None else ""
-        vol_str  = f"${vol/1e6:,.1f}M"  if vol  else "—"
-        mcap_str = f"${mcap/1e9:,.2f}B" if mcap else "—"
+        vol_str  = f"${vol/1e6:,.1f}M"  if vol  else "-"
+        mcap_str = f"${mcap/1e9:,.2f}B" if mcap else "-"
         
         # Format IRR price in user's locale (may be Persian)
         irr_formatted = _fmt_number(f"{price * usd_to_irr:,.0f}", cmp_uid) if usd_to_irr else None
@@ -5545,7 +5543,7 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
         fg_label = fg_label_map.get(fg_label_raw, fg_label_raw)
         filled = round(fg_val / 10)
         bar = '🟢' * filled + '⬜' * (10 - filled)
-        fg_str = f"{bar}\n{fg_val}/100 — <b>{fg_label}</b>"
+        fg_str = f"{bar}\n{fg_val}/100 - <b>{fg_label}</b>"
     except Exception:
         fg_str = T(uid_m, 'fg_unavailable')
 
@@ -5647,7 +5645,7 @@ def run_tests(message):
     def fail(text, detail=""):
         nonlocal failed
         failed += 1
-        d = f" — {detail}" if detail else ""
+        d = f" - {detail}" if detail else ""
         results.append(f"  ❌ {text}{d}")
 
     def section(title):
@@ -5753,7 +5751,7 @@ def run_tests(message):
             btc_price = price_data["bitcoin"].get("usd", 0)
             ok(f"BTC price: ${btc_price}")
         else:
-            fail("Fetch BTC price — empty response")
+            fail("Fetch BTC price - empty response")
     except Exception as e:
         fail("Fetch BTC price", str(e))
 
@@ -5794,7 +5792,7 @@ def run_tests(message):
                 elif cid == "telegram-stars":
                     ok(f"  STARS: $0.015 (official rate)")
                 else:
-                    fail(f"  {_sym(cid)} — not in response")
+                    fail(f"  {_sym(cid)} - not in response")
         else:
             fail("Batch price fetch returned empty")
     except Exception as e:
@@ -5840,7 +5838,7 @@ def run_tests(message):
     if failed == 0:
         results.append("\n  🎉 All tests passed!")
     else:
-        results.append(f"\n  ⚠️  {failed} test(s) failed — check the ❌ entries above.")
+        results.append(f"\n  ⚠️  {failed} test(s) failed - check the ❌ entries above.")
 
     report = "🔬 <b>Bot Diagnostic Report</b>\n" + "\n".join(results)
 
@@ -6004,7 +6002,7 @@ def handle_text(message):
         )
         return
 
-    # Convert wizard step 3 — waiting for amount
+    # Convert wizard step 3 - waiting for amount
     if state and state.startswith('convert_'):
         del_user_state(user_id)
         _, from_cid, to_cid = state.split('_', 2)
@@ -6044,7 +6042,7 @@ def handle_text(message):
             )
         return
 
-    # Alert wizard step 3 — waiting for target price
+    # Alert wizard step 3 - waiting for target price
     if state and state.startswith('alert_price_'):
         del_user_state(user_id)
         parts_s = state.split('_', 3)
@@ -6132,7 +6130,7 @@ def handle_text(message):
         )
         return
 
-    # Math expressions — accepts ASCII and Persian-Indic digits/operators (normalized above)
+    # Math expressions - accepts ASCII and Persian-Indic digits/operators (normalized above)
     _has_pct_of = ('% of' in text_lower or '%of' in text_lower
                 or '% از' in text_lower or '%از' in text_lower
                 or '٪ از' in text_original or '٪از' in text_original)
@@ -6272,7 +6270,7 @@ def handle_text(message):
             bot.reply_to(message, T(user_id, 'invalid_address'))
             return
 
-    # Transaction hash or link — try TRON first, then TON (both use 64-char hex)
+    # Transaction hash or link - try TRON first, then TON (both use 64-char hex)
     ton_tx_match = re.match(r'^[A-Fa-f0-9]{64}$', text)
     tronscan_match = re.match(r'https?://tronscan\.org/#/transaction/([A-Fa-f0-9]{64})', text)
     tonscan_match = re.match(r'https?://tonscan\.org/tx/([A-Fa-f0-9]{64})', text)
@@ -6605,7 +6603,7 @@ def _alert_checker_loop():
                                 price_map[cid] = p
                                 cache_set(cid, p)
                 except Exception as e:
-                    logger.warning(f"Alert checker batch fetch failed: {e} — falling back to cache")
+                    logger.warning(f"Alert checker batch fetch failed: {e} - falling back to cache")
                     # Fall back to individually cached values
                     for cid in unique_ids:
                         cached = cache_get(cid)
@@ -6762,7 +6760,7 @@ bot.process_new_updates = _safe_process_new_updates
 
 
 # ─────────────────────────────────────────────
-# Entry point — crash recovery polling loop
+# Entry point - crash recovery polling loop
 # Restarts automatically on network errors or
 # unexpected crashes, with exponential back-off.
 # ─────────────────────────────────────────────
@@ -6775,7 +6773,7 @@ if __name__ == "__main__":
     logger.info(f"{EMOJIS['info']} Rate limit: {USER_RATE_LIMIT} req / {USER_RATE_WINDOW}s per user")
     logger.info(f"{EMOJIS['info']} Max wallets per user: {MAX_WALLETS_PER_USER}")
     if not SAFE_EVAL_AVAILABLE:
-        logger.warning("⚠️  simpleeval not installed — math uses restricted eval fallback. "
+        logger.warning("⚠️  simpleeval not installed - math uses restricted eval fallback. "
                        "Install it: pip install simpleeval")
 
     # Start background threads
