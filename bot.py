@@ -4752,7 +4752,7 @@ def inline_query_handler(inline_query):
         def _irr():
             nonlocal _irr_val
             if _irr_val is None:
-                _irr_val = get_usd_to_irr()
+                _irr_val = cache_get('usd_to_irr')  # cache only — never blocks on network
             return _irr_val
 
         # ── 4. USD / Toman rate ───────────────────────────────────────
@@ -5142,14 +5142,17 @@ def inline_query_handler(inline_query):
         ))
 
     # Add help button (switch_pm) for popup tip
-    bot.answer_inline_query(
-        inline_query.id, 
-        results, 
-        cache_time=30, 
-        is_personal=True,
-        switch_pm_text=T(uid, 'inline_help_button'),
-        switch_pm_parameter='inline_help'
-    )
+    try:
+        bot.answer_inline_query(
+            inline_query.id, 
+            results, 
+            cache_time=30, 
+            is_personal=True,
+            switch_pm_text=T(uid, 'inline_help_button'),
+            switch_pm_parameter='inline_help'
+        )
+    except Exception:
+        pass  # query ID may have expired if handler was too slow
 
 
 
@@ -6790,7 +6793,8 @@ if __name__ == "__main__":
     threading.Thread(target=cache_cleanup_loop, daemon=True, name="CacheCleanup").start()
     threading.Thread(target=_cleanup_user_state_loop, daemon=True, name="UserStateCleanup").start()
     threading.Thread(target=_prewarm_charts, daemon=True, name="ChartPrewarm").start()
-    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm)")
+    threading.Thread(target=lambda: get_usd_to_irr(), daemon=True, name="IRRPreWarm").start()
+    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, IRR pre-warm)")
 
     logger.info(f"{EMOJIS['star']} Press Ctrl+C to stop")
     logger.info("=" * 50)
