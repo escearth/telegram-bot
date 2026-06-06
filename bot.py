@@ -4923,7 +4923,7 @@ def inline_query_handler(inline_query):
             amt = Decimal(amt_m.group(1))
             cur = detect_currency(amt_m.group(2), check_u_alias=True)
             if cur and cur in CRYPTO_LIST:
-                p = get_crypto_price(cur, cache_only=True)
+                p = get_crypto_price(cur)
                 if p:
                     v_usd = amt * Decimal(str(p))
                     v_usd_f = float(v_usd)
@@ -4932,27 +4932,28 @@ def inline_query_handler(inline_query):
                     amt_f = float(amt)
                     name  = _sym(cur)
                     toman_lbl = T(uid, 'toman_label')
-                    desc  = f"${v_usd_f:,.2f} | {v_irr_f:,.0f} {toman_lbl}"
+                    desc  = f"${v_usd_f:,.2f} | {v_irr_f:,.0f} {toman_lbl}" if irr_v else f"${v_usd_f:,.2f}"
+                    irr_line = f"\n💰 {v_irr_f:,.0f} {toman_lbl}" if irr_v else ""
                     results.append(article(
                         "amt_coin", f"{amt_f:,.6g} {name}",
                         desc,
                         f"{EMOJIS['money']} <b>{amt_f:,.6g} {name}</b>\n\n"
-                        f"💵 ${v_usd_f:,.2f}\n💰 {v_irr_f:,.0f} {toman_lbl}", html=True
+                        f"💵 ${v_usd_f:,.2f}{irr_line}", html=True
                     ))
 
         # ── 8. Single crypto name (btc / eth / trx / u …) ────────────
         crypto = detect_currency(ql, check_u_alias=True)
         if crypto and crypto in CRYPTO_LIST:
-            p = get_crypto_price(crypto, cache_only=True)
+            p = get_crypto_price(crypto)
             if p:
                 irr_v = _irr()
-                p_irr = p * irr_v if irr_v else 0
                 name  = CRYPTO_LIST[crypto]
                 toman_lbl = T(uid, 'toman_label')
+                irr_line = f"\n💰 {p * irr_v:,.0f} {toman_lbl}" if irr_v else ""
                 results.append(article(
                     "crypto_price", f"{name} Price",
-                    f"{fmt_price(p)} | {p_irr:,.0f} {toman_lbl}",
-                    f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}\n💰 {p_irr:,.0f} {toman_lbl}",
+                    f"{fmt_price(p)} | {p * irr_v:,.0f} {toman_lbl}" if irr_v else f"{fmt_price(p)}",
+                    f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}{irr_line}",
                     html=True
                 ))
 
@@ -6375,8 +6376,7 @@ def handle_text(message):
                 message,
                 add_timestamp(
                     f"📊 <b>{crypto_name}</b>\n\n"
-                    f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>\n"
-                    + toman_line
+                    f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>" + (f"\n{toman_line}" if toman_line else "")
                 ),
                 parse_mode='HTML',
                 reply_markup=kb
@@ -6400,8 +6400,7 @@ def handle_text(message):
                     message,
                     add_timestamp(
                         f"💰 <b>{amount:,g} {sym}</b>\n\n"
-                        f"💵 {fmt_price(value_usd)}\n"
-                        + toman_line
+                        f"💵 {fmt_price(value_usd)}" + (f"\n{toman_line}" if toman_line else "")
                     ),
                     parse_mode='HTML'
                 )
