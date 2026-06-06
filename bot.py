@@ -1452,20 +1452,36 @@ STRINGS = {
         'tx_error':            "❌ Could not fetch transaction. Check the hash and try again.",
 
         # ── inline / misc ─────────────────────────────────────
-        'inline_tips_title':   "Crypto Bot — Quick Tips",
-        'inline_tips_desc':    "btc · 10trx · 100usd to eth · u · wallets · hash…",
+        'inline_tips_title':   "Crypto Bot — Inline Guide",
+        'inline_tips_desc':    "btc · 10trx · usd100 to eth · wallets · hash · gold",
         'inline_tips_body':
-            "<b>Inline Mode Tips:</b>\n\n"
-            "• <code>btc</code> — price\n"
-            "• <code>10trx</code> or <code>10 trx</code> — value\n"
-            "• <code>u</code> or <code>10u</code> — USDT\n"
-            "• <code>100usd to eth</code> — convert\n"
-            "• <code>usd</code> — dollar rate\n"
-            "• <code>price</code> — all prices\n"
-            "• <code>wallets</code> — with balance  |  <code>wallets addr</code> — address only\n"
-            "• <code>10+20*3</code> — calculator\n"
-            "• <code>15% of 200</code>  |  <code>100+5%</code>  |  <code>80-20%</code> — percentage\n"
-            "• Paste TRON tx hash or Tronscan link — details",
+            "<b>🪙 Prices & Values</b>\n"
+            "• <code>btc</code> — price of any crypto\n"
+            "• <code>10trx</code> or <code>10 trx</code> — value in USD/IRR\n"
+            "• <code>u</code> or <code>10u</code> — USDT alias\n"
+            "• <code>100usd to eth</code> or <code>0.5btc to usd</code> — convert\n"
+            "• <code>1000toman to usd</code> or <code>10usd to toman</code> — fiat convert\n\n"
+            "<b>📊 Market</b>\n"
+            "• <code>price</code> or <code>prices</code> — all crypto prices\n"
+            "• <code>gold</code> or <code>gold price</code> — XAU/USD\n"
+            "• <code>market</code> or <code>fear</code> — market overview & Fear & Greed\n"
+            "• <code>star</code> or <code>stars</code> — Telegram Stars price\n"
+            "• <code>try</code> or <code>tl</code> — TRY to Toman rate\n\n"
+            "<b>💰 Portfolio & Alerts</b>\n"
+            "• <code>holdings</code> or <code>portfolio</code> — your portfolio\n"
+            "• <code>alerts</code> or <code>my alerts</code> — active price alerts\n"
+            "• <code>wallets</code> — wallets with balance\n"
+            "• <code>wallets addr</code> — wallet addresses only\n\n"
+            "<b>🔗 Blockchain</b>\n"
+            "• Paste TRON tx hash or Tronscan link — TX details\n"
+            "• Paste TON tx hash or tonviewer/tonscan link — TX details\n"
+            "• Paste TRON wallet address (34 chars) — balance\n"
+            "• Paste TON wallet address (48 chars, EQ/UQ) — balance\n\n"
+            "<b>🧮 Tools</b>\n"
+            "• <code>10+20*3</code> or <code>(5+3)*2</code> — calculator\n"
+            "• <code>15% of 200</code>  |  <code>100+5%</code>  |  <code>80-20%</code> — percentages\n"
+            "• <code>usd</code> — USD to Toman rate\n"
+            "• <code>toman</code> — Toman to USD rate",
         'inline_help_button':  "❓ Help",
         'all_prices_title':    "All Crypto Prices",
         'all_prices_tap':      "Tap to share full price list",
@@ -1836,20 +1852,36 @@ STRINGS = {
         'tx_error':            "❌ دریافت تراکنش ممکن نشد. هش را بررسی کنید.",
 
         # ── inline / misc ─────────────────────────────────────
-        'inline_tips_title':   "ربات کریپتو — راهنمای سریع",
-        'inline_tips_desc':    "btc · 10trx · 100usd to eth · u · ولت · hash…",
+        'inline_tips_title':   "ربات کریپتو — راهنمای اینلاین",
+        'inline_tips_desc':    "btc · 10trx · usd100 to eth · ولت · hash · طلا",
         'inline_tips_body':
-            "<b>راهنمای حالت Inline:</b>\n\n"
-            "• <code>btc</code> — قیمت\n"
-            "• <code>10trx</code> یا <code>10 trx</code> — ارزش\n"
-            "• <code>u</code> یا <code>10u</code> — تتر (USDT)\n"
-            "• <code>100usd to eth</code> — تبدیل\n"
-            "• <code>usd</code> — نرخ دلار\n"
-            "• <code>price</code> — همه قیمت‌ها\n"
-            "• <code>ولت</code> — با موجودی  |  <code>ولت آدرس</code> — فقط آدرس\n"
-            "• <code>10+20*3</code> — ماشین حساب\n"
+            "<b>🪙 قیمت‌ها و ارزش</b>\n"
+            "• <code>btc</code> — قیمت هر ارز\n"
+            "• <code>10trx</code> یا <code>10 trx</code> — ارزش به دلار/تومان\n"
+            "• <code>u</code> یا <code>10u</code> — USDT\n"
+            "• <code>100usd to eth</code> یا <code>0.5btc to usd</code> — تبدیل\n"
+            "• <code>1000تومان to usd</code> یا <code>10usd to تومان</code> — تبدیل ارز\n\n"
+            "<b>📊 بازار</b>\n"
+            "• <code>price</code> یا <code>قیمت</code> — قیمت همه ارزها\n"
+            "• <code>gold</code> یا <code>طلا</code> — قیمت طلا (XAU/USD)\n"
+            "• <code>market</code> یا <code>بازار</code> — نمای کلی بازار و ترس و طمع\n"
+            "• <code>star</code> یا <code>استارز</code> — قیمت Telegram Stars\n"
+            "• <code>try</code> یا <code>لیر</code> — نرخ لیر ترکیه به تومان\n\n"
+            "<b>💰 پرتفو و هشدارها</b>\n"
+            "• <code>holdings</code> یا <code>دارایی</code> — پرتفوی شما\n"
+            "• <code>alerts</code> یا <code>هشدارها</code> — هشدارهای قیمتی فعال\n"
+            "• <code>ولت</code> — کیف پول‌ها با موجودی\n"
+            "• <code>ولت آدرس</code> — فقط آدرس کیف پول‌ها\n\n"
+            "<b>🔗 بلاکچین</b>\n"
+            "• لینک تراکنش TRON یا hash — جزئیات تراکنش\n"
+            "• لینک تراکنش TON یا hash — جزئیات تراکنش\n"
+            "• آدرس کیف پول TRON (34 کاراکتر) — موجودی\n"
+            "• آدرس کیف پول TON (48 کاراکتر, EQ/UQ) — موجودی\n\n"
+            "<b>🧮 ابزارها</b>\n"
+            "• <code>10+20*3</code> یا <code>(5+3)*2</code> — ماشین حساب\n"
             "• <code>15% of 200</code>  |  <code>100+5%</code>  |  <code>80-20%</code> — درصد\n"
-            "• لینک تراکنش TRON یا hash — جزئیات",
+            "• <code>usd</code> — نرخ دلار به تومان\n"
+            "• <code>تومان</code> — نرخ تومان به دلار",
         'inline_help_button':  "❓ راهنما",
         'all_prices_title':    "همه قیمت‌های ارز",
         'all_prices_tap':      "ضربه بزنید تا لیست کامل را به اشتراک بگذارید",
