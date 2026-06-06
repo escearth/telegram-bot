@@ -115,7 +115,7 @@ def _is_joined_channel(user_id: int) -> bool | None:
     with _joined_cache_lock:
         if user_id in _joined_cache:
             val, ts = _joined_cache[user_id]
-            if time.time() - ts < 3600:
+            if time.time() - ts < 3600 and val is True:
                 return val
     try:
         _chat_id = _resolve_channel_id()
@@ -3106,6 +3106,8 @@ def handle_callback(call):
         if not REQUIRED_CHANNEL:
             bot.answer_callback_query(call.id, "No channel configured.")
             return
+        with _joined_cache_lock:
+            _joined_cache.pop(user_id, None)
         joined = _is_joined_channel(user_id)
         if joined is True:
             try:
