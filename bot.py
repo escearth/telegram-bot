@@ -2357,6 +2357,7 @@ def _sparkline(prices, width=15):
 
 
 @rate_limited_api_call
+@rate_limited_api_call
 def _fetch_chart_data(crypto_id, days=30):
     """Fetch chart data from CoinGecko as raw list of [timestamp, price] pairs."""
     data = cg.get_coin_market_chart_by_id(id=crypto_id, vs_currency='usd', days=days)
