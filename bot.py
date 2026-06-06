@@ -4666,12 +4666,10 @@ def inline_query_handler(inline_query):
     results = []
 
     def article(id_, title, desc, text, html=False):
-        # Add timestamp to inline results
-        text_with_time = add_timestamp(text) if html else text
         return types.InlineQueryResultArticle(
             id=id_, title=title, description=desc,
             input_message_content=types.InputTextMessageContent(
-                text_with_time, parse_mode='HTML' if html else None
+                text, parse_mode='HTML' if html else None
             )
         )
 
@@ -4750,15 +4748,21 @@ def inline_query_handler(inline_query):
             ))
 
     else:
-        irr = get_usd_to_irr()
+        _irr_val = None
+        def _irr():
+            nonlocal _irr_val
+            if _irr_val is None:
+                _irr_val = get_usd_to_irr()
+            return _irr_val
 
-        if irr is not None:
-            # ── 4. USD / Toman rate ───────────────────────────────────────
-            usd_m = re.match(
-                r'^([\d.,۰-۹٬٫]+)?\s*(usd|\$|dollar)(\s+(to|to)\s*(toman|تومان|تومن|irr))?$',
-                ql
-            )
-            if usd_m:
+        # ── 4. USD / Toman rate ───────────────────────────────────────
+        usd_m = re.match(
+            r'^([\d.,۰-۹٬٫]+)?\s*(usd|\$|dollar)(\s+(to|to)\s*(toman|تومان|تومن|irr))?$',
+            ql
+        )
+        if usd_m:
+            irr = _irr()
+            if irr is not None:
                 amt_str = usd_m.group(1) if usd_m.group(1) else "1"
                 amt = parse_number(amt_str)
                 if amt is None:
@@ -4780,12 +4784,14 @@ def inline_query_handler(inline_query):
                     f"{EMOJIS['money']} <b>{lbl}</b>\n\n{desc}", html=True
                 ))
 
-            # ── 5. Toman → USD ────────────────────────────────────────────
-            toman_m = re.match(
-                r'^([\d.,۰-۹٬٫]+)\s*(toman|تومان|تومن|ریال|irr)(\s+(to|به)\s*(usd|\$))?$',
-                ql
-            )
-            if toman_m:
+        # ── 5. Toman → USD ────────────────────────────────────────────
+        toman_m = re.match(
+            r'^([\d.,۰-۹٬٫]+)\s*(toman|تومان|تومن|ریال|irr)(\s+(to|به)\s*(usd|\$))?$',
+            ql
+        )
+        if toman_m:
+            irr = _irr()
+            if irr is not None:
                 amt = parse_number(toman_m.group(1))
                 if amt is None:
                     amt = Decimal('0')
@@ -4846,18 +4852,18 @@ def inline_query_handler(inline_query):
                     p_src = get_crypto_price(src)
                     if p_src:
                         result_val = amt * Decimal(str(p_src))
-                elif irr is not None and src == 'toman' and dst == 'usd':
-                    result_val = amt / Decimal(str(irr))
-                elif irr is not None and src == 'usd' and dst == 'toman':
-                    result_val = amt * Decimal(str(irr))
-                elif irr is not None and src == 'toman' and dst in CRYPTO_LIST:
+                elif _irr() is not None and src == 'toman' and dst == 'usd':
+                    result_val = amt / Decimal(str(_irr()))
+                elif _irr() is not None and src == 'usd' and dst == 'toman':
+                    result_val = amt * Decimal(str(_irr()))
+                elif _irr() is not None and src == 'toman' and dst in CRYPTO_LIST:
                     p_dst = get_crypto_price(dst)
                     if p_dst:
-                        result_val = amt / Decimal(str(irr)) / Decimal(str(p_dst))
-                elif irr is not None and src in CRYPTO_LIST and dst == 'toman':
+                        result_val = amt / Decimal(str(_irr())) / Decimal(str(p_dst))
+                elif _irr() is not None and src in CRYPTO_LIST and dst == 'toman':
                     p_src = get_crypto_price(src)
                     if p_src:
-                        result_val = amt * Decimal(str(p_src)) * Decimal(str(irr))
+                        result_val = amt * Decimal(str(p_src)) * Decimal(str(_irr()))
                 
                 if result_val is not None:
                     toman_lbl = T(uid, 'toman_label')
@@ -4909,9 +4915,9 @@ def inline_query_handler(inline_query):
                 p = get_crypto_price(cur)
                 if p:
                     v_usd = amt * Decimal(str(p))
-                    v_irr = v_usd * Decimal(str(irr))
                     v_usd_f = float(v_usd)
-                    v_irr_f = float(v_irr)
+                    irr_v = _irr()
+                    v_irr_f = float(v_usd * Decimal(str(irr_v))) if irr_v else 0
                     amt_f = float(amt)
                     name  = _sym(cur)
                     toman_lbl = T(uid, 'toman_label')
@@ -4928,7 +4934,8 @@ def inline_query_handler(inline_query):
         if crypto and crypto in CRYPTO_LIST:
             p = get_crypto_price(crypto)
             if p:
-                p_irr = p * irr
+                irr_v = _irr()
+                p_irr = p * irr_v if irr_v else 0
                 name  = CRYPTO_LIST[crypto]
                 toman_lbl = T(uid, 'toman_label')
                 results.append(article(
@@ -4948,7 +4955,9 @@ def inline_query_handler(inline_query):
                     for code, cname in CRYPTO_LIST.items():
                         pr = prices.get(code, {}).get('usd')
                         if pr:
-                            lines.append(f"{cname}\n💵 {fmt_price(pr)} | 💰 {pr*irr:,.0f} T\n")
+                            irr_v = _irr()
+                            irr_part = f" | 💰 {pr*irr_v:,.0f} T" if irr_v else ""
+                            lines.append(f"{cname}\n💵 {fmt_price(pr)}{irr_part}\n")
                     txt = "\n".join(lines)
                     results.append(article(
                         "all_prices", "All Crypto Prices",
@@ -4963,8 +4972,9 @@ def inline_query_handler(inline_query):
             if gold and 'xau' in gold:
                 xau = gold['xau']
                 lines = [T(uid, 'gold_global', xau=f"{xau:,.2f}")]
-                if irr:
-                    xau_irr = xau * irr
+                irr_v = _irr()
+                if irr_v:
+                    xau_irr = xau * irr_v
                     lines.append(f"\n💰 {xau_irr:,.0f} {T(uid, 'toman_label')}/oz")
                 txt = "".join(lines)
                 results.append(article("gold", "Gold Price", f"XAU/USD: ${xau:,.2f}", txt, html=True))
@@ -4975,8 +4985,9 @@ def inline_query_handler(inline_query):
             if stars_price:
                 toman_lbl = T(uid, 'toman_label')
                 lines = [f"⭐ <b>Telegram Stars</b>\n\n💵 ${stars_price:.3f} USD"]
-                if irr:
-                    stars_irr = stars_price * irr
+                irr_v = _irr()
+                if irr_v:
+                    stars_irr = stars_price * irr_v
                     lines.append(f"💰 {stars_irr:,.0f} {toman_lbl}")
                 txt = "\n".join(lines)
                 results.append(article("stars", "Telegram Stars", f"${stars_price:.3f}", txt, html=True))
@@ -5039,8 +5050,9 @@ def inline_query_handler(inline_query):
                         lines.append(f"🪙 <b>{symbol}</b>: {fmt_price(val)}")
                     else:
                         lines.append(f"🪙 <b>{symbol}</b>: <i>N/A</i>")
-                if irr:
-                    total_irr = total * irr
+                irr_v = _irr()
+                if irr_v:
+                    total_irr = total * irr_v
                     lines.append(f"\n💰 <b>Total: {fmt_price(total)}</b> · {total_irr:,.0f} {T(uid, 'toman_label')}")
                 else:
                     lines.append(f"\n💰 <b>Total: {fmt_price(total)}</b>")
