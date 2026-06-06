@@ -1088,6 +1088,11 @@ def rate_limit_check(func):
             
             return
 
+        # ⭐ Force-join check for all bot commands (not regular chat messages)
+        if is_command and REQUIRED_CHANNEL and _is_joined_channel(user_id) is False:
+            _send_join_required(message.chat.id)
+            return
+
         # ⭐ Monitor group command rate for slowdown warnings (bot commands only)
         if is_command and message.chat.type in ['group', 'supergroup']:
             warning = monitor_group_activity(message.chat.id, time.time())
