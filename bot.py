@@ -753,7 +753,7 @@ def _cleanup_user_state_loop():
 # ─────────────────────────────────────────────
 _api_lock = threading.Lock()
 _last_api_call = 0.0
-API_COOLDOWN = 1.2
+API_COOLDOWN = 3.0  # CoinGecko free tier: ~20 calls/min max
 
 
 def rate_limited_api_call(func):
@@ -895,7 +895,7 @@ def _fetch_prices_batch(ids: str) -> dict:
         data = source_fn(ids)
         if data:
             logger.info(f"Batch prices from {source_name}")
-            cache_set(cache_key, data, ttl=30)
+            cache_set(cache_key, data, ttl=60)
             # Seed individual caches so get_crypto_price hits immediately
             for cid, info in data.items():
                 usd = info.get('usd')
@@ -2527,13 +2527,9 @@ def get_gold_prices():
         return {'xau': cached}
     
     try:
-        # CoinGecko: Gold (XAU) in USD
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        if 'pax-gold' in data and 'usd' in data['pax-gold']:
+        # CoinGecko: Gold (XAU) in USD — via rate-limited batch fetcher
+        data = _fetch_prices_coingecko('pax-gold')
+        if data and 'pax-gold' in data and 'usd' in data['pax-gold']:
             xau_price = data['pax-gold']['usd']
             cache_set('gold_xau', xau_price)
             logger.info(f"Fetched gold price: ${xau_price}")
