@@ -71,6 +71,23 @@ OWNER_USER_ID: int | None = int(_owner_env) if _owner_env and _owner_env.isdigit
 
 # Force-join channel (username or invite link, e.g. '@my_channel' or 'https://t.me/my_channel')
 REQUIRED_CHANNEL: str | None = os.getenv('REQUIRED_CHANNEL') or None
+_CHANNEL_CHAT_ID: int | None = None
+
+
+def _resolve_channel_id():
+    global _CHANNEL_CHAT_ID
+    if _CHANNEL_CHAT_ID is not None:
+        return _CHANNEL_CHAT_ID
+    if not REQUIRED_CHANNEL:
+        return None
+    try:
+        chat = bot.get_chat(REQUIRED_CHANNEL)
+        _CHANNEL_CHAT_ID = chat.id
+    except Exception as e:
+        logger.warning(f"Could not resolve channel {REQUIRED_CHANNEL}: {e}")
+        _CHANNEL_CHAT_ID = None
+    return _CHANNEL_CHAT_ID
+
 
 # Suggestion system: forward user suggestions to this chat ID
 _sug_env = os.getenv('SUGGESTION_CHAT_ID')
@@ -101,8 +118,10 @@ def _is_joined_channel(user_id: int) -> bool | None:
             if time.time() - ts < 3600:
                 return val
     try:
-        chat_id = REQUIRED_CHANNEL
-        member = bot.get_chat_member(chat_id, user_id)
+        _chat_id = _resolve_channel_id()
+        if _chat_id is None:
+            _chat_id = REQUIRED_CHANNEL
+        member = bot.get_chat_member(_chat_id, user_id)
         result = member.status in ('member', 'administrator', 'creator')
     except Exception as e:
         logger.warning(f"Failed to check channel membership for user {user_id}: {e}")
