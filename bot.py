@@ -114,8 +114,9 @@ def _is_joined_channel(user_id: int) -> bool | None:
 
 def _send_join_required(chat_id: int):
     """Send a message asking the user to join the required channel."""
+    channel_link = REQUIRED_CHANNEL if REQUIRED_CHANNEL.startswith('http') else f"https://t.me/{REQUIRED_CHANNEL.lstrip('@')}"
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("📢 Join Channel", url=REQUIRED_CHANNEL))
+    kb.add(types.InlineKeyboardButton("📢 Join Channel", url=channel_link))
     kb.add(types.InlineKeyboardButton("✅ I've Joined", callback_data="check_join"))
     bot.send_message(
         chat_id,
