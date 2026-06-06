@@ -6361,17 +6361,7 @@ def handle_text(message):
                 ]])
 
             exch = exchange_override or get_user_exchange(user_id)
-            price_usd = None
-            chart_bytes = None
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                price_fut = pool.submit(get_exchange_price, crypto, exch)
-                chart_fut = pool.submit(get_crypto_chart_image, crypto, 30, user_id)
-                price_usd = price_fut.result()
-                try:
-                    chart_result = chart_fut.result()
-                    chart_bytes, symbol = chart_result
-                except Exception:
-                    chart_bytes = None
+            price_usd = get_exchange_price(crypto, exch)
 
             usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
             if not price_usd:
@@ -6379,32 +6369,20 @@ def handle_text(message):
                 return
             toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
 
-            if chart_bytes:
-                bot.send_chat_action(message.chat.id, 'upload_photo')
-                caption = add_timestamp(
+            kb = None
+            if crypto != 'telegram-stars':
+                kb = types.InlineKeyboardMarkup()
+                kb.add(types.InlineKeyboardButton("📊 Chart", callback_data=f"chart_{crypto}_30d"))
+            bot.reply_to(
+                message,
+                add_timestamp(
                     f"📊 <b>{crypto_name}</b>\n\n"
                     f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>\n"
                     + toman_line
-                )
-                bot.send_photo(
-                    message.chat.id,
-                    photo=BytesIO(chart_bytes),
-                    caption=caption,
-                    parse_mode='HTML',
-                    reply_to_message_id=message.message_id,
-                    reply_markup=refresh_kb
-                )
-            else:
-                bot.reply_to(
-                    message,
-                    add_timestamp(
-                        f"📊 <b>{crypto_name}</b>\n\n"
-                        f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>\n"
-                        + toman_line
-                    ),
-                    parse_mode='HTML',
-                    reply_markup=refresh_kb
-                )
+                ),
+                parse_mode='HTML',
+                reply_markup=kb
+            )
             return
 
     # Amount + single crypto (e.g. "10 trx")
