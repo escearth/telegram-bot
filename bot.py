@@ -5,7 +5,6 @@ from telebot import types
 from telebot.types import InlineKeyboardButton as IKB
 import requests
 import re
-import ast
 import time
 import logging
 import json
@@ -42,13 +41,7 @@ from number_utils import (
 # Animated emoji support (optional - requires Telethon + TG_API_ID/HASH)
 from emoji_utils import apply_emoji, ensure_emoji_map
 
-# Safe math evaluation - replaces eval()
-try:
-    from simpleeval import simple_eval
-    SAFE_EVAL_AVAILABLE = True
-except ImportError:
-    SAFE_EVAL_AVAILABLE = False
-    logging.warning("simpleeval not installed. Install with: pip install simpleeval")
+from simpleeval import simple_eval
 
 cg = CoinGeckoAPI()
 load_dotenv()
@@ -1122,12 +1115,13 @@ def rate_limit_check(func):
                 except:
                     pass
 
+        if is_command:
+            record_user_request(user_id)
         try:
             result = func(message, *args, **kwargs)
             return result
         finally:
-            if is_command:
-                record_user_request(user_id)
+            pass
     return wrapper
 
 
@@ -1283,6 +1277,7 @@ STRINGS = {
         'tron_timeout':        "⏳ Request timed out. Try again.",
         'tron_error':          "❌ Could not reach TRON network. Try again.",
         'invalid_tron_addr':   "❌ That doesn\'t look like a valid TRON address. Please check it and try again.",
+        'invalid_address':     "❌ Invalid address. Please check it and try again.",
 
         # ── Holdings ──────────────────────────────────────────
         'no_holdings':         "⚠️ No holdings yet.\n\nTap ➕ to add one.",
@@ -1682,6 +1677,7 @@ STRINGS = {
         'tron_timeout':        "⏳ درخواست منقضی شد. دوباره امتحان کنید.",
         'tron_error':          "❌ اتصال به شبکه ترون ممکن نیست. دوباره امتحان کنید.",
         'invalid_tron_addr':   "❌ این آدرس ترون معتبر نیست. لطفاً بررسی کنید و دوباره امتحان کنید.",
+        'invalid_address':     "❌ آدرس نامعتبر. لطفاً بررسی کنید و دوباره امتحان کنید.",
 
         # ── Holdings ──────────────────────────────────────────
         'no_holdings':         "⚠️ هنوز دارایی‌ای ثبت نشده.\n\nروی ➕ ضربه بزنید.",
@@ -2408,7 +2404,6 @@ def _sparkline(prices, width=15):
 
 
 @rate_limited_api_call
-@rate_limited_api_call
 def _fetch_chart_data(crypto_id, days=30):
     """Fetch chart data from CoinGecko as raw list of [timestamp, price] pairs."""
     data = cg.get_coin_market_chart_by_id(id=crypto_id, vs_currency='usd', days=days)
@@ -2726,30 +2721,10 @@ def evaluate_math(expression, user_id: int = 0):
         if sanitized.strip() in ['+', '-', '*', '/', '(', ')', '+-', '--', '**', '//']:
             return T(user_id, 'invalid_expression')
 
-        # Evaluate safely
+        # Evaluate safely using simpleeval
         try:
-            if SAFE_EVAL_AVAILABLE:
-                # Use simpleeval for maximum safety
-                from simpleeval import simple_eval
-                result = simple_eval(sanitized)
-            else:
-                # Fallback: restrict AST to arithmetic-only nodes
-                allowed_node_types = (
-                    ast.Expression, ast.BinOp, ast.UnaryOp,
-                    ast.Add, ast.Sub, ast.Mult, ast.Div,
-                    ast.Pow, ast.FloorDiv, ast.Mod,
-                    ast.USub, ast.UAdd, ast.Constant,
-                )
-                try:
-                    tree = ast.parse(sanitized, mode='eval')
-                    for node in ast.walk(tree):
-                        if not isinstance(node, allowed_node_types):
-                            return T(user_id, 'invalid_expression')
-                    code = compile(tree, '<math>', mode='eval')
-                    result = eval(code, {'__builtins__': {}}, {})
-                except Exception:
-                    return T(user_id, 'invalid_expression')
-        except (SyntaxError, NameError, TypeError, ValueError):
+            result = simple_eval(sanitized)
+        except (SyntaxError, NameError, TypeError, ValueError, ZeroDivisionError):
             return T(user_id, 'invalid_expression')
 
         # Format result
@@ -3020,7 +2995,7 @@ def _process_add_wallet(message, user_id, address):
     if not is_valid_tron_address(address):
         bot.send_message(
             chat_id,
-            T(user_id, 'wallet_invalid', address=address),
+            T(user_id, 'wallet_invalid', address=html.escape(address)),
             parse_mode='HTML'
         )
         return
@@ -3034,7 +3009,7 @@ def _process_add_wallet(message, user_id, address):
         ]])
         bot.send_message(
             chat_id,
-            T(user_id, 'wallet_added', address=address, count=len(existing)+1, max=MAX_WALLETS_PER_USER),
+            T(user_id, 'wallet_added', address=html.escape(address), count=len(existing)+1, max=MAX_WALLETS_PER_USER),
             parse_mode='HTML',
             reply_markup=kb
         )
@@ -3092,7 +3067,7 @@ def wallets_message_text(wallets: list[str], user_id: int = 0) -> str:
         return T(user_id, 'no_wallets')
     lines = [T(user_id, 'wallets_header')]
     for i, addr in enumerate(wallets, 1):
-        lines.append(f"{i}. <code>{addr}</code>")
+        lines.append(f"{i}. <code>{html.escape(addr)}</code>")
     return "\n".join(lines)
 
 
@@ -3969,7 +3944,7 @@ def show_wallets_with_balance(message):
         for fut in concurrent.futures.as_completed(fut_map):
             addr = fut_map[fut]
             balance_msg = fut.result()
-            reply += f"🔗 <code>{addr}</code>\n {balance_msg}\n\n"
+            reply += f"🔗 <code>{html.escape(addr)}</code>\n {balance_msg}\n\n"
     bot.reply_to(message, reply, parse_mode='HTML')
     logger.info(f"User {user_id} viewed wallets with balances")
 
@@ -4463,7 +4438,7 @@ def _fragment_username_data(username):
                             headers={'User-Agent': 'EscEarthBot/1.0 (+https://t.me/EscEarthBot; friendly data lookup)'})
         if resp.status_code != 200:
             return None
-        html = resp.text
+        raw_html = resp.text
 
         status = "Unknown"
         price_ton = None
@@ -4473,7 +4448,7 @@ def _fragment_username_data(username):
 
         # Status - try multiple selectors
         try:
-            m = re.search(r'tm-section-header-status\s+tm-status-([a-z]+)">([^<]+)', html)
+            m = re.search(r'tm-section-header-status\s+tm-status-([a-z]+)">([^<]+)', raw_html)
             if m:
                 css_class = m.group(1)
                 visible_text = m.group(2).strip()
@@ -4490,9 +4465,9 @@ def _fragment_username_data(username):
 
         # Price - look for TON amounts near price-related keywords
         try:
-            m = re.search(r'price[:\s]*([\d,]+(?:\.\d+)?)\s*TON', html, re.IGNORECASE)
+            m = re.search(r'price[:\s]*([\d,]+(?:\.\d+)?)\s*TON', raw_html, re.IGNORECASE)
             if not m:
-                m = re.search(r'([\d,]+(?:\.\d+)?)\s*TON', html)
+                m = re.search(r'([\d,]+(?:\.\d+)?)\s*TON', raw_html)
             if m:
                 price_ton = m.group(1).replace(',', '')
         except Exception:
@@ -4506,7 +4481,7 @@ def _fragment_username_data(username):
             ]
             m = None
             for pat in end_patterns:
-                m = re.search(pat, html, re.IGNORECASE)
+                m = re.search(pat, raw_html, re.IGNORECASE)
                 if m:
                     break
             if m:
@@ -4516,7 +4491,7 @@ def _fragment_username_data(username):
 
         # Minimum bid
         try:
-            m = re.search(r'Min(?:imum)?\s*(?:bid)?[:\s]*([\d,]+(?:\.\d+)?)\s*TON', html, re.IGNORECASE)
+            m = re.search(r'Min(?:imum)?\s*(?:bid)?[:\s]*([\d,]+(?:\.\d+)?)\s*TON', raw_html, re.IGNORECASE)
             if m:
                 min_bid = m.group(1).replace(',', '')
         except Exception:
@@ -4524,11 +4499,11 @@ def _fragment_username_data(username):
 
         # Owner / wallet address
         try:
-            owner_m = re.search(r'(?:Owner|Wallet)[:\s]*<[^>]*>([^<]+)', html, re.DOTALL)
+            owner_m = re.search(r'(?:Owner|Wallet)[:\s]*<[^>]*>([^<]+)', raw_html, re.DOTALL)
             if owner_m:
                 owner = html.unescape(owner_m.group(1).strip())
             if not owner:
-                owner_m = re.search(r'[A-Za-z0-9_-]{48,}', html)
+                owner_m = re.search(r'[A-Za-z0-9_-]{48,}', raw_html)
                 if owner_m:
                     owner = owner_m.group(0)
         except Exception:
@@ -4562,16 +4537,16 @@ def _fragment_collection_floor(slug):
                             headers={'User-Agent': 'EscEarthBot/1.0 (+https://t.me/EscEarthBot; friendly data lookup)'})
         if resp.status_code != 200:
             return None
-        html = resp.text
+        raw_html = resp.text
         floor = None
         total = None
         # All TON prices listed for this collection; floor = minimum
         prices = [float(m.group(1).replace(',', ''))
-                  for m in re.finditer(r'tm-value[^>]*icon-ton[^>]*>([\d.,]+)', html)]
+                  for m in re.finditer(r'tm-value[^>]*icon-ton[^>]*>([\d.,]+)', raw_html)]
         if prices:
             floor = str(min(prices))
         # Collection total count from the sidebar filter
-        m = re.search(rf'data-value=\"{slug}\"[^>]*>.*?tm-main-filters-count[^>]*>([\d.,]+)', html, re.DOTALL)
+        m = re.search(rf'data-value=\"{slug}\"[^>]*>.*?tm-main-filters-count[^>]*>([\d.,]+)', raw_html, re.DOTALL)
         if m:
             total = m.group(1).replace(',', '')
         result = {'slug': slug, 'floor_ton': floor, 'total': total}
@@ -4843,10 +4818,10 @@ def inline_query_handler(inline_query):
             
             if src and dst and src != dst:
                 # Prevent stars conversions
-                if not (src == 'telegram-stars' or dst == 'telegram-stars'):
-                    # Initialize result_val
-                    result_val = None
+                result_val = None
                 
+                if src == 'telegram-stars' or dst == 'telegram-stars':
+                    pass  # stars conversions not supported
                 # FASTER: Pre-fetch prices, don't call convert_amount (which re-fetches)
                 # Use Decimal for all arithmetic to avoid precision loss
                 if src in CRYPTO_LIST and dst in CRYPTO_LIST:
@@ -5924,8 +5899,8 @@ def handle_text(message):
                 forward_text = (
                     f"💡 <b>New Suggestion</b>\n"
                     f"👤 User: {message.from_user.id}\n"
-                    f"👤 Name: {message.from_user.full_name or message.from_user.first_name}\n"
-                    f"💬 Message:\n{message.text}"
+                    f"👤 Name: {html.escape(message.from_user.full_name or message.from_user.first_name or '')}\n"
+                    f"💬 Message:\n{html.escape(message.text)}"
                 )
                 bot.send_message(SUGGESTION_CHAT_ID, forward_text, parse_mode='HTML')
                 bot.reply_to(message, T(user_id, 'suggest_sent'))
@@ -5951,6 +5926,8 @@ def handle_text(message):
             all_users = [row[0] for row in c.fetchall()]
             conn.close()
         
+        from telebot.apihelper import ApiTelegramException
+
         broadcast_msg = message.text
         sent_count = 0
         failed_count = 0
@@ -5958,13 +5935,26 @@ def handle_text(message):
         bot.reply_to(message, f"📢 Broadcasting to {len(all_users)} users...")
         
         for target_user in all_users:
-            try:
-                bot.send_message(target_user, broadcast_msg, parse_mode='HTML')
-                sent_count += 1
-                time.sleep(0.05)
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Broadcast failed for user {target_user}: {e}")
+            for attempt in range(3):
+                try:
+                    bot.send_message(target_user, broadcast_msg, parse_mode='HTML')
+                    sent_count += 1
+                    time.sleep(0.033)
+                    break
+                except ApiTelegramException as e:
+                    if 'retry after' in str(e).lower():
+                        wait = re.search(r'(\d+)', str(e))
+                        wait_sec = int(wait.group(1)) + 1 if wait else 5
+                        logger.warning(f"Flood wait {wait_sec}s for user {target_user}")
+                        time.sleep(wait_sec)
+                        continue
+                    failed_count += 1
+                    logger.error(f"Broadcast failed for user {target_user}: {e}")
+                    break
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Broadcast failed for user {target_user}: {e}")
+                    break
 
         bot.send_message(
             message.chat.id,
@@ -6770,9 +6760,7 @@ if __name__ == "__main__":
     logger.info(f"{EMOJIS['chart']} Cache timeout: {CACHE_TIMEOUT}s")
     logger.info(f"{EMOJIS['info']} Rate limit: {USER_RATE_LIMIT} req / {USER_RATE_WINDOW}s per user")
     logger.info(f"{EMOJIS['info']} Max wallets per user: {MAX_WALLETS_PER_USER}")
-    if not SAFE_EVAL_AVAILABLE:
-        logger.warning("⚠️  simpleeval not installed - math uses restricted eval fallback. "
-                       "Install it: pip install simpleeval")
+    logger.info("Math evaluation: using simpleeval (safe)")
 
     # Start background threads
     threading.Thread(target=_alert_checker_loop, daemon=True, name="AlertChecker").start()
