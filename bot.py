@@ -2574,7 +2574,7 @@ def get_usd_to_irr():
                 OWNER_USER_ID,
                 f"⚠️ <b>USD/IRR API failed</b>\n\nBoth Nobitex sources failed. "
                 f"Rate is unavailable.\n\n"
-                f"<i>{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>",
+                f"<i>{datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M UTC')}</i>",
                 parse_mode='HTML'
             )
         except Exception:
@@ -6684,7 +6684,7 @@ def _send_digest(user_id):
             lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
         else:
             lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr="N/A"))
-        lines.append(f"\n<i>📅 {datetime.utcnow().strftime('%b %d, %Y  %H:%M UTC')}</i>")
+        lines.append(f"\n<i>📅 {datetime.now(datetime.UTC).strftime('%b %d, %Y  %H:%M UTC')}</i>")
         kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(_T_cached(user_id, 'btn_portfolio'), callback_data="show_holdings"),
             types.InlineKeyboardButton(_T_cached(user_id, 'btn_alerts'),    callback_data="show_alerts"),
