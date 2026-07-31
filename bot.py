@@ -1123,6 +1123,29 @@ def rate_limit_check(func):
     return wrapper
 
 
+def loading_indicator(func):
+    """Decorator - shows a 'Fetching…' placeholder while a handler works,
+    then removes it once the real output has been sent. Degrades gracefully:
+    if the placeholder can't be sent/deleted, the handler still runs."""
+    @functools.wraps(func)
+    def wrapper(message, *args, **kwargs):
+        loading = None
+        try:
+            lang = db_get_lang(message.from_user.id)
+            text = "⏳ <i>در حال دریافت...</i>" if lang == 'fa' else "⏳ <i>Fetching...</i>"
+            loading = bot.reply_to(message, text, parse_mode='HTML')
+        except Exception:
+            pass
+        try:
+            return func(message, *args, **kwargs)
+        finally:
+            if loading is not None:
+                try:
+                    bot.delete_message(loading.chat.id, loading.message_id)
+                except Exception:
+                    pass
+    return wrapper
+
 
 # ─────────────────────────────────────────────
 # i18n string table  (en + fa)
@@ -2961,6 +2984,7 @@ def convert_amount(amount, src, dst):
 # ─────────────────────────────────────────────
 @bot.message_handler(commands=['start', 'help'])
 @rate_limit_check
+@loading_indicator
 def start(message):
     user_id = message.from_user.id
     name = message.from_user.first_name or "there"
@@ -2990,6 +3014,7 @@ def start(message):
 
 @bot.message_handler(commands=['cancel'])
 @rate_limit_check
+@loading_indicator
 def cancel(message):
     user_id = message.from_user.id
     if user_id in user_state:
@@ -3015,12 +3040,14 @@ def _send_language_picker(chat_id):
 
 @bot.message_handler(commands=['language'])
 @rate_limit_check
+@loading_indicator
 def language_cmd(message):
     _send_language_picker(message.chat.id)
 
 
 @bot.message_handler(commands=['privacy'])
 @rate_limit_check
+@loading_indicator
 def privacy_cmd(message):
     user_id = message.from_user.id
     bot.reply_to(message, T(user_id, 'privacy_text'), parse_mode='HTML')
@@ -3028,6 +3055,7 @@ def privacy_cmd(message):
 
 @bot.message_handler(commands=['deleteaccount'])
 @rate_limit_check
+@loading_indicator
 def delete_account_cmd(message):
     user_id = message.from_user.id
     kb = types.InlineKeyboardMarkup([[
@@ -3039,6 +3067,7 @@ def delete_account_cmd(message):
 
 @bot.message_handler(commands=['suggest', 'ticket'])
 @rate_limit_check
+@loading_indicator
 def suggest_cmd(message):
     user_id = message.from_user.id
     if not SUGGESTION_CHAT_ID:
@@ -3054,6 +3083,7 @@ def suggest_cmd(message):
 
 @bot.message_handler(commands=['donate', 'donation'])
 @rate_limit_check
+@loading_indicator
 def donate_cmd(message):
     user_id = message.from_user.id
     parts = []
@@ -3992,6 +4022,7 @@ def handle_callback(call):
 
 @bot.message_handler(commands=['clearwallets'])
 @rate_limit_check
+@loading_indicator
 def clear_wallets(message):
     user_id = message.from_user.id
     if db_clear_wallets(user_id):
@@ -4003,6 +4034,7 @@ def clear_wallets(message):
 
 @bot.message_handler(commands=['wallets'])
 @rate_limit_check
+@loading_indicator
 def show_wallets_only(message):
     user_id = message.from_user.id
     wallets = db_get_wallets(user_id)
@@ -4016,6 +4048,7 @@ def show_wallets_only(message):
 
 @bot.message_handler(commands=['mywallets'])
 @rate_limit_check
+@loading_indicator
 def show_wallets_with_balance(message):
     user_id = message.from_user.id
     wallets = db_get_wallets(user_id)
@@ -4037,6 +4070,7 @@ def show_wallets_with_balance(message):
 
 @bot.message_handler(commands=['price'])
 @rate_limit_check
+@loading_indicator
 def price(message):
     bot.send_chat_action(message.chat.id, 'typing')
     ids = ','.join(CRYPTO_LIST.keys())
@@ -4072,6 +4106,7 @@ def price(message):
 
 @bot.message_handler(commands=['usd'])
 @rate_limit_check
+@loading_indicator
 def usd_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid_u = message.from_user.id
@@ -4090,6 +4125,7 @@ def usd_command(message):
 
 @bot.message_handler(commands=['try'])
 @rate_limit_check
+@loading_indicator
 def try_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4103,6 +4139,7 @@ def try_command(message):
 
 @bot.message_handler(commands=['eur'])
 @rate_limit_check
+@loading_indicator
 def eur_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4116,6 +4153,7 @@ def eur_command(message):
 
 @bot.message_handler(commands=['gbp'])
 @rate_limit_check
+@loading_indicator
 def gbp_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4129,6 +4167,7 @@ def gbp_command(message):
 
 @bot.message_handler(commands=['aed'])
 @rate_limit_check
+@loading_indicator
 def aed_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4142,6 +4181,7 @@ def aed_command(message):
 
 @bot.message_handler(commands=['cny'])
 @rate_limit_check
+@loading_indicator
 def cny_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4193,6 +4233,7 @@ def _build_gold_message(uid):
 
 @bot.message_handler(commands=['gold'])
 @rate_limit_check
+@loading_indicator
 def gold_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4206,6 +4247,7 @@ def gold_command(message):
 
 @bot.message_handler(commands=['stars', 'star'])
 @rate_limit_check
+@loading_indicator
 def stars_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4252,6 +4294,7 @@ def _show_holding_coin_picker(chat_id, prompt, user_id=0):
 
 @bot.message_handler(commands=['set'])
 @rate_limit_check
+@loading_indicator
 def set_holding(message):
     user_id = message.from_user.id
     logger.info(f"User {user_id} initiated set holdings")
@@ -4260,6 +4303,7 @@ def set_holding(message):
 
 @bot.message_handler(commands=['holdings'])
 @rate_limit_check
+@loading_indicator
 def holdings(message):
     user_id = message.from_user.id
     saved = db_get_holdings(user_id) or {}
@@ -4277,6 +4321,7 @@ def holdings(message):
 
 @bot.message_handler(commands=['convert'])
 @rate_limit_check
+@loading_indicator
 def convert_cmd(message):
     # Always show the interactive coin picker
     coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars'] + ['usd', 'toman']
@@ -4306,6 +4351,7 @@ def convert_cmd(message):
 # ═══════════════════════════════════════════════
 @bot.message_handler(commands=['setexchange'])
 @rate_limit_check
+@loading_indicator
 def set_exchange_cmd(message):
     uid = message.from_user.id
     args = message.text.split(maxsplit=1)
@@ -4334,6 +4380,7 @@ CHART_DAYS = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}
 
 @bot.message_handler(commands=['chart'])
 @rate_limit_check
+@loading_indicator
 def chart_cmd(message):
     bot.send_chat_action(message.chat.id, 'upload_photo')
     uid = message.from_user.id
@@ -4427,6 +4474,7 @@ def _fetch_gainers_losers():
 
 @bot.message_handler(commands=['trending'])
 @rate_limit_check
+@loading_indicator
 def trending_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4444,6 +4492,7 @@ def trending_cmd(message):
 
 @bot.message_handler(commands=['gainers', 'losers'])
 @rate_limit_check
+@loading_indicator
 def gainers_losers_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4724,6 +4773,7 @@ def _fragment_collection_floor(slug):
 
 @bot.message_handler(commands=['fragment', 'username'])
 @rate_limit_check
+@loading_indicator
 def fragment_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4760,6 +4810,7 @@ def fragment_cmd(message):
 
 @bot.message_handler(commands=['gifts'])
 @rate_limit_check
+@loading_indicator
 def gifts_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -4784,6 +4835,7 @@ def gifts_cmd(message):
 
 @bot.message_handler(commands=['gift'])
 @rate_limit_check
+@loading_indicator
 def gift_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -5344,6 +5396,7 @@ def inline_query_handler(inline_query):
 
 @bot.message_handler(commands=['alert'])
 @rate_limit_check
+@loading_indicator
 def alert_cmd(message):
     user_id = message.from_user.id
     parts = message.text.strip().split()
@@ -5445,6 +5498,7 @@ def _finalize_alert(message, user_id, crypto_id, direction_raw, price_raw):
 
 @bot.message_handler(commands=['alerts'])
 @rate_limit_check
+@loading_indicator
 def list_alerts(message):
     user_id = message.from_user.id
     alerts = db_get_alerts(user_id)
@@ -5491,6 +5545,7 @@ def list_alerts(message):
 
 @bot.message_handler(commands=['compare'])
 @rate_limit_check
+@loading_indicator
 def compare_cmd(message):
     parts = message.text.strip().split()
     chart_mode = '--chart' in parts or '-c' in parts
@@ -5671,6 +5726,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
 
 @bot.message_handler(commands=['market'])
 @rate_limit_check
+@loading_indicator
 def market_cmd(message, user_id=None, edit_msg_id=None):
     uid_m = user_id or message.from_user.id
     bot.send_chat_action(message.chat.id, 'typing')
@@ -5773,6 +5829,7 @@ def _build_digest_keyboard(enabled, hour, user_id=0):
 
 @bot.message_handler(commands=['digest'])
 @rate_limit_check
+@loading_indicator
 def digest_cmd(message):
     user_id = message.from_user.id
     pref    = db_get_digest(user_id)
@@ -5797,6 +5854,7 @@ def is_owner(user_id: int) -> bool:
     return OWNER_USER_ID and user_id == OWNER_USER_ID
 
 @bot.message_handler(commands=['test'])
+@loading_indicator
 def run_tests(message):
     """Owner-only diagnostic: test all features and return a combined report."""
     if not is_owner(message.from_user.id):
@@ -6018,6 +6076,7 @@ def run_tests(message):
 
 @bot.message_handler(commands=['admin'])
 @rate_limit_check
+@loading_indicator
 def admin_panel(message):
     global _cache
     if not is_owner(message.from_user.id):
@@ -6074,6 +6133,7 @@ def admin_panel(message):
 # ─────────────────────────────────────────────
 @bot.message_handler(func=lambda message: True)
 @rate_limit_check
+@loading_indicator
 def handle_text(message):
     user_id = message.from_user.id
     if not message.text:
