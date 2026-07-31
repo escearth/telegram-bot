@@ -1058,6 +1058,15 @@ def _cleanup_stale_dicts():
 
 _me_cache = None
 
+KNOWN_COMMANDS = {
+    'start', 'help', 'cancel', 'language', 'privacy', 'deleteaccount',
+    'suggest', 'ticket', 'donate', 'donation', 'clearwallets', 'wallets',
+    'mywallets', 'price', 'usd', 'try', 'eur', 'gbp', 'aed', 'cny', 'gold',
+    'stars', 'star', 'set', 'holdings', 'convert', 'setexchange', 'chart',
+    'trending', 'gainers', 'losers', 'fragment', 'username', 'gifts', 'gift',
+    'alert', 'alerts', 'compare', 'market', 'digest', 'test', 'admin',
+}
+
 
 def _get_me():
     global _me_cache
@@ -1066,23 +1075,113 @@ def _get_me():
     return _me_cache
 
 
-def _is_bot_directed_group_message(message):
-    """In groups, only messages that clearly target the bot should be
-    processed: commands, replies to the bot, or a @botusername mention."""
-    text = (message.text or '').strip()
-    if text.startswith('/'):
+def _looks_like_bot_query(message):
+    """Cheap pre-filter mirroring handle_text's matching rules. Used in groups
+    so a reply to the bot only counts as bot-directed when it's a real query
+    (coin symbol, math, fx rate, address, tx hash, state-machine input...)."""
+    user_id = message.from_user.id
+    if get_user_state(user_id):
         return True
+    text_original = (message.text or '').strip()
+    if not text_original:
+        return False
+    text = _normalize_persian(text_original)
+    text_lower = text.lower()
+
+    if re.match(r'^[\d+\-*/().%\s^]+$', text) and len(text) > 1 and re.search(r'\d', text):
+        return True
+    if '% of' in text_lower or '%of' in text_lower or '% از' in text_lower \
+            or '%از' in text_lower or '٪ از' in text_original or '٪از' in text_original:
+        return True
+
+    fx_patterns = [
+        r'^([\d.,۰-۹٬٫]+)?\s*(\$|usd|dollar|دلار)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$',
+        r'^([\d.,۰-۹٬٫]+)?\s*(lira|tl|try|₺)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$',
+        r'^([\d.,۰-۹٬٫]+)?\s*(eur|euro|€)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$',
+        r'^([\d.,۰-۹٬٫]+)?\s*(gbp|pound|£)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$',
+        r'^([\d.,۰-۹٬٫]+)?\s*(aed|dirham|درهم)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$',
+        r'^([\d.,۰-۹٬٫]+)?\s*(cny|yuan|yuen|یوآن)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$',
+    ]
+    for p in fx_patterns:
+        if re.match(p, text_lower):
+            return True
+
+    if re.match(r'^[\d.,۰-۹٬٫]+\s*(gold|طل|طلا)\b', text_lower):
+        return True
+    if text_lower in ('gold', 'طل', 'طلا', 'xau', 'try', 'lira', 'tl', '₺'):
+        return True
+    if re.match(r'^[A-Za-z0-9]{34}$', text):
+        return True
+    if len(text) == 48 and text[:2] in ('EQ', 'UQ'):
+        return True
+    if re.match(r'^[A-Fa-f0-9]{64}$', text):
+        return True
+    if re.match(r'https?://(tronscan\.org/#/transaction|tonscan\.org/tx|tonviewer\.com/transaction)/', text):
+        return True
+
+    parts_raw = text.split()
+    text_clean = parts_raw[0] if parts_raw else text
+    if len(parts_raw) == 2 and parts_raw[1].startswith('@'):
+        text_clean = parts_raw[0]
+    if not re.search(r'\d', text) and len(parts_raw) == 1:
+        crypto = detect_currency(text_clean)
+        if crypto and crypto in CRYPTO_LIST:
+            return True
+
+    amount_crypto = re.match(r'^(\d+(?:\.\d+)?)\s*(\w+)$', text_lower)
+    if amount_crypto and detect_currency(amount_crypto.group(2), check_u_alias=True):
+        return True
+
+    if len(text.split()) <= 4:
+        for pattern in (r'^(\d+(?:\.\d+)?)\s*(\w+)\s*(?:to|به)\s*(\w+)$',
+                        r'^(\d+(?:\.\d+)?)\s*(\w+)\s+(\w+)$'):
+            m = re.search(pattern, text_lower)
+            if m:
+                src = detect_currency(m.group(2), check_u_alias=True)
+                dst = detect_currency(m.group(3), check_u_alias=True)
+                if src and dst:
+                    return True
+
+    return False
+
+
+def _is_bot_directed_group_message(message):
+    """In groups, only messages that clearly target the bot are processed:
+    our registered commands, a @botusername mention, or a reply to the bot
+    that is an actual query. Everything else is fully ignored."""
+    text = (message.text or '').strip()
+    if not text:
+        return False
     try:
         me = _get_me()
-        if message.reply_to_message and message.reply_to_message.from_user \
-                and getattr(message.reply_to_message.from_user, 'id', None) == me.id:
-            return True
         username = getattr(me, 'username', None)
-        if username and ('@' + username.lower()) in text.lower():
-            return True
     except Exception:
         return True  # fail-open: if we can't verify, don't block the bot
+
+    if text.startswith('/'):
+        cmd = text[1:].split()[0].split('@')[0].lower()
+        return cmd in KNOWN_COMMANDS
+
+    if username and ('@' + username.lower()) in text.lower():
+        return True
+
+    if message.reply_to_message and message.reply_to_message.from_user \
+            and getattr(message.reply_to_message.from_user, 'id', None) == me.id:
+        return _looks_like_bot_query(message)
+
     return False
+
+
+def _ignore_unknown_command(message):
+    """Silently drop slash commands we don't own (private chats too), so no
+    loading indicator / response is produced for them."""
+    text = message.text or ''
+    if not text.startswith('/'):
+        return False
+    cmd = text[1:].split()[0].split('@')[0].lower()
+    if not cmd.isalpha():
+        return False  # let slash-math etc. fall through to normal handling
+    return cmd not in KNOWN_COMMANDS
 
 
 def rate_limit_check(func):
@@ -1101,6 +1200,9 @@ def rate_limit_check(func):
         # (no registration, no rate-limit, no fetch, no loading indicator).
         if message.chat.type in ('group', 'supergroup') \
                 and not _is_bot_directed_group_message(message):
+            return
+        # Silently ignore slash commands we don't own, in any chat type.
+        if _ignore_unknown_command(message):
             return
 
         # Periodic memory cleanup
