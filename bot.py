@@ -4587,7 +4587,7 @@ CHART_DAYS = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}
 
 @bot.message_handler(commands=['chart'])
 @rate_limit_check
-@loading_indicator(keep=True)
+@loading_indicator
 def chart_cmd(message):
     uid = message.from_user.id
     args = message.text.split()
@@ -5025,6 +5025,7 @@ def _resolve_fragment_target(message):
 
 @bot.message_handler(commands=['fragment', 'username'])
 @rate_limit_check
+@loading_indicator
 def fragment_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -5032,7 +5033,6 @@ def fragment_cmd(message):
     if not target:
         bot.reply_to(message, T(uid, 'fragment_usage'))
         return
-    bot.send_message(message.chat.id, T(uid, 'fragment_looking', target=target), parse_mode='HTML')
     data = _fragment_username_data(target)
     if not data:
         bot.reply_to(message, "❌ Could not fetch data from Fragment. The username may not exist.")
@@ -5103,6 +5103,7 @@ def _resolve_gift_slug(message):
 
 @bot.message_handler(commands=['gift'])
 @rate_limit_check
+@loading_indicator
 def gift_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -5114,7 +5115,6 @@ def gift_cmd(message):
     if not match:
         bot.reply_to(message, f"❌ Collection <b>{slug}</b> not found. Use /gifts to see all.", parse_mode='HTML')
         return
-    bot.send_message(message.chat.id, f"🔍 Fetching <b>{match['name']}</b> floor price...", parse_mode='HTML')
     floor = _fragment_collection_floor(slug)
     lines = [f"🎁 <b>{match['name']}</b>\n"]
     if floor and floor.get('floor_ton'):
@@ -5816,7 +5816,7 @@ def list_alerts(message):
 
 @bot.message_handler(commands=['compare'])
 @rate_limit_check
-@loading_indicator(keep=True)
+@loading_indicator
 def compare_cmd(message):
     parts = message.text.strip().split()
     chart_mode = '--chart' in parts or '-c' in parts
