@@ -24,9 +24,6 @@ alerts - Manage your alerts
 wallets - Manage TRON addresses
 mywallets - Live TRX balances
 clearwallets - Remove all saved wallets
-fragment - Look up a Telegram username on Fragment.com
-gifts - List Telegram gift collections
-gift - View gift collection details (e.g. /gift astralshard)
 suggest - Send feedback or bug report
 donate - Support the project
 privacy - Privacy & data policy
