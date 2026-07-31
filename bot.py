@@ -1076,9 +1076,6 @@ KNOWN_COMMANDS = {
     'stars', 'star', 'set', 'holdings', 'convert', 'setexchange', 'chart',
     'trending', 'gainers', 'losers',
     'alert', 'alerts', 'compare', 'market', 'digest', 'test', 'admin',
-    # Per-coin price commands
-    'btc', 'eth', 'usdt', 'bnb', 'ada', 'xrp', 'sol', 'dot', 'doge', 'shib',
-    'trx', 'ton',
 }
 
 
@@ -1337,60 +1334,41 @@ STRINGS = {
         'start_welcome':
             "🌍 <b>Earth Crypto, {name}! 🚀</b>\n"
             "<i>Prices · Charts · Portfolio · Alerts · Wallets</i>\n\n"
-            "📌 <b>Start</b>\n"
-            "<code>/start</code> — welcome &amp; help\n\n"
             "📈 <b>Prices &amp; Charts</b>\n"
-            "<code>/price</code> — all coins with 24h change\n\n"
-            "<code>/btc</code> — Bitcoin price\n\n"
-            "<code>/eth</code> — Ethereum price\n\n"
-            "<code>/usdt</code> — Tether price\n\n"
-            "<code>/bnb</code> — BNB price\n\n"
-            "<code>/ada</code> — Cardano price\n\n"
-            "<code>/xrp</code> — XRP price\n\n"
-            "<code>/sol</code> — Solana price\n\n"
-            "<code>/dot</code> — Polkadot price\n\n"
-            "<code>/doge</code> — Dogecoin price\n\n"
-            "<code>/shib</code> — Shiba Inu price\n\n"
-            "<code>/trx</code> — TRON price\n\n"
-            "<code>/ton</code> — TON price\n\n"
-            "<code>/chart btc 90d</code> — price chart with custom range\n\n"
-            "<code>/compare btc eth</code> — compare two coins\n\n"
-            "<code>/gold</code> — gold prices (global + Iran)\n\n"
-            "<code>/market</code> — Fear &amp; Greed overview\n\n"
-            "<code>/trending</code> — top 10 trending coins\n\n"
-            "<code>/gainers</code> — top gainers in 24h\n\n"
-            "<code>/losers</code> — top losers in 24h\n\n"
+            "<blockquote><code>/price</code> — all coins with 24h change\n"
+            "<code>/chart</code> — price chart (coin + range via buttons)\n"
+            "<code>/compare</code> — compare two coins (via buttons)\n"
+            "<code>/gold</code> — gold prices (global + Iran)\n"
+            "<code>/market</code> — Fear &amp; Greed overview\n"
+            "<code>/trending</code> — top 10 trending coins\n"
+            "<code>/gainers</code> — top gainers in 24h\n"
+            "<code>/losers</code> — top losers in 24h</blockquote>\n\n"
             "💱 <b>Currency &amp; Conversion</b>\n"
-            "<code>/usd</code> — US Dollar to Toman\n\n"
-            "<code>/try</code> — Turkish Lira to Toman\n\n"
-            "<code>/eur</code> — Euro to Toman\n\n"
-            "<code>/gbp</code> — British Pound to Toman\n\n"
-            "<code>/aed</code> — UAE Dirham to Toman\n\n"
-            "<code>/cny</code> — Chinese Yuan to Toman\n\n"
-            "<code>/convert</code> — coins · USD · Toman converter\n\n"
-            "<code>/star</code> — Telegram Stars price\n\n"
-            "<code>/setexchange</code> — default price source\n\n"
-            "💼 <b>Portfolio</b>\n"
-            "<code>/set</code> — update your holdings\n\n"
-            "<code>/holdings</code> — portfolio P&amp;L snapshot\n\n"
-            "<code>/digest</code> — daily summary settings\n\n"
-            "🔔 <b>Alerts</b>\n"
-            "<code>/alert</code> — set a new price alert\n\n"
-            "<code>/alerts</code> — manage your alerts\n\n"
-            "👛 <b>Wallets</b>\n"
-            "<code>/wallets</code> — manage TRON addresses\n\n"
-            "<code>/mywallets</code> — live TRX balances\n\n"
-            "<code>/clearwallets</code> — remove all saved wallets\n\n"
+            "<blockquote><code>/usd</code> — US Dollar to Toman\n"
+            "<code>/try</code> — Turkish Lira to Toman\n"
+            "<code>/eur</code> — Euro to Toman\n"
+            "<code>/gbp</code> — British Pound to Toman\n"
+            "<code>/aed</code> — UAE Dirham to Toman\n"
+            "<code>/cny</code> — Chinese Yuan to Toman\n"
+            "<code>/convert</code> — coins · USD · Toman converter\n"
+            "<code>/star</code> — Telegram Stars price\n"
+            "<code>/setexchange</code> — default price source</blockquote>\n\n"
+            "💼 <b>Portfolio · Alerts · Wallets</b>\n"
+            "<blockquote><code>/set</code> — update your holdings\n"
+            "<code>/holdings</code> — portfolio P&amp;L snapshot\n"
+            "<code>/digest</code> — daily summary settings\n"
+            "<code>/alert</code> — set a new price alert\n"
+            "<code>/alerts</code> — manage your alerts\n"
+            "<code>/wallets</code> — manage TRON addresses\n"
+            "<code>/mywallets</code> — live TRX balances\n"
+            "<code>/clearwallets</code> — remove all saved wallets</blockquote>\n\n"
             "⚙️ <b>Settings &amp; More</b>\n"
-            "<code>/language</code> — switch language (English / فارسی)\n\n"
-            "<code>/suggest</code> — send feedback or bug report\n\n"
-            "<code>/donate</code> — support the project\n\n"
-            "<code>/privacy</code> — privacy &amp; data policy\n\n"
-            "<code>/deleteaccount</code> — delete all your data\n\n"
-            "<code>/cancel</code> — cancel current operation\n\n"
-            "<code>/test</code> — run self-diagnostics\n\n"
-            "<code>/admin</code> — bot owner panel\n\n"
-            "⚡ <b>Just type:</b> <code>btc</code>, <code>10 trx</code>, <code>1 usd to toman</code>, <code>btc @binance</code>\n\n"
+            "<blockquote><code>/language</code> — switch language (English / فارسی)\n"
+            "<code>/suggest</code> — send feedback or bug report\n"
+            "<code>/donate</code> — support the project\n"
+            "<code>/privacy</code> — privacy &amp; data policy\n"
+            "<code>/deleteaccount</code> — delete all your data</blockquote>\n\n"
+            "⚡ <b>Just type:</b> <code>btc</code>, <code>10 eth</code>, <code>100 usd</code>\n\n"
             "💖 /donate · 🔒 /privacy · 🌐 /language\n"
             "<i>Inline:</i> <code>@EscEarthBot</code> in any chat 🚀",
 
@@ -1749,60 +1727,41 @@ STRINGS = {
         'start_welcome':
             "🌍 <b>{name} عزیز، به Earth Crypto خوش آمدید! 🚀</b>\n"
             "<i>قیمت · نمودار · پرتفو · هشدار · کیف پول</i>\n\n"
-            "📌 <b>شروع</b>\n"
-            "<code>/start</code> — راهنما و خوش‌آمد\n\n"
             "📈 <b>قیمت‌ها و نمودار</b>\n"
-            "<code>/price</code> — قیمت همه ارزها با تغییر ۲۴ ساعته\n\n"
-            "<code>/btc</code> — قیمت بیت‌کوین\n\n"
-            "<code>/eth</code> — قیمت اتریوم\n\n"
-            "<code>/usdt</code> — قیمت تتر\n\n"
-            "<code>/bnb</code> — قیمت بایننس کوین\n\n"
-            "<code>/ada</code> — قیمت کاردانو\n\n"
-            "<code>/xrp</code> — قیمت ریپل\n\n"
-            "<code>/sol</code> — قیمت سولانا\n\n"
-            "<code>/dot</code> — قیمت پولکادات\n\n"
-            "<code>/doge</code> — قیمت دوج‌کوین\n\n"
-            "<code>/shib</code> — قیمت شیبا اینو\n\n"
-            "<code>/trx</code> — قیمت ترون\n\n"
-            "<code>/ton</code> — قیمت تون\n\n"
-            "<code>/chart btc 90d</code> — نمودار قیمت با بازه دلخواه\n\n"
-            "<code>/compare btc eth</code> — مقایسه دو ارز\n\n"
-            "<code>/gold</code> — قیمت طلا (جهانی + ایران)\n\n"
-            "<code>/market</code> — نمای کلی ترس و طمع\n\n"
-            "<code>/trending</code> — ۱۰ ارز داغ\n\n"
-            "<code>/gainers</code> — بیشترین رشد در ۲۴ ساعت\n\n"
-            "<code>/losers</code> — بیشترین افت در ۲۴ ساعت\n\n"
+            "<blockquote><code>/price</code> — قیمت همه ارزها با تغییر ۲۴ ساعته\n"
+            "<code>/chart</code> — نمودار قیمت (انتخاب ارز و بازه با دکمه)\n"
+            "<code>/compare</code> — مقایسه دو ارز (با دکمه)\n"
+            "<code>/gold</code> — قیمت طلا (جهانی + ایران)\n"
+            "<code>/market</code> — نمای کلی ترس و طمع\n"
+            "<code>/trending</code> — ۱۰ ارز داغ\n"
+            "<code>/gainers</code> — بیشترین رشد در ۲۴ ساعت\n"
+            "<code>/losers</code> — بیشترین افت در ۲۴ ساعت</blockquote>\n\n"
             "💱 <b>نرخ ارز و تبدیل</b>\n"
-            "<code>/usd</code> — دلار به تومان\n\n"
-            "<code>/try</code> — لیر به تومان\n\n"
-            "<code>/eur</code> — یورو به تومان\n\n"
-            "<code>/gbp</code> — پوند به تومان\n\n"
-            "<code>/aed</code> — درهم به تومان\n\n"
-            "<code>/cny</code> — یوان به تومان\n\n"
-            "<code>/convert</code> — مبدل ارز · دلار · تومان\n\n"
-            "<code>/star</code> — قیمت ستاره تلگرام\n\n"
-            "<code>/setexchange</code> — منبع قیمت پیش‌فرض\n\n"
-            "💼 <b>پرتفو</b>\n"
-            "<code>/set</code> — ثبت دارایی‌های شما\n\n"
-            "<code>/holdings</code> — خلاصه سود/زیان پرتفو\n\n"
-            "<code>/digest</code> — تنظیمات خلاصه روزانه\n\n"
-            "🔔 <b>هشدارها</b>\n"
-            "<code>/alert</code> — تنظیم هشدار قیمت جدید\n\n"
-            "<code>/alerts</code> — مدیریت هشدارهای شما\n\n"
-            "👛 <b>کیف پول</b>\n"
-            "<code>/wallets</code> — مدیریت آدرس‌های ترون\n\n"
-            "<code>/mywallets</code> — موجودی زنده TRX\n\n"
-            "<code>/clearwallets</code> — حذف همه کیف پول‌ها\n\n"
+            "<blockquote><code>/usd</code> — دلار به تومان\n"
+            "<code>/try</code> — لیر به تومان\n"
+            "<code>/eur</code> — یورو به تومان\n"
+            "<code>/gbp</code> — پوند به تومان\n"
+            "<code>/aed</code> — درهم به تومان\n"
+            "<code>/cny</code> — یوان به تومان\n"
+            "<code>/convert</code> — مبدل ارز · دلار · تومان\n"
+            "<code>/star</code> — قیمت ستاره تلگرام\n"
+            "<code>/setexchange</code> — منبع قیمت پیش‌فرض</blockquote>\n\n"
+            "💼 <b>پرتفو · هشدار · کیف پول</b>\n"
+            "<blockquote><code>/set</code> — ثبت دارایی‌های شما\n"
+            "<code>/holdings</code> — خلاصه سود/زیان پرتفو\n"
+            "<code>/digest</code> — تنظیمات خلاصه روزانه\n"
+            "<code>/alert</code> — تنظیم هشدار قیمت جدید\n"
+            "<code>/alerts</code> — مدیریت هشدارهای شما\n"
+            "<code>/wallets</code> — مدیریت آدرس‌های ترون\n"
+            "<code>/mywallets</code> — موجودی زنده TRX\n"
+            "<code>/clearwallets</code> — حذف همه کیف پول‌ها</blockquote>\n\n"
             "⚙️ <b>تنظیمات و موارد دیگر</b>\n"
-            "<code>/language</code> — تغییر زبان (English / فارسی)\n\n"
-            "<code>/suggest</code> — ارسال پیشنهاد یا گزارش باگ\n\n"
-            "<code>/donate</code> — حمایت از پروژه\n\n"
-            "<code>/privacy</code> — حریم خصوصی و داده‌ها\n\n"
-            "<code>/deleteaccount</code> — حذف همه داده‌های شما\n\n"
-            "<code>/cancel</code> — لغو عملیات جاری\n\n"
-            "<code>/test</code> — اجرای خودآزمایی\n\n"
-            "<code>/admin</code> — پنل مدیریت ربات\n\n"
-            "⚡ <b>فقط تایپ کنید:</b> <code>btc</code>، <code>10 trx</code>، <code>1 دلار به تومان</code>\n\n"
+            "<blockquote><code>/language</code> — تغییر زبان (English / فارسی)\n"
+            "<code>/suggest</code> — ارسال پیشنهاد یا گزارش باگ\n"
+            "<code>/donate</code> — حمایت از پروژه\n"
+            "<code>/privacy</code> — حریم خصوصی و داده‌ها\n"
+            "<code>/deleteaccount</code> — حذف همه داده‌های شما</blockquote>\n\n"
+            "⚡ <b>فقط تایپ کنید:</b> <code>btc</code>، <code>10 eth</code>، <code>100 usd</code>\n\n"
             "💖 /donate · 🔒 /privacy · 🌐 /language\n"
             "<i>اینلاین:</i> <code>@EscEarthBot</code> در هر چتی 🚀",
 
@@ -4492,48 +4451,6 @@ def _stars_price_lines(uid, stars_price, count=1, header=None):
     return header + "\n\n" + "\n".join(lines[1:])
 
 
-# ── Per-coin price commands (/btc, /eth, /trx, ...) ──────────────────
-def _register_coin_commands():
-    """Register a price command for every supported coin, e.g. /btc."""
-    for cid, name in CRYPTO_LIST.items():
-        if cid == 'telegram-stars':
-            continue  # already covered by /stars
-        coin_sym = _sym(cid)
-        command = coin_sym.lower()
-
-        @bot.message_handler(commands=[command])
-        @rate_limit_check
-        @loading_indicator
-        def _coin_command(message, crypto=cid, crypto_name=name, coin_sym=coin_sym):
-            bot.send_chat_action(message.chat.id, 'typing')
-            uid = message.from_user.id
-            exch = get_user_exchange(uid)
-            price_usd = get_exchange_price(crypto, exch)
-            usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
-            if not price_usd:
-                bot.reply_to(message, T(uid, 'price_fetch_fail'))
-                return
-            toman_line = T(uid, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
-            kb = types.InlineKeyboardMarkup([[
-                types.InlineKeyboardButton(T(uid, 'btn_refresh'),  callback_data=f"refresh_{crypto}"),
-                types.InlineKeyboardButton(T(uid, 'btn_add_coin'), callback_data=f"hpick_{crypto}"),
-            ]])
-            kb.add(types.InlineKeyboardButton("📊 Chart", callback_data=f"chart_{crypto}_30d"))
-            bot.reply_to(
-                message,
-                add_timestamp(
-                    f"📊 <b>{crypto_name}</b>\n\n"
-                    f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>" + (f"\n{toman_line}" if toman_line else "")
-                ),
-                parse_mode='HTML',
-                reply_markup=kb
-            )
-            logger.info(f"User {uid} requested {coin_sym} price")
-
-
-_register_coin_commands()
-
-
 def _show_holding_coin_picker(chat_id, prompt, user_id=0):
     """Show coin picker buttons for add/set holding flows."""
     coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
@@ -4648,19 +4565,8 @@ CHART_DAYS = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}
 @loading_indicator
 def chart_cmd(message):
     uid = message.from_user.id
-    args = message.text.split()
-    if len(args) >= 2:
-        crypto = detect_currency(args[1])
-        if not crypto or crypto not in CRYPTO_LIST:
-            bot.reply_to(message, T(uid, 'unknown_coin'))
-            return
-        days = 30
-        if len(args) >= 3:
-            days = CHART_DAYS.get(args[2].lower(), 30)
-        _send_chart(message, crypto, days, uid)
-        return
 
-    # No args - show coin picker (like /compare and /convert)
+    # Always show the coin picker (buttons)
     coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
     rows = []
     row = []
@@ -5497,61 +5403,7 @@ def list_alerts(message):
 @rate_limit_check
 @loading_indicator
 def compare_cmd(message):
-    parts = message.text.strip().split()
-    chart_mode = '--chart' in parts or '-c' in parts
-    args = [p for p in parts if not p.startswith('-')]
-    if len(args) >= 3 and chart_mode:
-        bot.send_chat_action(message.chat.id, 'upload_photo')
-        uid = message.from_user.id
-        c1 = detect_currency(args[1])
-        c2 = detect_currency(args[2])
-        if not c1 or not c2:
-            bot.reply_to(message, T(uid, 'unknown_coin'))
-            return
-        days = 30
-        if len(args) >= 4:
-            days = CHART_DAYS.get(args[3].lower(), 30)
-        try:
-            raw1 = _fetch_chart_data(c1, days)
-            raw2 = _fetch_chart_data(c2, days)
-            if not raw1 or not raw2:
-                bot.reply_to(message, "❌ Failed to fetch chart data.")
-                return
-            dates1 = [datetime.fromtimestamp(p[0] / 1000) for p in raw1]
-            prices1 = [p[1] for p in raw1]
-            dates2 = [datetime.fromtimestamp(p[0] / 1000) for p in raw2]
-            prices2 = [p[1] for p in raw2]
-            fig, ax = plt.subplots(figsize=(6, 3.8))
-            fig.patch.set_facecolor('#0e1117')
-            ax.set_facecolor('#0e1117')
-            ax.plot(dates1, prices1, color='#00cc96', linewidth=1.5, label=_sym(c1))
-            ax.plot(dates2, prices2, color='#636efa', linewidth=1.5, label=_sym(c2))
-            ax.grid(True, color='gray', linestyle='--', linewidth=0.3, alpha=0.3)
-            ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_color('#555'); ax.spines['bottom'].set_color('#555')
-            ax.tick_params(axis='x', colors='#aaa', labelsize=8, rotation=30)
-            ax.tick_params(axis='y', colors='#aaa', labelsize=8)
-            ax.set_title(f"{_sym(c1)} vs {_sym(c2)} - {days}d", color='#ccc', fontsize=11, pad=8)
-            ax.legend(facecolor='#1a1a2e', edgecolor='none', labelcolor='white', fontsize=9)
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-            buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=80,
-                        facecolor=fig.get_facecolor(), edgecolor='none')
-            buf.seek(0); plt.close(fig)
-            p1 = get_crypto_price(c1); p2 = get_crypto_price(c2)
-            caption = f"📊 <b>{_sym(c1)}</b> {fmt_price(p1) if p1 else '-'}  vs  <b>{_sym(c2)}</b> {fmt_price(p2) if p2 else '-'}  ({days}d)"
-            bot.send_photo(message.chat.id, photo=BytesIO(buf.getvalue()),
-                           caption=add_timestamp(caption), parse_mode='HTML')
-            return
-        except Exception as e:
-            logger.error(f"Compare chart failed: {e}")
-            bot.reply_to(message, "❌ Comparison chart failed. Try again later.")
-            return
-    if len(args) >= 3:
-        _do_compare(message, args[1], args[2], message.from_user.id)
-        return
-
-    # No args - show coin picker
+    # Always show the coin picker (buttons)
     coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
     rows = []
     for i in range(0, len(coins), 3):
