@@ -35,3 +35,15 @@ language - Change language (English / فارسی)
 cancel - Cancel current operation
 test - Run self-diagnostic tests
 admin - Bot owner panel
+btc - Bitcoin price
+eth - Ethereum price
+usdt - Tether price
+bnb - Binance Coin price
+ada - Cardano price
+xrp - Ripple price
+sol - Solana price
+dot - Polkadot price
+doge - Dogecoin price
+shib - Shiba Inu price
+trx - Tron price
+ton - TON price

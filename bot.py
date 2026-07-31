@@ -1065,6 +1065,9 @@ KNOWN_COMMANDS = {
     'stars', 'star', 'set', 'holdings', 'convert', 'setexchange', 'chart',
     'trending', 'gainers', 'losers', 'fragment', 'username', 'gifts', 'gift',
     'alert', 'alerts', 'compare', 'market', 'digest', 'test', 'admin',
+    # Per-coin price commands
+    'btc', 'eth', 'usdt', 'bnb', 'ada', 'xrp', 'sol', 'dot', 'doge', 'shib',
+    'trx', 'ton',
 }
 
 
@@ -4410,6 +4413,48 @@ def stars_command(message):
     
     bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
     logger.info(f"User {uid} requested Stars price")
+
+
+# ── Per-coin price commands (/btc, /eth, /trx, ...) ──────────────────
+def _register_coin_commands():
+    """Register a price command for every supported coin, e.g. /btc."""
+    for cid, name in CRYPTO_LIST.items():
+        if cid == 'telegram-stars':
+            continue  # already covered by /stars
+        coin_sym = _sym(cid)
+        command = coin_sym.lower()
+
+        @bot.message_handler(commands=[command])
+        @rate_limit_check
+        @loading_indicator
+        def _coin_command(message, crypto=cid, crypto_name=name, coin_sym=coin_sym):
+            bot.send_chat_action(message.chat.id, 'typing')
+            uid = message.from_user.id
+            exch = get_user_exchange(uid)
+            price_usd = get_exchange_price(crypto, exch)
+            usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
+            if not price_usd:
+                bot.reply_to(message, T(uid, 'price_fetch_fail'))
+                return
+            toman_line = T(uid, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
+            kb = types.InlineKeyboardMarkup([[
+                types.InlineKeyboardButton(T(uid, 'btn_refresh'),  callback_data=f"refresh_{crypto}"),
+                types.InlineKeyboardButton(T(uid, 'btn_add_coin'), callback_data=f"hpick_{crypto}"),
+            ]])
+            kb.add(types.InlineKeyboardButton("📊 Chart", callback_data=f"chart_{crypto}_30d"))
+            bot.reply_to(
+                message,
+                add_timestamp(
+                    f"📊 <b>{crypto_name}</b>\n\n"
+                    f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>" + (f"\n{toman_line}" if toman_line else "")
+                ),
+                parse_mode='HTML',
+                reply_markup=kb
+            )
+            logger.info(f"User {uid} requested {coin_sym} price")
+
+
+_register_coin_commands()
 
 
 def _show_holding_coin_picker(chat_id, prompt, user_id=0):
