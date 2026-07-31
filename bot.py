@@ -1056,6 +1056,35 @@ def _cleanup_stale_dicts():
             group_slowdown_last_warning.pop(cid, None)
 
 
+_me_cache = None
+
+
+def _get_me():
+    global _me_cache
+    if _me_cache is None:
+        _me_cache = bot.get_me()
+    return _me_cache
+
+
+def _is_bot_directed_group_message(message):
+    """In groups, only messages that clearly target the bot should be
+    processed: commands, replies to the bot, or a @botusername mention."""
+    text = (message.text or '').strip()
+    if text.startswith('/'):
+        return True
+    try:
+        me = _get_me()
+        if message.reply_to_message and message.reply_to_message.from_user \
+                and getattr(message.reply_to_message.from_user, 'id', None) == me.id:
+            return True
+        username = getattr(me, 'username', None)
+        if username and ('@' + username.lower()) in text.lower():
+            return True
+    except Exception:
+        return True  # fail-open: if we can't verify, don't block the bot
+    return False
+
+
 def rate_limit_check(func):
     """Decorator - drops rate-limited updates and notifies user once per minute.
     Only counts bot commands (messages starting with /) toward the rate limit.
@@ -1067,6 +1096,12 @@ def rate_limit_check(func):
     def wrapper(message, *args, **kwargs):
         global _last_memory_cleanup
         user_id = message.from_user.id
+
+        # In groups, fully ignore messages that aren't meant for the bot
+        # (no registration, no rate-limit, no fetch, no loading indicator).
+        if message.chat.type in ('group', 'supergroup') \
+                and not _is_bot_directed_group_message(message):
+            return
 
         # Periodic memory cleanup
         now = time.time()
