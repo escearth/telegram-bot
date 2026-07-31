@@ -1453,18 +1453,18 @@ STRINGS = {
         'updated_at':          "Updated {time}",
 
         # ── /usd ──────────────────────────────────────────────
-        'usd_rate':            "💵 <b>1 USD = {rate} Toman</b>",
+        'usd_rate':            "<blockquote>\n💵 <b>1 USD = {rate} Toman</b>\n</blockquote>",
         'usd_conversion':      "💵 <b>{amount} USD = {result} Toman</b>",
         'rate_unavailable':    "⚠️ USD/IRR rate unavailable. Please try again later.",
 
         # ── /try (Turkish Lira) ───────────────────────────────
-        'try_rate':            "🇹🇷 <b>1 TRY = {rate} Toman</b>",
+        'try_rate':            "<blockquote>\n🇹🇷 <b>1 TRY = {rate} Toman</b>\n</blockquote>",
 
         # ── /eur /gbp /aed /cny (fiat rates) ─────────────────
-        'eur_rate':            "🇪🇺 <b>1 EUR = {rate} Toman</b>",
-        'gbp_rate':            "🇬🇧 <b>1 GBP = {rate} Toman</b>",
-        'aed_rate':            "🇦🇪 <b>1 AED = {rate} Toman</b>",
-        'cny_rate':            "🇨🇳 <b>1 CNY = {rate} Toman</b>",
+        'eur_rate':            "<blockquote>\n🇪🇺 <b>1 EUR = {rate} Toman</b>\n</blockquote>",
+        'gbp_rate':            "<blockquote>\n🇬🇧 <b>1 GBP = {rate} Toman</b>\n</blockquote>",
+        'aed_rate':            "<blockquote>\n🇦🇪 <b>1 AED = {rate} Toman</b>\n</blockquote>",
+        'cny_rate':            "<blockquote>\n🇨🇳 <b>1 CNY = {rate} Toman</b>\n</blockquote>",
 
         # ── /gold ─────────────────────────────────────────────
         'gold_global':         "🌍 <b>Global Gold</b>\nXAU/USD: ${xau}/oz",
@@ -1834,18 +1834,18 @@ STRINGS = {
         'updated_at':          "آپدیت در {time}",
 
         # ── /usd ──────────────────────────────────────────────
-        'usd_rate':            "💵 <b>1 USD = {rate} Toman</b>",
+        'usd_rate':            "<blockquote>\n💵 <b>1 USD = {rate} Toman</b>\n</blockquote>",
         'usd_conversion':      "💵 <b>{amount} دلار = {result} تومان</b>",
         'rate_unavailable':    "⚠️ نرخ دلار در دسترس نیست. بعداً امتحان کنید.",
 
         # ── /try (لیر ترکیه) ──────────────────────────────────
-        'try_rate':            "🇹🇷 <b>1 TRY = {rate} Toman</b>",
+        'try_rate':            "<blockquote>\n🇹🇷 <b>1 TRY = {rate} Toman</b>\n</blockquote>",
 
         # ── /eur /gbp /aed /cny (نرخ ارز) ─────────────────────
-        'eur_rate':            "🇪🇺 <b>1 EUR = {rate} Toman</b>",
-        'gbp_rate':            "🇬🇧 <b>1 GBP = {rate} Toman</b>",
-        'aed_rate':            "🇦🇪 <b>1 AED = {rate} Toman</b>",
-        'cny_rate':            "🇨🇳 <b>1 CNY = {rate} Toman</b>",
+        'eur_rate':            "<blockquote>\n🇪🇺 <b>1 EUR = {rate} Toman</b>\n</blockquote>",
+        'gbp_rate':            "<blockquote>\n🇬🇧 <b>1 GBP = {rate} Toman</b>\n</blockquote>",
+        'aed_rate':            "<blockquote>\n🇦🇪 <b>1 AED = {rate} Toman</b>\n</blockquote>",
+        'cny_rate':            "<blockquote>\n🇨🇳 <b>1 CNY = {rate} Toman</b>\n</blockquote>",
 
         # ── /gold (طلا) ───────────────────────────────────────
         'gold_global':         "🌍 <b>طلای جهانی</b>\nXAU/USD: ${xau}/oz",
@@ -3258,8 +3258,10 @@ def wallets_message_text(wallets: list[str], user_id: int = 0) -> str:
     if not wallets:
         return T(user_id, 'no_wallets')
     lines = [T(user_id, 'wallets_header')]
+    rows = []
     for i, addr in enumerate(wallets, 1):
-        lines.append(f"{i}. <code>{html.escape(addr)}</code>")
+        rows.append(f"{i}. <code>{html.escape(addr)}</code>")
+    lines.append("<blockquote>\n" + "\n".join(rows) + "\n</blockquote>")
     return "\n".join(lines)
 
 
@@ -3268,6 +3270,7 @@ def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, u
         return T(user_id, 'no_holdings')
     buy_prices = buy_prices or {}
     lines = [T(user_id, 'portfolio_header')]
+    rows = []
     total_usd = 0.0
     # Batch-fetch all prices at once to avoid N+1 API calls
     hold_ids = [detect_currency(s.lower()) for s in holdings if detect_currency(s.lower())]
@@ -3288,11 +3291,13 @@ def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, u
                     arrow = "📈" if pnl_usd >= 0 else "📉"
                     sign = "+" if pnl_usd >= 0 else ""
                     line += f"\n   {arrow} {sign}${pnl_usd:,.2f} ({sign}{pnl_pct:.1f}%)  {T(user_id, 'buy_at', price=fmt_price(buy))}"
-                lines.append(line)
+                rows.append(line)
             else:
-                lines.append(f"🪙 <b>{symbol}</b>  {amount:,.6g} · {T(user_id, 'price_unavail_short')}")
+                rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g} · {T(user_id, 'price_unavail_short')}")
         else:
-            lines.append(f"🪙 <b>{symbol}</b>  {amount:,.6g}")
+            rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g}")
+    if rows:
+        lines.append("<blockquote>\n" + "\n".join(rows) + "\n</blockquote>")
     if usd_to_irr:
         total_irr = total_usd * usd_to_irr
         lines.append(T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
@@ -3681,6 +3686,7 @@ def handle_callback(call):
         above_w = T(user_id, 'above_word')
         below_w = T(user_id, 'below_word')
         lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+        body = []
         # Batch-fetch all alert prices at once
         alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
         if alert_ids:
@@ -3694,11 +3700,13 @@ def handle_callback(call):
                 dist = f"  <i>{T(user_id, 'away_pct', pct=pct_str)}</i>"
             else:
                 dist = ""
-            lines.append(f"{arrow} <b>{a['symbol']}</b> {dword} <b>{fmt_price(a['target_price'])}</b>{dist}")
+            body.append(f"{arrow} <b>{a['symbol']}</b> {dword} <b>{fmt_price(a['target_price'])}</b>{dist}")
             keyboard.append([types.InlineKeyboardButton(
                 f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                 callback_data=f"alertdel_{a['id']}"
             )])
+        if body:
+            lines.append("<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
         keyboard.append([
             types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
             types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
@@ -3777,25 +3785,13 @@ def handle_callback(call):
         bot.answer_callback_query(call.id, T(user_id, 'refreshing'))
         ids = ','.join(CRYPTO_LIST.keys())
         prices = _fetch_prices_batch(ids)
-        usd_to_irr = get_usd_to_irr()
-        lines = [T(user_id, 'prices_header')]
-        for code, name in CRYPTO_LIST.items():
-            p = prices.get(code, {})
-            price_usd = p.get('usd')
-            change = p.get('usd_24h_change')
-            if price_usd is None:
-                continue
-            cache_set(code, price_usd)
-            sym = _sym(code)
-            arrow = ('📈' if change >= 0 else '📉') if change is not None else '  '
-            chg   = f"{change:+.1f}%" if change is not None else ""
-            lines.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
+        text = _build_price_list_message(user_id, prices)
         kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data="refresh_all_prices")
         ]])
         try:
             bot.edit_message_text(
-                add_timestamp("\n".join(lines)),
+                add_timestamp(text),
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 parse_mode='HTML',
@@ -4144,20 +4140,10 @@ def show_wallets_with_balance(message):
     logger.info(f"User {user_id} viewed wallets with balances")
 
 
-@bot.message_handler(commands=['price'])
-@rate_limit_check
-@loading_indicator
-def price(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    ids = ','.join(CRYPTO_LIST.keys())
-    prices = _fetch_prices_batch(ids)
-    if not prices:
-        bot.reply_to(message, T(message.from_user.id, 'price_unavailable'))
-        return
-
-    usd_to_irr = get_usd_to_irr()
-    uid_p = message.from_user.id
-    lines = [T(uid_p, 'prices_header')]
+def _build_price_list_message(uid, prices):
+    """Build the all-prices message: header + blockquote of coin rows."""
+    lines = [T(uid, 'prices_header')]
+    body = []
     for code, name in CRYPTO_LIST.items():
         if code == 'telegram-stars':
             continue  # Skip stars in price list
@@ -4169,13 +4155,31 @@ def price(message):
         cache_set(code, price_usd)
         sym = _sym(code)
         arrow = ('📈' if change >= 0 else '📉') if change is not None else '  '
-        chg   = f"{change:+.1f}% (24h)" if change is not None else ""
-        lines.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
+        chg   = f"{change:+.1f}%" if change is not None else ""
+        body.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
+    if body:
+        lines.append(f"<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
+    return "\n".join(lines)
+
+
+@bot.message_handler(commands=['price'])
+@rate_limit_check
+@loading_indicator
+def price(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    ids = ','.join(CRYPTO_LIST.keys())
+    prices = _fetch_prices_batch(ids)
+    if not prices:
+        bot.reply_to(message, T(message.from_user.id, 'price_unavailable'))
+        return
+
+    uid_p = message.from_user.id
+    text = _build_price_list_message(uid_p, prices)
 
     kb = types.InlineKeyboardMarkup([[
         types.InlineKeyboardButton(T(uid_p, 'btn_refresh'), callback_data="refresh_all_prices")
     ]])
-    msg = bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML', reply_markup=kb)
+    msg = bot.reply_to(message, add_timestamp(text), parse_mode='HTML', reply_markup=kb)
     register_panel_owner(msg.message_id, message.from_user.id)
     logger.info(f"User {message.from_user.id} requested prices")
 
@@ -4281,9 +4285,11 @@ def _build_gold_message(uid):
     xau_formatted = format_for_locale(format_fiat(Decimal(str(xau_price))), user_lang)
     gram_usd_formatted = format_for_locale(format_fiat(Decimal(str(gram_price_usd))), user_lang)
     msg = (
-        f"🥇 <b>Gold</b>\n\n"
+        f"🥇 <b>Gold</b>\n"
+        f"<blockquote>\n"
         f"💵 XAU: <b>${xau_formatted}</b>\n"
-        f"💵 1g: <b>${gram_usd_formatted}</b>"
+        f"💵 1g: <b>${gram_usd_formatted}</b>\n"
+        f"</blockquote>"
     )
     iran = get_iran_gold_prices()
     if iran:
@@ -4294,13 +4300,15 @@ def _build_gold_message(uid):
             return T(uid, key, price=price) if price else ""
         iran_section = (
             T(uid, 'gold_iran') +
+            "<blockquote>\n" +
             iran_line('gold_gram18', 'geram18') +
             iran_line('gold_gram24', 'geram24') +
             iran_line('gold_mesghal', 'mesghal') +
             iran_line('gold_emami', 'sekee') +
             iran_line('gold_bahar', 'sekeb') +
             iran_line('gold_nim', 'nim') +
-            iran_line('gold_rob', 'rob')
+            iran_line('gold_rob', 'rob') +
+            "</blockquote>"
         )
         if iran_section.strip():
             msg += iran_section
@@ -5311,7 +5319,10 @@ def inline_query_handler(inline_query):
                         if v:
                             parts.append(T(uid, key, price=f"{v:,}"))
                     if parts:
-                        lines.append(T(uid, 'gold_iran') + "".join(parts))
+                        lines.append(
+                            T(uid, 'gold_iran') +
+                            "<blockquote>\n" + "".join(parts) + "\n</blockquote>"
+                        )
                 txt = "".join(lines)
                 results.append(article("gold", "Gold Price", f"XAU/USD: ${xau:,.2f}", txt, html=True))
 
@@ -5631,6 +5642,7 @@ def list_alerts(message):
     above_w = T(user_id, 'above_word')
     below_w = T(user_id, 'below_word')
     lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+    body = []
     # Batch-fetch all alert prices at once
     alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
     if alert_ids:
@@ -5644,11 +5656,13 @@ def list_alerts(message):
             dist = f"  <i>{T(user_id, 'away_pct', pct=pct_str)}</i>"
         else:
             dist = ""
-        lines.append(f"{arrow} <b>{a['symbol']}</b> {dword} <b>{fmt_price(a['target_price'])}</b>{dist}")
+        body.append(f"{arrow} <b>{a['symbol']}</b> {dword} <b>{fmt_price(a['target_price'])}</b>{dist}")
         keyboard.append([types.InlineKeyboardButton(
             f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
             callback_data=f"alertdel_{a['id']}"
         )])
+    if body:
+        lines.append("<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
     keyboard.append([
         types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
         types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
@@ -5904,11 +5918,13 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
     ]])
     text = add_timestamp(
         T(uid_m, 'market_header') +
+        "<blockquote>\n" +
         T(uid_m, 'market_mcap', mcap=f"${mcap/1e12:.2f}T", arrow=arrow, chg=f"{chg24:+.1f}") +
         T(uid_m, 'market_vol',  vol=f"${vol/1e9:.1f}B") +
         T(uid_m, 'market_dom',  btc=f"{btc_dom:.1f}", eth=f"{eth_dom:.1f}") +
         T(uid_m, 'market_coins', coins=f"{coins:,}") +
-        T(uid_m, 'market_fg', bar=fg_str)
+        T(uid_m, 'market_fg', bar=fg_str) +
+        "\n</blockquote>"
     )
 
     if edit_msg_id:
@@ -6867,6 +6883,7 @@ def _handle_alert_callbacks(call, data, user_id):
             above_w = T(user_id, 'above_word')
             below_w = T(user_id, 'below_word')
             lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+            body = []
             # Batch-fetch all alert prices at once
             alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
             if alert_ids:
@@ -6880,11 +6897,13 @@ def _handle_alert_callbacks(call, data, user_id):
                     dist = f"  <i>{T(user_id, 'away_pct', pct=pct_str)}</i>"
                 else:
                     dist = ""
-                lines.append(f"{arrow} <b>{a['symbol']}</b> {dword} <b>{fmt_price(a['target_price'])}</b>{dist}")
+                body.append(f"{arrow} <b>{a['symbol']}</b> {dword} <b>{fmt_price(a['target_price'])}</b>{dist}")
                 keyboard.append([types.InlineKeyboardButton(
                     f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                     callback_data=f"alertdel_{a['id']}"
                 )])
+            if body:
+                lines.append("<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
             keyboard.append([
                 types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
                 types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
