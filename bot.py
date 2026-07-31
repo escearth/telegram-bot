@@ -605,6 +605,17 @@ def add_timestamp(text: str) -> str:
     return f"{text.rstrip()}\n\n🕐 {time_str} (Iran)"
 
 
+def quote(text: str) -> str:
+    """Wrap text in a Telegram HTML blockquote.
+
+    The open tag starts the first content line and the close tag ends the
+    last content line (no newline right after `<blockquote>` or right before
+    `</blockquote>`), otherwise Telegram renders empty quoted lines at the
+    top/bottom of the quote.
+    """
+    return "<blockquote>" + text.strip("\n") + "</blockquote>"
+
+
 def _sym(cid: str) -> str:
     """Extract ticker: '🪙 Bitcoin (BTC)' → 'BTC'"""
     entry = CRYPTO_LIST.get(cid)
@@ -1327,21 +1338,15 @@ STRINGS = {
             "🌍 <b>Earth Crypto, {name}! 🚀</b>\n"
             "<i>Prices · Charts · Portfolio · Alerts · Wallets</i>\n\n"
             "📈 <b>Market</b>\n"
-            "<blockquote>\n"
-            "  <code>/price</code> all coins · <code>/btc</code> per coin\n"
+            "<blockquote>  <code>/price</code> all coins · <code>/btc</code> per coin\n"
             "  <code>/chart btc 90d</code> · <code>/compare</code> · <code>/gold</code>\n"
-            "  <code>/market</code> · <code>/trending</code> · <code>/gainers</code>\n"
-            "</blockquote>\n\n"
+            "  <code>/market</code> · <code>/trending</code> · <code>/gainers</code></blockquote>\n\n"
             "💱 <b>Currency</b>\n"
-            "<blockquote>\n"
-            "  <code>/usd</code> <code>/eur</code> <code>/gbp</code> <code>/aed</code> <code>/cny</code> <code>/try</code> → Toman\n"
-            "  <code>/convert</code> · <code>/star</code> · <code>/setexchange</code>\n"
-            "</blockquote>\n\n"
+            "<blockquote>  <code>/usd</code> <code>/eur</code> <code>/gbp</code> <code>/aed</code> <code>/cny</code> <code>/try</code> → Toman\n"
+            "  <code>/convert</code> · <code>/star</code> · <code>/setexchange</code></blockquote>\n\n"
             "💼 <b>Portfolio · Alerts · Wallets</b>\n"
-            "<blockquote>\n"
-            "  <code>/holdings</code> <code>/set</code> <code>/digest</code> · <code>/alert</code> <code>/alerts</code>\n"
-            "  <code>/wallets</code> <code>/mywallets</code>\n"
-            "</blockquote>\n\n"
+            "<blockquote>  <code>/holdings</code> <code>/set</code> <code>/digest</code> · <code>/alert</code> <code>/alerts</code>\n"
+            "  <code>/wallets</code> <code>/mywallets</code></blockquote>\n\n"
             "⚡ <b>Just type:</b> <code>btc</code>, <code>10 trx</code>, <code>1 usd to toman</code>, <code>btc @binance</code>\n\n"
             "💖 /donate · 🔒 /privacy · 🌐 /language\n"
             "<i>Inline:</i> <code>@EscEarthBot</code> in any chat 🚀",
@@ -1456,18 +1461,18 @@ STRINGS = {
         'updated_at':          "Updated {time}",
 
         # ── /usd ──────────────────────────────────────────────
-        'usd_rate':            "<blockquote>\n💵 <b>1 USD = {rate} Toman</b>\n</blockquote>",
+        'usd_rate':            "<blockquote>💵 <b>1 USD = {rate} Toman</b></blockquote>",
         'usd_conversion':      "💵 <b>{amount} USD = {result} Toman</b>",
         'rate_unavailable':    "⚠️ USD/IRR rate unavailable. Please try again later.",
 
         # ── /try (Turkish Lira) ───────────────────────────────
-        'try_rate':            "<blockquote>\n🇹🇷 <b>1 TRY = {rate} Toman</b>\n</blockquote>",
+        'try_rate':            "<blockquote>🇹🇷 <b>1 TRY = {rate} Toman</b></blockquote>",
 
         # ── /eur /gbp /aed /cny (fiat rates) ─────────────────
-        'eur_rate':            "<blockquote>\n🇪🇺 <b>1 EUR = {rate} Toman</b>\n</blockquote>",
-        'gbp_rate':            "<blockquote>\n🇬🇧 <b>1 GBP = {rate} Toman</b>\n</blockquote>",
-        'aed_rate':            "<blockquote>\n🇦🇪 <b>1 AED = {rate} Toman</b>\n</blockquote>",
-        'cny_rate':            "<blockquote>\n🇨🇳 <b>1 CNY = {rate} Toman</b>\n</blockquote>",
+        'eur_rate':            "<blockquote>🇪🇺 <b>1 EUR = {rate} Toman</b></blockquote>",
+        'gbp_rate':            "<blockquote>🇬🇧 <b>1 GBP = {rate} Toman</b></blockquote>",
+        'aed_rate':            "<blockquote>🇦🇪 <b>1 AED = {rate} Toman</b></blockquote>",
+        'cny_rate':            "<blockquote>🇨🇳 <b>1 CNY = {rate} Toman</b></blockquote>",
 
         # ── /gold ─────────────────────────────────────────────
         'gold_global':         "🌍 <b>Global Gold</b>\nXAU/USD: ${xau}/oz",
@@ -1486,7 +1491,7 @@ STRINGS = {
         'market_mcap':         "💹 Market Cap: <b>{mcap}</b>  {arrow} {chg}% (24h)\n",
         'market_vol':          "📊 24h Volume: <b>{vol}</b>\n",
         'market_dom':          "🟠 BTC Dom: <b>{btc}%</b>  🔵 ETH Dom: <b>{eth}%</b>\n",
-        'market_coins':        "🪙 Active coins: <b>{coins}</b>\n\n",
+        'market_coins':        "🪙 Active coins: <b>{coins}</b>\n",
         'market_fg':           "😨 <b>Fear &amp; Greed</b>\n{bar}",
         'fg_unavailable':      "Unavailable",
         'fg_extreme_fear':     "Extreme Fear",
@@ -1669,6 +1674,7 @@ STRINGS = {
         'losers_header':       "📉 <b>Top Losers (24h)</b>\n",
         'movers_fail':         "❌ Could not fetch market data. Try again later.",
         'fragment_usage':      "Usage: /fragment @username\nOr reply to a username's message\nLook up a Telegram username on Fragment.com",
+        'gift_usage':          "Usage: /gift collection_slug\nExample: /gift astralshard\nOr reply to a /gifts list message",
         'fragment_looking':    "🔍 Looking up <b>{target}</b> on Fragment...",
         'fragment_fail':       "❌ Could not fetch data from Fragment. The username may not exist.",
         'fragment_owned':      "Owned / Not for sale",
@@ -1715,21 +1721,15 @@ STRINGS = {
             "🌍 <b>{name} عزیز، به Earth Crypto خوش آمدید! 🚀</b>\n"
             "<i>قیمت · نمودار · پرتفو · هشدار · کیف پول</i>\n\n"
             "📈 <b>بازار</b>\n"
-            "<blockquote>\n"
-            "  <code>/price</code> همه ارزها · <code>/btc</code> هر ارز\n"
+            "<blockquote>  <code>/price</code> همه ارزها · <code>/btc</code> هر ارز\n"
             "  <code>/chart btc 90d</code> · <code>/compare</code> · <code>/gold</code>\n"
-            "  <code>/market</code> · <code>/trending</code> · <code>/gainers</code>\n"
-            "</blockquote>\n\n"
+            "  <code>/market</code> · <code>/trending</code> · <code>/gainers</code></blockquote>\n\n"
             "💱 <b>نرخ ارز</b>\n"
-            "<blockquote>\n"
-            "  <code>/usd</code> <code>/eur</code> <code>/gbp</code> <code>/aed</code> <code>/cny</code> <code>/try</code> به تومان\n"
-            "  <code>/convert</code> · <code>/star</code> · <code>/setexchange</code>\n"
-            "</blockquote>\n\n"
+            "<blockquote>  <code>/usd</code> <code>/eur</code> <code>/gbp</code> <code>/aed</code> <code>/cny</code> <code>/try</code> به تومان\n"
+            "  <code>/convert</code> · <code>/star</code> · <code>/setexchange</code></blockquote>\n\n"
             "💼 <b>پرتفو · هشدار · کیف پول</b>\n"
-            "<blockquote>\n"
-            "  <code>/holdings</code> <code>/set</code> <code>/digest</code> · <code>/alert</code> <code>/alerts</code>\n"
-            "  <code>/wallets</code> <code>/mywallets</code>\n"
-            "</blockquote>\n\n"
+            "<blockquote>  <code>/holdings</code> <code>/set</code> <code>/digest</code> · <code>/alert</code> <code>/alerts</code>\n"
+            "  <code>/wallets</code> <code>/mywallets</code></blockquote>\n\n"
             "⚡ <b>فقط تایپ کنید:</b> <code>btc</code>، <code>10 trx</code>، <code>1 دلار به تومان</code>\n\n"
             "💖 /donate · 🔒 /privacy · 🌐 /language\n"
             "<i>اینلاین:</i> <code>@EscEarthBot</code> در هر چتی 🚀",
@@ -1844,18 +1844,18 @@ STRINGS = {
         'updated_at':          "آپدیت در {time}",
 
         # ── /usd ──────────────────────────────────────────────
-        'usd_rate':            "<blockquote>\n💵 <b>1 USD = {rate} Toman</b>\n</blockquote>",
+        'usd_rate':            "<blockquote>💵 <b>1 USD = {rate} Toman</b></blockquote>",
         'usd_conversion':      "💵 <b>{amount} دلار = {result} تومان</b>",
         'rate_unavailable':    "⚠️ نرخ دلار در دسترس نیست. بعداً امتحان کنید.",
 
         # ── /try (لیر ترکیه) ──────────────────────────────────
-        'try_rate':            "<blockquote>\n🇹🇷 <b>1 TRY = {rate} Toman</b>\n</blockquote>",
+        'try_rate':            "<blockquote>🇹🇷 <b>1 TRY = {rate} Toman</b></blockquote>",
 
         # ── /eur /gbp /aed /cny (نرخ ارز) ─────────────────────
-        'eur_rate':            "<blockquote>\n🇪🇺 <b>1 EUR = {rate} Toman</b>\n</blockquote>",
-        'gbp_rate':            "<blockquote>\n🇬🇧 <b>1 GBP = {rate} Toman</b>\n</blockquote>",
-        'aed_rate':            "<blockquote>\n🇦🇪 <b>1 AED = {rate} Toman</b>\n</blockquote>",
-        'cny_rate':            "<blockquote>\n🇨🇳 <b>1 CNY = {rate} Toman</b>\n</blockquote>",
+        'eur_rate':            "<blockquote>🇪🇺 <b>1 EUR = {rate} Toman</b></blockquote>",
+        'gbp_rate':            "<blockquote>🇬🇧 <b>1 GBP = {rate} Toman</b></blockquote>",
+        'aed_rate':            "<blockquote>🇦🇪 <b>1 AED = {rate} Toman</b></blockquote>",
+        'cny_rate':            "<blockquote>🇨🇳 <b>1 CNY = {rate} Toman</b></blockquote>",
 
         # ── /gold (طلا) ───────────────────────────────────────
         'gold_global':         "🌍 <b>طلای جهانی</b>\nXAU/USD: ${xau}/oz",
@@ -1874,7 +1874,7 @@ STRINGS = {
         'market_mcap':         "💹 ارزش بازار: <b>{mcap}</b>  {arrow} {chg}% (۲۴ ساعت)\n",
         'market_vol':          "📊 حجم ۲۴ ساعته: <b>{vol}</b>\n",
         'market_dom':          "🟠 سهم BTC: <b>{btc}%</b>  🔵 سهم ETH: <b>{eth}%</b>\n",
-        'market_coins':        "🪙 ارزهای فعال: <b>{coins}</b>\n\n",
+        'market_coins':        "🪙 ارزهای فعال: <b>{coins}</b>\n",
         'market_fg':           "😨 <b>شاخص ترس و طمع</b>\n{bar}",
         'fg_unavailable':      "در دسترس نیست",
         'fg_extreme_fear':     "ترس شدید",
@@ -2057,6 +2057,7 @@ STRINGS = {
         'losers_header':       "📉 <b>بیشترین کاهش (24h)</b>\n",
         'movers_fail':         "❌ دریافت داده بازار ناموفق بود.",
         'fragment_usage':      "نحوه استفاده: /fragment @username\nیا روی پیام صاحب نام کاربری ریپلای کنید\nبررسی نام کاربری تلگرام در Fragment.com",
+        'gift_usage':          "نحوه استفاده: /gift slug_collection\nمثال: /gift astralshard\nیا روی لیست /gifts ریپلای کنید",
         'fragment_looking':    "🔍 در حال بررسی <b>{target}</b> در Fragment...",
         'fragment_fail':       "❌ دریافت داده از Fragment ناموفق بود.",
         'fragment_owned':      "مالکیت / قابل فروش نیست",
@@ -3278,7 +3279,7 @@ def wallets_message_text(wallets: list[str], user_id: int = 0) -> str:
     rows = []
     for i, addr in enumerate(wallets, 1):
         rows.append(f"{i}. <code>{html.escape(addr)}</code>")
-    return header + "<blockquote>\n" + "\n".join(rows) + "\n</blockquote>"
+    return header + quote("\n".join(rows))
 
 
 def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, user_id: int = 0) -> str:
@@ -3312,7 +3313,7 @@ def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, u
                 rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g} · {T(user_id, 'price_unavail_short')}")
         else:
             rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g}")
-    body = "<blockquote>\n" + "\n".join(rows) + "\n</blockquote>" if rows else ""
+    body = quote("\n".join(rows)) if rows else ""
     if usd_to_irr:
         total_irr = total_usd * usd_to_irr
         total = T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}")
@@ -3747,7 +3748,7 @@ def handle_callback(call):
                 f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                 callback_data=f"alertdel_{a['id']}"
             )])
-        text = header + ("<blockquote>\n" + "\n".join(body) + "\n</blockquote>" if body else "")
+        text = header + (quote("\n".join(body)) if body else "")
         keyboard.append([
             types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
             types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
@@ -4232,7 +4233,7 @@ def _build_price_list_message(uid, prices):
         body.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
     if not body:
         return header
-    return header + "<blockquote>\n" + "\n".join(body) + "\n</blockquote>"
+    return header + quote("\n".join(body))
 
 
 @bot.message_handler(commands=['price'])
@@ -4359,10 +4360,8 @@ def _build_gold_message(uid):
     gram_usd_formatted = format_for_locale(format_fiat(Decimal(str(gram_price_usd))), user_lang)
     msg = (
         f"🥇 <b>Gold</b>\n"
-        f"<blockquote>\n"
-        f"💵 XAU: <b>${xau_formatted}</b>\n"
-        f"💵 1g: <b>${gram_usd_formatted}</b>\n"
-        f"</blockquote>"
+        f"<blockquote>💵 XAU: <b>${xau_formatted}</b>\n"
+        f"💵 1g: <b>${gram_usd_formatted}</b></blockquote>"
     )
     iran = get_iran_gold_prices()
     if iran:
@@ -4373,15 +4372,15 @@ def _build_gold_message(uid):
             return T(uid, key, price=price) if price else ""
         iran_section = (
             T(uid, 'gold_iran') +
-            "<blockquote>\n" +
-            iran_line('gold_gram18', 'geram18') +
-            iran_line('gold_gram24', 'geram24') +
-            iran_line('gold_mesghal', 'mesghal') +
-            iran_line('gold_emami', 'sekee') +
-            iran_line('gold_bahar', 'sekeb') +
-            iran_line('gold_nim', 'nim') +
-            iran_line('gold_rob', 'rob') +
-            "</blockquote>"
+            quote(
+                iran_line('gold_gram18', 'geram18') +
+                iran_line('gold_gram24', 'geram24') +
+                iran_line('gold_mesghal', 'mesghal') +
+                iran_line('gold_emami', 'sekee') +
+                iran_line('gold_bahar', 'sekeb') +
+                iran_line('gold_nim', 'nim') +
+                iran_line('gold_rob', 'rob')
+            )
         )
         if iran_section.strip():
             msg += iran_section
@@ -4588,7 +4587,7 @@ CHART_DAYS = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}
 
 @bot.message_handler(commands=['chart'])
 @rate_limit_check
-@loading_indicator
+@loading_indicator(keep=True)
 def chart_cmd(message):
     uid = message.from_user.id
     args = message.text.split()
@@ -5003,23 +5002,37 @@ def _fragment_collection_floor(slug):
         return None
 
 
+def _resolve_fragment_target(message):
+    """Resolve a username for /fragment.
+
+    Order: explicit @username argument > replied sender's username (if a
+    real user) > @username found in the replied message's text.
+    """
+    args = message.text.split(maxsplit=1)
+    if len(args) >= 2:
+        return args[1].strip()
+    rep = message.reply_to_message
+    if not rep:
+        return None
+    sender = getattr(rep, 'from_user', None)
+    if sender and not getattr(sender, 'is_bot', False) and getattr(sender, 'username', None):
+        return "@" + sender.username
+    m = re.search(r'@([A-Za-z0-9_]{5,32})', rep.text or "")
+    if m:
+        return "@" + m.group(1)
+    return None
+
+
 @bot.message_handler(commands=['fragment', 'username'])
 @rate_limit_check
-@loading_indicator(keep=True)
 def fragment_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
-    args = message.text.split(maxsplit=1)
-    target = None
-    if len(args) >= 2:
-        target = args[1].strip()
-    elif (message.reply_to_message and message.reply_to_message.from_user
-          and message.reply_to_message.from_user.username):
-        target = "@" + message.reply_to_message.from_user.username
+    target = _resolve_fragment_target(message)
     if not target:
         bot.reply_to(message, T(uid, 'fragment_usage'))
         return
-    bot.send_message(message.chat.id, f"🔍 Looking up <b>{target}</b> on Fragment...", parse_mode='HTML')
+    bot.send_message(message.chat.id, T(uid, 'fragment_looking', target=target), parse_mode='HTML')
     data = _fragment_username_data(target)
     if not data:
         bot.reply_to(message, "❌ Could not fetch data from Fragment. The username may not exist.")
@@ -5070,17 +5083,33 @@ def gifts_cmd(message):
     bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
 
 
+def _resolve_gift_slug(message):
+    """Resolve a gift collection slug: explicit arg > slug found in replied text."""
+    args = message.text.split(maxsplit=1)
+    if len(args) >= 2:
+        return args[1].strip().lower()
+    rep = message.reply_to_message
+    if not rep:
+        return None
+    text = (rep.text or rep.caption or "").lower()
+    for c in FRAGMENT_GIFT_COLLECTIONS:
+        if c['slug'] in text:
+            return c['slug']
+    m = re.search(r'/gift\s+([a-z0-9-]+)|/gifts/([a-z0-9-]+)', text)
+    if m:
+        return (m.group(1) or m.group(2))
+    return None
+
+
 @bot.message_handler(commands=['gift'])
 @rate_limit_check
-@loading_indicator(keep=True)
 def gift_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        bot.reply_to(message, "Usage: /gift collection_slug\nExample: /gift astralshard")
+    slug = _resolve_gift_slug(message)
+    if not slug:
+        bot.reply_to(message, T(uid, 'gift_usage'))
         return
-    slug = args[1].strip().lower()
     match = next((c for c in FRAGMENT_GIFT_COLLECTIONS if c['slug'] == slug), None)
     if not match:
         bot.reply_to(message, f"❌ Collection <b>{slug}</b> not found. Use /gifts to see all.", parse_mode='HTML')
@@ -5432,7 +5461,7 @@ def inline_query_handler(inline_query):
                     if parts:
                         lines.append(
                             T(uid, 'gold_iran') +
-                            "<blockquote>\n" + "".join(parts) + "\n</blockquote>"
+                            quote("".join(parts))
                         )
                 txt = "".join(lines)
                 results.append(article("gold", "Gold Price", f"XAU/USD: ${xau:,.2f}", txt, html=True))
@@ -5772,7 +5801,7 @@ def list_alerts(message):
             f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
             callback_data=f"alertdel_{a['id']}"
         )])
-    text = header + ("<blockquote>\n" + "\n".join(body) + "\n</blockquote>" if body else "")
+    text = header + (quote("\n".join(body)) if body else "")
     keyboard.append([
         types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
         types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
@@ -5787,7 +5816,7 @@ def list_alerts(message):
 
 @bot.message_handler(commands=['compare'])
 @rate_limit_check
-@loading_indicator
+@loading_indicator(keep=True)
 def compare_cmd(message):
     parts = message.text.strip().split()
     chart_mode = '--chart' in parts or '-c' in parts
@@ -6028,13 +6057,13 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
     ]])
     text = add_timestamp(
         T(uid_m, 'market_header') +
-        "<blockquote>\n" +
-        T(uid_m, 'market_mcap', mcap=f"${mcap/1e12:.2f}T", arrow=arrow, chg=f"{chg24:+.1f}") +
-        T(uid_m, 'market_vol',  vol=f"${vol/1e9:.1f}B") +
-        T(uid_m, 'market_dom',  btc=f"{btc_dom:.1f}", eth=f"{eth_dom:.1f}") +
-        T(uid_m, 'market_coins', coins=f"{coins:,}") +
-        T(uid_m, 'market_fg', bar=fg_str) +
-        "\n</blockquote>"
+        quote(
+            T(uid_m, 'market_mcap', mcap=f"${mcap/1e12:.2f}T", arrow=arrow, chg=f"{chg24:+.1f}") +
+            T(uid_m, 'market_vol',  vol=f"${vol/1e9:.1f}B") +
+            T(uid_m, 'market_dom',  btc=f"{btc_dom:.1f}", eth=f"{eth_dom:.1f}") +
+            T(uid_m, 'market_coins', coins=f"{coins:,}") +
+            T(uid_m, 'market_fg', bar=fg_str)
+        )
     )
 
     if edit_msg_id:
@@ -7030,7 +7059,7 @@ def _handle_alert_callbacks(call, data, user_id):
                     f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                     callback_data=f"alertdel_{a['id']}"
                 )])
-            text = header + ("<blockquote>\n" + "\n".join(body) + "\n</blockquote>" if body else "")
+            text = header + (quote("\n".join(body)) if body else "")
             keyboard.append([
                 types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
                 types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
