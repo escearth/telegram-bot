@@ -1263,28 +1263,31 @@ def rate_limit_check(func):
     return wrapper
 
 
-def loading_indicator(func):
+def loading_indicator(func=None, *, keep=False):
     """Decorator - shows a 'Fetching…' placeholder while a handler works,
-    then removes it once the real output has been sent. Degrades gracefully:
-    if the placeholder can't be sent/deleted, the handler still runs."""
-    @functools.wraps(func)
-    def wrapper(message, *args, **kwargs):
-        loading = None
-        try:
-            lang = db_get_lang(message.from_user.id)
-            text = "⏳ <i>در حال دریافت...</i>" if lang == 'fa' else "⏳ <i>Fetching...</i>"
-            loading = bot.reply_to(message, text, parse_mode='HTML')
-        except Exception:
-            pass
-        try:
-            return func(message, *args, **kwargs)
-        finally:
-            if loading is not None:
-                try:
-                    bot.delete_message(loading.chat.id, loading.message_id)
-                except Exception:
-                    pass
-    return wrapper
+    then removes it once the real output has been sent. With keep=True the
+    placeholder stays in the chat. Degrades gracefully: if the placeholder
+    can't be sent/deleted, the handler still runs."""
+    def deco(f):
+        @functools.wraps(f)
+        def wrapper(message, *args, **kwargs):
+            loading = None
+            try:
+                lang = db_get_lang(message.from_user.id)
+                text = "⏳ <i>در حال دریافت...</i>" if lang == 'fa' else "⏳ <i>Fetching...</i>"
+                loading = bot.reply_to(message, text, parse_mode='HTML')
+            except Exception:
+                pass
+            try:
+                return f(message, *args, **kwargs)
+            finally:
+                if loading is not None and not keep:
+                    try:
+                        bot.delete_message(loading.chat.id, loading.message_id)
+                    except Exception:
+                        pass
+        return wrapper
+    return deco(func) if func is not None else deco
 
 
 # ─────────────────────────────────────────────
@@ -1479,7 +1482,7 @@ STRINGS = {
         'gold_fetch_fail':     "❌ Could not fetch gold prices. Try again.",
 
         # ── /market ───────────────────────────────────────────
-        'market_header':       "🌍 <b>Crypto Market</b>\n\n",
+        'market_header':       "🌍 <b>Crypto Market</b>\n",
         'market_mcap':         "💹 Market Cap: <b>{mcap}</b>  {arrow} {chg}% (24h)\n",
         'market_vol':          "📊 24h Volume: <b>{vol}</b>\n",
         'market_dom':          "🟠 BTC Dom: <b>{btc}%</b>  🔵 ETH Dom: <b>{eth}%</b>\n",
@@ -1493,7 +1496,7 @@ STRINGS = {
         'fg_extreme_greed':    "Extreme Greed",
 
         # ── /compare ──────────────────────────────────────────
-        'compare_header':      "📊 <b>Comparison</b>\n\n",
+        'compare_header':      "📊 <b>Comparison</b>\n",
         'compare_pick1':       "📊 <b>Compare Coins</b>\n\nPick the <b>first</b> coin:",
         'compare_pick2':       "📊 <b>Compare Coins</b>\n\n✅ First: <b>{sym}</b>\n\nNow pick the <b>second</b> coin:",
         'compare_vol':         "📦 Vol 24h: {vol}\n",
@@ -1649,8 +1652,15 @@ STRINGS = {
         'exch_unknown':        "❌ Unknown exchange. Choose: {list}",
         'exch_usage':          "Usage: /setexchange binance\nOr add @exchange to any query: btc @binance",
         'exch_prompt':         "💱 <b>Select your default price source:</b>",
-        'chart_usage':         "Usage:\n/chart btc\n/chart btc 7d\n/chart btc 90d",
+        'exch_current':        "💱 <b>Current price source:</b> {name}",
+        'chart_usage':         "Usage:\n/chart btc\n/chart btc 7d\n/chart btc 90d\n/chart (pick from buttons)",
+        'chart_pick_coin':     "📊 <b>Chart</b>\n\nPick a coin:",
+        'chart_pick_days':     "📊 <b>{sym}</b>\n\nPick a time range:",
         'chart_fail':          "❌ Chart generation failed. Try again later.",
+        'stars_calc_btn':      "🧮 Calculate amount",
+        'stars_prompt':        "⭐ Send the number of <b>stars</b> you want to price:",
+        'stars_result':        "⭐ <b>{amount} Stars</b>",
+        'stars_invalid':       "❌ Invalid number. Send a positive number like <code>100</code>.",
         'compare_usage':       "Usage: /compare btc eth\n/compare btc sol 90d",
         'compare_fail':        "❌ Comparison failed. Try again later.",
         'trending_header':     "🔥 <b>Trending on CoinGecko</b>\n",
@@ -1658,7 +1668,7 @@ STRINGS = {
         'gainers_header':      "📈 <b>Top Gainers (24h)</b>\n",
         'losers_header':       "📉 <b>Top Losers (24h)</b>\n",
         'movers_fail':         "❌ Could not fetch market data. Try again later.",
-        'fragment_usage':      "Usage: /fragment @username\nLook up a Telegram username on Fragment.com",
+        'fragment_usage':      "Usage: /fragment @username\nOr reply to a username's message\nLook up a Telegram username on Fragment.com",
         'fragment_looking':    "🔍 Looking up <b>{target}</b> on Fragment...",
         'fragment_fail':       "❌ Could not fetch data from Fragment. The username may not exist.",
         'fragment_owned':      "Owned / Not for sale",
@@ -1860,7 +1870,7 @@ STRINGS = {
         'gold_fetch_fail':     "❌ قیمت طلا دریافت نشد. دوباره تلاش کنید.",
 
         # ── /market ───────────────────────────────────────────
-        'market_header':       "🌍 <b>بازار کریپتو</b>\n\n",
+        'market_header':       "🌍 <b>بازار کریپتو</b>\n",
         'market_mcap':         "💹 ارزش بازار: <b>{mcap}</b>  {arrow} {chg}% (۲۴ ساعت)\n",
         'market_vol':          "📊 حجم ۲۴ ساعته: <b>{vol}</b>\n",
         'market_dom':          "🟠 سهم BTC: <b>{btc}%</b>  🔵 سهم ETH: <b>{eth}%</b>\n",
@@ -1874,7 +1884,7 @@ STRINGS = {
         'fg_extreme_greed':    "طمع شدید",
 
         # ── /compare ──────────────────────────────────────────
-        'compare_header':      "📊 <b>مقایسه</b>\n\n",
+        'compare_header':      "📊 <b>مقایسه</b>\n",
         'compare_pick1':       "📊 <b>مقایسه ارزها</b>\n\nارز <b>اول</b> را انتخاب کنید:",
         'compare_pick2':       "📊 <b>مقایسه ارزها</b>\n\n✅ اول: <b>{sym}</b>\n\nحالا ارز <b>دوم</b> را انتخاب کنید:",
         'compare_vol':         "📦 Vol 24h: {vol}\n",
@@ -2030,8 +2040,15 @@ STRINGS = {
         'exch_unknown':        "❌ صرافی ناشناخته. انتخاب کنید: {list}",
         'exch_usage':          "نحوه استفاده: /setexchange binance\nیا @exchange به هر query اضافه کنید: btc @binance",
         'exch_prompt':         "💱 <b>منبع قیمت پیش‌فرض را انتخاب کنید:</b>",
-        'chart_usage':         "نحوه استفاده:\n/chart btc\n/chart btc 7d\n/chart btc 90d",
+        'exch_current':        "💱 <b>منبع قیمت فعلی:</b> {name}",
+        'chart_usage':         "نحوه استفاده:\n/chart btc\n/chart btc 7d\n/chart btc 90d\n/chart (انتخاب با دکمه)",
+        'chart_pick_coin':     "📊 <b>نمودار</b>\n\nیک ارز را انتخاب کنید:",
+        'chart_pick_days':     "📊 <b>{sym}</b>\n\nبازه زمانی را انتخاب کنید:",
         'chart_fail':          "❌ تولید نمودار ناموفق بود. دوباره تلاش کنید.",
+        'stars_calc_btn':      "🧮 محاسبه تعداد",
+        'stars_prompt':        "⭐ تعداد <b>ستاره</b> موردنظر را بفرستید:",
+        'stars_result':        "⭐ <b>{amount} ستاره</b>",
+        'stars_invalid':       "❌ عدد نامعتبر. یک عدد مثبت مثل <code>100</code> بفرستید.",
         'compare_usage':       "نحوه استفاده: /compare btc eth\n/compare btc sol 90d",
         'compare_fail':        "❌ مقایسه ناموفق بود. دوباره تلاش کنید.",
         'trending_header':     "🔥 <b>محبوب‌های CoinGecko</b>\n",
@@ -2039,7 +2056,7 @@ STRINGS = {
         'gainers_header':      "📈 <b>بیشترین افزایش (24h)</b>\n",
         'losers_header':       "📉 <b>بیشترین کاهش (24h)</b>\n",
         'movers_fail':         "❌ دریافت داده بازار ناموفق بود.",
-        'fragment_usage':      "نحوه استفاده: /fragment @username\nبررسی نام کاربری تلگرام در Fragment.com",
+        'fragment_usage':      "نحوه استفاده: /fragment @username\nیا روی پیام صاحب نام کاربری ریپلای کنید\nبررسی نام کاربری تلگرام در Fragment.com",
         'fragment_looking':    "🔍 در حال بررسی <b>{target}</b> در Fragment...",
         'fragment_fail':       "❌ دریافت داده از Fragment ناموفق بود.",
         'fragment_owned':      "مالکیت / قابل فروش نیست",
@@ -3257,19 +3274,18 @@ def build_holdings_keyboard(holdings: dict, user_id: int = 0) -> types.InlineKey
 def wallets_message_text(wallets: list[str], user_id: int = 0) -> str:
     if not wallets:
         return T(user_id, 'no_wallets')
-    lines = [T(user_id, 'wallets_header')]
+    header = T(user_id, 'wallets_header')
     rows = []
     for i, addr in enumerate(wallets, 1):
         rows.append(f"{i}. <code>{html.escape(addr)}</code>")
-    lines.append("<blockquote>\n" + "\n".join(rows) + "\n</blockquote>")
-    return "\n".join(lines)
+    return header + "<blockquote>\n" + "\n".join(rows) + "\n</blockquote>"
 
 
 def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, user_id: int = 0) -> str:
     if not holdings:
         return T(user_id, 'no_holdings')
     buy_prices = buy_prices or {}
-    lines = [T(user_id, 'portfolio_header')]
+    header = T(user_id, 'portfolio_header')
     rows = []
     total_usd = 0.0
     # Batch-fetch all prices at once to avoid N+1 API calls
@@ -3296,14 +3312,13 @@ def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, u
                 rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g} · {T(user_id, 'price_unavail_short')}")
         else:
             rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g}")
-    if rows:
-        lines.append("<blockquote>\n" + "\n".join(rows) + "\n</blockquote>")
+    body = "<blockquote>\n" + "\n".join(rows) + "\n</blockquote>" if rows else ""
     if usd_to_irr:
         total_irr = total_usd * usd_to_irr
-        lines.append(T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
+        total = T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}")
     else:
-        lines.append(T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr="N/A"))
-    return "\n".join(lines)
+        total = T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr="N/A")
+    return header + body + total
 
 
 # ─────────────────────────────────────────────
@@ -3535,6 +3550,33 @@ def handle_callback(call):
             del_user_state(user_id)
         return
 
+    # ── Stars amount calculator ───────────────────────────────────
+    if data == "stars_calc":
+        set_user_state(user_id, 'stars_amount')
+        bot.answer_callback_query(call.id)
+        try:
+            bot.edit_message_text(
+                T(user_id, 'stars_prompt'),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='HTML',
+                reply_markup=types.InlineKeyboardMarkup([[
+                    types.InlineKeyboardButton(T(user_id, "btn_cvt_cancel"), callback_data="stars_cancel")
+                ]])
+            )
+        except Exception:
+            pass
+        return
+
+    if data == "stars_cancel":
+        bot.answer_callback_query(call.id)
+        del_user_state(user_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return
+
     # ── Compare coin picker (step 1 & 2) ─────────────────────────────
     if data.startswith("cmp1_"):
         cid1 = data[5:]
@@ -3685,7 +3727,7 @@ def handle_callback(call):
         keyboard = []
         above_w = T(user_id, 'above_word')
         below_w = T(user_id, 'below_word')
-        lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+        header = T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)
         body = []
         # Batch-fetch all alert prices at once
         alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
@@ -3705,15 +3747,14 @@ def handle_callback(call):
                 f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                 callback_data=f"alertdel_{a['id']}"
             )])
-        if body:
-            lines.append("<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
+        text = header + ("<blockquote>\n" + "\n".join(body) + "\n</blockquote>" if body else "")
         keyboard.append([
             types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
             types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
         ])
         bot.send_message(
             call.message.chat.id,
-            "\n".join(lines),
+            text,
             parse_mode='HTML',
             reply_markup=types.InlineKeyboardMarkup(keyboard)
         )
@@ -4048,6 +4089,28 @@ def handle_callback(call):
             pass
         return
 
+    # ── Chart coin picker (step 1) → time range buttons ─────
+    if data.startswith("chr1_"):
+        cid = data[5:]
+        if cid not in CRYPTO_LIST:
+            bot.answer_callback_query(call.id, T(user_id, 'unknown_coin_short'))
+            return
+        sym = _sym(cid)
+        kb = types.InlineKeyboardMarkup(row_width=4)
+        kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{cid}_{d}") for d in CHART_DAYS])
+        bot.answer_callback_query(call.id)
+        try:
+            bot.edit_message_text(
+                T(user_id, 'chart_pick_days', sym=sym),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='HTML',
+                reply_markup=kb
+            )
+        except Exception:
+            pass
+        return
+
     # ── Chart range selector ──────────────────────────────────
     if data.startswith("chart_"):
         parts = data.split("_", 2)
@@ -4063,11 +4126,21 @@ def handle_callback(call):
                 caption = f"📊 <b>{symbol}</b> - {days}d"
                 if price:
                     caption += f"\n💵 <b>{fmt_price(price)}</b>"
-                bot.edit_message_media(
-                    types.InputMediaPhoto(BytesIO(img_bytes), caption=add_timestamp(caption), parse_mode='HTML'),
-                    chat_id=call.message.chat.id, message_id=call.message.message_id,
-                    reply_markup=kb
-                )
+                if call.message.photo:
+                    bot.edit_message_media(
+                        types.InputMediaPhoto(BytesIO(img_bytes), caption=add_timestamp(caption), parse_mode='HTML'),
+                        chat_id=call.message.chat.id, message_id=call.message.message_id,
+                        reply_markup=kb
+                    )
+                else:
+                    try:
+                        bot.delete_message(call.message.chat.id, call.message.message_id)
+                    except Exception:
+                        pass
+                    bot.send_photo(
+                        call.message.chat.id, photo=BytesIO(img_bytes),
+                        caption=add_timestamp(caption), parse_mode='HTML', reply_markup=kb
+                    )
             except Exception as e:
                 logger.error(f"Chart callback failed: {e}")
         return
@@ -4142,7 +4215,7 @@ def show_wallets_with_balance(message):
 
 def _build_price_list_message(uid, prices):
     """Build the all-prices message: header + blockquote of coin rows."""
-    lines = [T(uid, 'prices_header')]
+    header = T(uid, 'prices_header')
     body = []
     for code, name in CRYPTO_LIST.items():
         if code == 'telegram-stars':
@@ -4157,9 +4230,9 @@ def _build_price_list_message(uid, prices):
         arrow = ('📈' if change >= 0 else '📉') if change is not None else '  '
         chg   = f"{change:+.1f}%" if change is not None else ""
         body.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
-    if body:
-        lines.append(f"<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
-    return "\n".join(lines)
+    if not body:
+        return header
+    return header + "<blockquote>\n" + "\n".join(body) + "\n</blockquote>"
 
 
 @bot.message_handler(commands=['price'])
@@ -4335,28 +4408,31 @@ def gold_command(message):
 def stars_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
-    
     stars_price = get_crypto_price('telegram-stars')
     if not stars_price:
         stars_price = float(os.getenv('STARS_PRICE_USD', '0.015'))
-    
-    usd_to_irr = get_usd_to_irr()
-    ton_price = get_crypto_price('the-open-network')
+    msg = _stars_price_lines(uid, stars_price, 1, "⭐ <b>Telegram Stars</b>")
+    kb = types.InlineKeyboardMarkup([[
+        types.InlineKeyboardButton(T(uid, 'stars_calc_btn'), callback_data="stars_calc")
+    ]])
+    bot.reply_to(message, add_timestamp(msg), parse_mode='HTML', reply_markup=kb)
+    logger.info(f"User {uid} requested Stars price")
 
+
+def _stars_price_lines(uid, stars_price, count=1, header=None):
+    """Build Stars price lines for the given count of stars."""
+    usd = stars_price * count
     user_lang = db_get_lang(uid)
     toman_label = "Toman" if user_lang == 'en' else "تومان"
-
-    msg = f"⭐ <b>Telegram Stars</b>\n\n"
-    msg += f"💵 ${stars_price:.3f} USD\n"
+    header = header or T(uid, 'stars_result', amount=f"{count:g}")
+    lines = [header, f"💵 ${usd:.3f} USD"]
+    usd_to_irr = get_usd_to_irr()
     if usd_to_irr:
-        msg += f"💰 {format_fiat(Decimal(str(stars_price * usd_to_irr)), decimals=0)} {toman_label}\n"
-
+        lines.append(f"💰 {format_fiat(Decimal(str(usd * usd_to_irr)), decimals=0)} {toman_label}")
+    ton_price = get_crypto_price('the-open-network')
     if ton_price:
-        stars_in_ton = stars_price / ton_price
-        msg += f"🪙 {format_crypto(Decimal(str(stars_in_ton)))} TON\n"
-    
-    bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
-    logger.info(f"User {uid} requested Stars price")
+        lines.append(f"🪙 {format_crypto(Decimal(str(usd / ton_price)))} TON")
+    return header + "\n\n" + "\n".join(lines[1:])
 
 
 # ── Per-coin price commands (/btc, /eth, /trx, ...) ──────────────────
@@ -4482,11 +4558,17 @@ def set_exchange_cmd(message):
     uid = message.from_user.id
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
+        current = get_user_exchange(uid)
+        current_name = EXCHANGE_NAMES.get(current, 'CoinGecko')
         kb = types.InlineKeyboardMarkup(row_width=2)
         btns = [types.InlineKeyboardButton(info['name'], callback_data=f"setex_{e}") for e, info in EXCHANGES.items()]
         btns.append(types.InlineKeyboardButton("CoinGecko", callback_data="setex_coingecko"))
         kb.add(*btns)
-        bot.reply_to(message, "💱 <b>Select your default price source:</b>", parse_mode='HTML', reply_markup=kb)
+        bot.reply_to(
+            message,
+            T(uid, 'exch_current', name=current_name) + "\n\n" + T(uid, 'exch_prompt'),
+            parse_mode='HTML', reply_markup=kb
+        )
         return
     exch = args[1].strip().lower()
     if exch not in EXCHANGES and exch != 'coingecko':
@@ -4508,19 +4590,43 @@ CHART_DAYS = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}
 @rate_limit_check
 @loading_indicator
 def chart_cmd(message):
-    bot.send_chat_action(message.chat.id, 'upload_photo')
     uid = message.from_user.id
     args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "Usage:\n/chart btc\n/chart btc 7d\n/chart btc 90d")
+    if len(args) >= 2:
+        crypto = detect_currency(args[1])
+        if not crypto or crypto not in CRYPTO_LIST:
+            bot.reply_to(message, T(uid, 'unknown_coin'))
+            return
+        days = 30
+        if len(args) >= 3:
+            days = CHART_DAYS.get(args[2].lower(), 30)
+        _send_chart(message, crypto, days, uid)
         return
-    crypto = detect_currency(args[1])
-    if not crypto or crypto not in CRYPTO_LIST:
-        bot.reply_to(message, T(uid, 'unknown_coin'))
-        return
-    days = 30
-    if len(args) >= 3:
-        days = CHART_DAYS.get(args[2].lower(), 30)
+
+    # No args - show coin picker (like /compare and /convert)
+    coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
+    rows = []
+    row = []
+    for cid in coins:
+        sym = _sym(cid)
+        row.append(types.InlineKeyboardButton(sym, callback_data=f"chr1_{cid}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    msg = bot.reply_to(
+        message,
+        T(uid, 'chart_pick_coin'),
+        parse_mode='HTML',
+        reply_markup=types.InlineKeyboardMarkup(rows)
+    )
+    register_panel_owner(msg.message_id, uid)
+
+
+def _send_chart(message, crypto, days, uid):
+    """Generate a chart photo and post it with time-range buttons."""
+    bot.send_chat_action(message.chat.id, 'upload_photo')
     try:
         img_bytes, symbol = get_crypto_chart_image(crypto, days, uid)
         price = get_crypto_price(crypto)
@@ -4899,15 +5005,20 @@ def _fragment_collection_floor(slug):
 
 @bot.message_handler(commands=['fragment', 'username'])
 @rate_limit_check
-@loading_indicator
+@loading_indicator(keep=True)
 def fragment_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
     args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        bot.reply_to(message, "Usage: /fragment @username\nLook up a Telegram username on Fragment.com")
+    target = None
+    if len(args) >= 2:
+        target = args[1].strip()
+    elif (message.reply_to_message and message.reply_to_message.from_user
+          and message.reply_to_message.from_user.username):
+        target = "@" + message.reply_to_message.from_user.username
+    if not target:
+        bot.reply_to(message, T(uid, 'fragment_usage'))
         return
-    target = args[1].strip()
     bot.send_message(message.chat.id, f"🔍 Looking up <b>{target}</b> on Fragment...", parse_mode='HTML')
     data = _fragment_username_data(target)
     if not data:
@@ -4961,7 +5072,7 @@ def gifts_cmd(message):
 
 @bot.message_handler(commands=['gift'])
 @rate_limit_check
-@loading_indicator
+@loading_indicator(keep=True)
 def gift_cmd(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
@@ -5641,7 +5752,7 @@ def list_alerts(message):
     keyboard = []
     above_w = T(user_id, 'above_word')
     below_w = T(user_id, 'below_word')
-    lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+    header = T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)
     body = []
     # Batch-fetch all alert prices at once
     alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
@@ -5661,15 +5772,14 @@ def list_alerts(message):
             f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
             callback_data=f"alertdel_{a['id']}"
         )])
-    if body:
-        lines.append("<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
+    text = header + ("<blockquote>\n" + "\n".join(body) + "\n</blockquote>" if body else "")
     keyboard.append([
         types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
         types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
     ])
     bot.reply_to(
         message,
-        "\n".join(lines),
+        text,
         parse_mode='HTML',
         reply_markup=types.InlineKeyboardMarkup(keyboard)
     )
@@ -5843,7 +5953,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
             callback_data=f"cmpref_{ids[0]}_{ids[1]}"
     )
     ]])
-    text = add_timestamp(T(cmp_uid, 'compare_header') + "\n\n".join(blocks) + f"\n{'━'*20}{verdict}")
+    text = add_timestamp(T(cmp_uid, 'compare_header') + "\n".join(blocks) + f"\n{'━'*20}{verdict}")
 
     if edit_msg_id:
         try:
@@ -6421,6 +6531,24 @@ def handle_text(message):
             )
         return
 
+    # Stars amount calculator - waiting for the number of stars
+    if state == 'stars_amount':
+        try:
+            amount = float(text.strip().replace(',', ''))
+            if amount <= 0:
+                raise ValueError("non-positive")
+        except ValueError:
+            bot.reply_to(message, T(user_id, 'stars_invalid'), parse_mode='HTML')
+            return  # keep state so user can retry
+        del_user_state(user_id)
+        bot.send_chat_action(message.chat.id, 'typing')
+        stars_price = get_crypto_price('telegram-stars')
+        if not stars_price:
+            stars_price = float(os.getenv('STARS_PRICE_USD', '0.015'))
+        msg = _stars_price_lines(user_id, stars_price, amount)
+        bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
+        return
+
     # Alert wizard step 3 - waiting for target price
     if state and state.startswith('alert_price_'):
         del_user_state(user_id)
@@ -6882,7 +7010,7 @@ def _handle_alert_callbacks(call, data, user_id):
             keyboard = []
             above_w = T(user_id, 'above_word')
             below_w = T(user_id, 'below_word')
-            lines = [T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)]
+            header = T(user_id, 'alerts_header', count=len(alerts), max=MAX_ALERTS_PER_USER)
             body = []
             # Batch-fetch all alert prices at once
             alert_ids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
@@ -6902,15 +7030,14 @@ def _handle_alert_callbacks(call, data, user_id):
                     f"🗑  {a['symbol']} {dword} {fmt_price(a['target_price'])}",
                     callback_data=f"alertdel_{a['id']}"
                 )])
-            if body:
-                lines.append("<blockquote>\n" + "\n".join(body) + "\n</blockquote>")
+            text = header + ("<blockquote>\n" + "\n".join(body) + "\n</blockquote>" if body else "")
             keyboard.append([
                 types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
                 types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
             ])
             try:
                 bot.edit_message_text(
-                    "\n".join(lines),
+                    text,
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
                     parse_mode='HTML',
