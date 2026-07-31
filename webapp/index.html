@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<title>Earth Crypto</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" class="theme-dark">
+
+  <header id="app-header">
+    <div class="brand">
+      <div class="logo">🌍</div>
+      <div class="brand-text">
+        <div class="brand-name">Earth Crypto</div>
+        <div class="brand-sub" id="brand-sub">Prices · Portfolio · Market</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="btn-lang" class="icon-btn" type="button" title="Language">EN</button>
+      <button id="btn-refresh" class="icon-btn" type="button" title="Refresh">⟳</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="tab-prices" class="tab active"></div>
+    <div id="tab-portfolio" class="tab"></div>
+    <div id="tab-market" class="tab"></div>
+    <div id="tab-alerts" class="tab"></div>
+    <div id="tab-wallets" class="tab"></div>
+  </main>
+
+  <nav id="tabbar">
+    <button class="tab-btn active" type="button" data-tab="prices">
+      <span class="ic">📈</span><span class="lbl">Prices</span>
+    </button>
+    <button class="tab-btn" type="button" data-tab="portfolio">
+      <span class="ic">💼</span><span class="lbl">Portfolio</span>
+    </button>
+    <button class="tab-btn" type="button" data-tab="market">
+      <span class="ic">🌍</span><span class="lbl">Market</span>
+    </button>
+    <button class="tab-btn" type="button" data-tab="alerts">
+      <span class="ic">🔔</span><span class="lbl">Alerts</span>
+    </button>
+    <button class="tab-btn" type="button" data-tab="wallets">
+      <span class="ic">👛</span><span class="lbl">Wallets</span>
+    </button>
+  </nav>
+
+  <div id="toast"></div>
+  <div id="loader" class="hidden"><div class="spinner"></div></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

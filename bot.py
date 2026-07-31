@@ -1,8 +1,11 @@
 import os
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
+import hmac
 import telebot
 from telebot import types
 from telebot.types import InlineKeyboardButton as IKB
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qsl, urlparse, unquote
 import requests
 import re
 import time
@@ -6858,6 +6861,332 @@ def _safe_process_new_updates(updates):
 bot.process_new_updates = _safe_process_new_updates
 
 
+# ═══════════════════════════════════════════════════════════════
+# Telegram Mini App (webapp) - static frontend + JSON API
+#   * Serves the frontend in ./webapp and /api/* endpoints.
+#   * Every /api call is authenticated with Telegram initData
+#     (HMAC-SHA256 signed with the bot token).
+#   * Point HTTPS (Caddy/nginx/cloudflared) at WEBAPP_HOST:PORT.
+# ═══════════════════════════════════════════════════════════════
+WEBAPP_HOST = os.getenv('WEBAPP_HOST', '127.0.0.1')
+WEBAPP_PORT = int(os.getenv('WEBAPP_PORT', '8080'))
+WEBAPP_ALLOW_DEV = os.getenv('WEBAPP_ALLOW_DEV', '') in ('1', 'true', 'yes')
+WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp')
+WEBAPP_MIME = {
+    '.html':  'text/html; charset=utf-8',
+    '.css':   'text/css; charset=utf-8',
+    '.js':    'application/javascript; charset=utf-8',
+    '.json':  'application/json; charset=utf-8',
+    '.png':   'image/png',
+    '.svg':   'image/svg+xml',
+    '.ico':   'image/x-icon',
+    '.woff2': 'font/woff2',
+}
+
+
+def _webapp_validate_init_data(init_data):
+    """Verify Telegram Mini App initData and return the user id (or None)."""
+    if not init_data:
+        return None
+    try:
+        params = dict(parse_qsl(init_data, keep_blank_values=True))
+    except Exception:
+        return None
+    received_hash = params.pop('hash', None)
+    if not received_hash:
+        return None
+    data_check = "\n".join(f"{k}={params[k]}" for k in sorted(params))
+    secret = hmac.new(b"WebAppData", TELEGRAM_BOT_TOKEN.encode('utf-8'), hashlib.sha256).digest()
+    calc = hmac.new(secret, data_check.encode('utf-8'), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(calc, received_hash):
+        return None
+    try:
+        user = json.loads(params.get('user', '{}'))
+    except Exception:
+        return None
+    uid = user.get('id')
+    return int(uid) if isinstance(uid, (int, float, str)) else None
+
+
+def _webapp_coin_meta(cid):
+    raw = CRYPTO_LIST.get(cid, cid)
+    m = re.match(r'^(.*?)\s*\(([^)]+)\)\s*$', raw)
+    if m:
+        head, sym = m.group(1).strip(), m.group(2)
+    else:
+        head, sym = raw, raw.upper()
+    parts = head.split()
+    if parts and parts[0] in ('🪙', '⭐', '💎', '👑', '🔥', '💰', '🌐'):
+        return parts[0], ' '.join(parts[1:]) or sym, sym
+    return '🪙', head or sym, sym
+
+
+def _webapp_sparklines(cids):
+    cached = cache_get('webapp_sparklines')
+    if cached:
+        return cached
+    try:
+        ids = ','.join(cids)
+        resp = requests.get(
+            'https://api.coingecko.com/api/v3/coins/markets'
+            f'?vs_currency=usd&ids={ids}&sparkline=true', timeout=10)
+        if resp.status_code != 200:
+            return {}
+        result = {c.get('id'): c.get('sparkline_in_7d', {}).get('price', []) for c in resp.json()}
+        if result:
+            cache_set('webapp_sparklines', result, ttl=600)
+        return result
+    except Exception as e:
+        logger.error(f"WebApp sparklines failed: {e}")
+        return {}
+
+
+def _webapp_prices():
+    real_cids = [c for c in CRYPTO_LIST if c != 'telegram-stars']
+    batch = _fetch_prices_batch(','.join(real_cids)) or {}
+    spark = _webapp_sparklines(real_cids)
+    coins = []
+    for cid in CRYPTO_LIST:
+        icon, name, sym = _webapp_coin_meta(cid)
+        if cid == 'telegram-stars':
+            price = get_crypto_price(cid)
+            change = None
+        else:
+            info = batch.get(cid, {})
+            price = info.get('usd') or get_crypto_price(cid)
+            change = info.get('usd_24h_change')
+        coins.append({
+            'cid': cid, 'sym': sym, 'name': name, 'icon': icon,
+            'price': price, 'change': change,
+            'sparkline': (spark.get(cid) or [])[-32:],
+        })
+    return {'ok': True, 'usd_to_irr': get_usd_to_irr(), 'coins': coins}
+
+
+def _webapp_portfolio(uid):
+    holdings = db_get_holdings(uid) or {}
+    buy_prices = db_get_buy_prices(uid) or {}
+    sym_to_cid = {_sym(cid): cid for cid in CRYPTO_LIST}
+    items = []
+    total_value = total_cost = 0.0
+    for sym, amount in holdings.items():
+        cid = sym_to_cid.get(sym)
+        if cid is None:
+            continue
+        _, name, _ = _webapp_coin_meta(cid)
+        price = get_crypto_price(cid) or 0
+        value = float(amount) * price
+        buy = buy_prices.get(sym)
+        cost = float(amount) * float(buy) if buy else 0.0
+        pnl = (value - cost) if cost else None
+        pnl_pct = (pnl / cost * 100) if cost else None
+        total_value += value
+        total_cost += cost
+        items.append({
+            'cid': cid, 'sym': sym, 'name': name, 'amount': float(amount),
+            'price': price, 'buy': buy, 'value': value, 'pnl': pnl, 'pnl_pct': pnl_pct,
+        })
+    items.sort(key=lambda x: x['value'], reverse=True)
+    total_pnl = total_value - total_cost
+    total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else None
+    return {
+        'ok': True, 'items': items,
+        'total_value': total_value, 'total_cost': total_cost,
+        'total_pnl': total_pnl, 'total_pnl_pct': total_pnl_pct,
+    }
+
+
+def _webapp_market():
+    g = _fetch_coingecko_global() or {}
+    fng = _fetch_fear_greed()
+    trend = _fetch_trending() or []
+    return {
+        'ok': True,
+        'global': {
+            'total_market_cap_usd': (g.get('total_market_cap') or {}).get('usd'),
+            'total_volume_usd': (g.get('total_volume') or {}).get('usd'),
+            'market_cap_percentage_btc': (g.get('market_cap_percentage') or {}).get('btc'),
+            'market_cap_percentage_eth': (g.get('market_cap_percentage') or {}).get('eth'),
+            'active_cryptocurrencies': g.get('active_cryptocurrencies'),
+            'market_cap_change_percentage_24h_usd': g.get('market_cap_change_percentage_24h_usd'),
+        },
+        'fear_greed': fng or {},
+        'trending': [
+            {'id': t.get('id'), 'name': t.get('name'), 'symbol': t.get('symbol'),
+             'market_cap_rank': t.get('market_cap_rank'),
+             'price_btc': t.get('price_btc'), 'thumb': t.get('thumb')}
+            for t in trend
+        ],
+        'usd_to_irr': get_usd_to_irr(),
+    }
+
+
+def _webapp_alerts(uid):
+    alerts = db_get_alerts(uid) or []
+    cids = [a['crypto_id'] for a in alerts if a['crypto_id'] in CRYPTO_LIST]
+    batch = _fetch_prices_batch(','.join(cids)) if cids else {}
+    items = []
+    for a in alerts:
+        info = batch.get(a['crypto_id']) if a['crypto_id'] in batch else {}
+        price = info.get('usd') if info else get_crypto_price(a['crypto_id'])
+        triggered = False
+        if price is not None:
+            triggered = (price >= a['target_price']) if a['direction'] == 'above' \
+                else (price <= a['target_price'])
+        items.append({
+            'id': a['id'], 'cid': a['crypto_id'], 'sym': a['symbol'],
+            'name': (CRYPTO_LIST.get(a['crypto_id']) or a['symbol']),
+            'direction': a['direction'], 'target': a['target_price'],
+            'price': price, 'triggered': triggered,
+        })
+    return {'ok': True, 'items': items}
+
+
+def _webapp_trx_balance(address):
+    try:
+        resp = requests.get(f'https://apilist.tronscan.org/api/account?address={address}', timeout=10)
+        if resp.status_code != 200:
+            return None
+        sun = resp.json().get('balance', 0)
+        return float(Decimal(str(sun)) / Decimal('1000000'))
+    except Exception as e:
+        logger.error(f"WebApp TRX balance failed for {address}: {e}")
+        return None
+
+
+def _webapp_wallets(uid):
+    wallets = db_get_wallets(uid) or []
+    trx_price = get_crypto_price('tron')
+    items = []
+    total_trx = 0.0
+    for addr in wallets:
+        bal = _webapp_trx_balance(addr)
+        if bal is not None:
+            total_trx += bal
+        items.append({
+            'address': addr, 'balance_trx': bal,
+            'balance_usd': (bal * trx_price) if (bal is not None and trx_price) else None,
+        })
+    return {
+        'ok': True, 'items': items, 'total_trx': total_trx,
+        'total_usd': total_trx * trx_price if trx_price else None,
+        'trx_price': trx_price,
+    }
+
+
+class _WebAppHandler(BaseHTTPRequestHandler):
+    server_version = "EarthCryptoWebApp/1.0"
+
+    def log_message(self, fmt, *args):
+        logger.debug("WebApp: " + (fmt % args))
+
+    def _send_json(self, obj, status=200):
+        body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def _send_file(self, rel):
+        root = os.path.realpath(WEBAPP_DIR)
+        full = os.path.realpath(os.path.join(root, rel))
+        if full != root and not full.startswith(root + os.sep):
+            self._send_json({'ok': False, 'error': 'forbidden'}, 403)
+            return
+        if not os.path.isfile(full):
+            self.send_error(404)
+            return
+        ctype = WEBAPP_MIME.get(os.path.splitext(full)[1].lower(), 'application/octet-stream')
+        try:
+            with open(full, 'rb') as f:
+                body = f.read()
+        except Exception:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def _uid(self):
+        init_data = self.headers.get('X-Telegram-Init-Data') or ''
+        qs = dict(parse_qsl(urlparse(self.path).query))
+        if not init_data:
+            init_data = qs.get('initData', '')
+        uid = _webapp_validate_init_data(init_data)
+        if uid is None and WEBAPP_ALLOW_DEV and qs.get('dev_uid'):
+            try:
+                uid = int(qs['dev_uid'])
+            except (TypeError, ValueError):
+                uid = None
+        return uid
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        if path in ('/api/ping', '/api/ping/'):
+            self._send_json({'ok': True, 'service': 'earth-crypto-webapp'})
+            return
+        if path.startswith('/api/'):
+            uid = self._uid()
+            if uid is None:
+                self._send_json({'ok': False, 'error': 'unauthorized'}, 401)
+                return
+            self._handle_api(path, uid, dict(parse_qsl(parsed.query)))
+            return
+        if path in ('/', '/index.html'):
+            self._send_file('index.html')
+        else:
+            self._send_file(path.lstrip('/'))
+
+    def _handle_api(self, path, uid, qs):
+        try:
+            if path == '/api/prices':
+                self._send_json(_webapp_prices())
+            elif path == '/api/portfolio':
+                self._send_json(_webapp_portfolio(uid))
+            elif path == '/api/market':
+                self._send_json(_webapp_market())
+            elif path == '/api/alerts':
+                self._send_json(_webapp_alerts(uid))
+            elif path == '/api/alerts/delete':
+                try:
+                    alert_id = int(qs.get('alert_id', ''))
+                except (TypeError, ValueError):
+                    self._send_json({'ok': False, 'error': 'bad request'}, 400)
+                    return
+                self._send_json({'ok': bool(db_delete_alert(alert_id, uid))})
+            elif path == '/api/wallets':
+                self._send_json(_webapp_wallets(uid))
+            elif path == '/api/wallets/delete':
+                address = qs.get('address', '')
+                self._send_json({'ok': bool(db_remove_wallet(uid, address)) if address else False})
+            else:
+                self._send_json({'ok': False, 'error': 'not found'}, 404)
+        except Exception as e:
+            logger.error(f"WebApp API {path} failed: {e}", exc_info=True)
+            self._send_json({'ok': False, 'error': 'server error'}, 500)
+
+
+def start_webapp_server():
+    server = ThreadingHTTPServer((WEBAPP_HOST, WEBAPP_PORT), _WebAppHandler)
+    server.daemon_threads = True
+    server.allow_reuse_address = True
+    threading.Thread(target=server.serve_forever, daemon=True, name='WebAppServer').start()
+    logger.info(f"WebApp server listening on http://{WEBAPP_HOST}:{WEBAPP_PORT}")
+    return server
+
+
 # ─────────────────────────────────────────────
 # Entry point - crash recovery polling loop
 # Restarts automatically on network errors or
@@ -6882,6 +7211,12 @@ if __name__ == "__main__":
     threading.Thread(target=_prewarm_prices, daemon=True, name="PricePrewarm").start()
     threading.Thread(target=lambda: get_usd_to_irr(), daemon=True, name="IRRPreWarm").start()
     logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, price pre-warm, IRR pre-warm)")
+
+    try:
+        start_webapp_server()
+        logger.info(f"{EMOJIS['chart']} Telegram Mini App server ready (webapp/)")
+    except Exception as e:
+        logger.error(f"WebApp server failed to start: {e}")
 
     logger.info(f"{EMOJIS['star']} Press Ctrl+C to stop")
     logger.info("=" * 50)
