@@ -1324,14 +1324,22 @@ STRINGS = {
         # ── /try (Turkish Lira) ───────────────────────────────
         'try_rate':            "🇹🇷 <b>1 TRY = {rate} Toman</b>",
 
+        # ── /eur /gbp /aed /cny (fiat rates) ─────────────────
+        'eur_rate':            "🇪🇺 <b>1 EUR = {rate} Toman</b>",
+        'gbp_rate':            "🇬🇧 <b>1 GBP = {rate} Toman</b>",
+        'aed_rate':            "🇦🇪 <b>1 AED = {rate} Toman</b>",
+        'cny_rate':            "🇨🇳 <b>1 CNY = {rate} Toman</b>",
+
         # ── /gold ─────────────────────────────────────────────
         'gold_global':         "🌍 <b>Global Gold</b>\nXAU/USD: ${xau}/oz",
-        'gold_iran':           "\n\n🇮🇷 <b>Iran Gold Coins</b> (Toman)\n",
+        'gold_iran':           "\n\n🇮🇷 <b>Iran Gold</b> (Toman)\n",
         'gold_bahar':          "🪙 Bahar Azadi: {price}\n",
         'gold_emami':          "🪙 Emami: {price}\n",
         'gold_nim':            "🪙 Nim (½): {price}\n",
         'gold_rob':            "🪙 Rob (¼): {price}\n",
-        'gold_gram18':         "⚖️ 18K Gold/g: {price}",
+        'gold_gram18':         "⚖️ 18K Gold/g: {price}\n",
+        'gold_gram24':         "⚖️ 24K Gold/g: {price}\n",
+        'gold_mesghal':        "⚖️ Mesghal: {price}\n",
         'gold_fetch_fail':     "❌ Could not fetch gold prices. Try again.",
 
         # ── /market ───────────────────────────────────────────
@@ -1724,14 +1732,22 @@ STRINGS = {
         # ── /try (لیر ترکیه) ──────────────────────────────────
         'try_rate':            "🇹🇷 <b>1 TRY = {rate} Toman</b>",
 
+        # ── /eur /gbp /aed /cny (نرخ ارز) ─────────────────────
+        'eur_rate':            "🇪🇺 <b>1 EUR = {rate} Toman</b>",
+        'gbp_rate':            "🇬🇧 <b>1 GBP = {rate} Toman</b>",
+        'aed_rate':            "🇦🇪 <b>1 AED = {rate} Toman</b>",
+        'cny_rate':            "🇨🇳 <b>1 CNY = {rate} Toman</b>",
+
         # ── /gold (طلا) ───────────────────────────────────────
         'gold_global':         "🌍 <b>طلای جهانی</b>\nXAU/USD: ${xau}/oz",
-        'gold_iran':           "\n\n🇮🇷 <b>سکه‌های ایران</b> (تومان)\n",
+        'gold_iran':           "\n\n🇮🇷 <b>طلای ایران</b> (تومان)\n",
         'gold_bahar':          "🪙 بهار آزادی: {price}\n",
         'gold_emami':          "🪙 امامی: {price}\n",
         'gold_nim':            "🪙 نیم: {price}\n",
         'gold_rob':            "🪙 ربع: {price}\n",
-        'gold_gram18':         "⚖️ گرم 18: {price}",
+        'gold_gram18':         "⚖️ گرم 18: {price}\n",
+        'gold_gram24':         "⚖️ گرم 24: {price}\n",
+        'gold_mesghal':        "⚖️ مثقال: {price}\n",
         'gold_fetch_fail':     "❌ قیمت طلا دریافت نشد. دوباره تلاش کنید.",
 
         # ── /market ───────────────────────────────────────────
@@ -2616,30 +2632,92 @@ def get_gold_prices():
     return {}  # Return empty if all fail
 
 
+TGJU_CATEGORY_IDS = {
+    'grams': 91818,    # geram18, geram24, gold_740k, gold_mini_size
+    'mesghal': 91820,  # mesghal, gold_17, gold_17_transfer
+    'coins': 28068,    # sekee, sekeb, nim, rob, gerami
+}
+
+
 @rate_limited_api_call
-def get_try_to_irr():
-    """Turkish Lira → Toman rate."""
-    cached = cache_get('try_irr')
+def get_iran_gold_prices():
+    """Fetch Iranian gold prices (Toman) from tgju.org."""
+    cached = cache_get('iran_gold')
+    if cached:
+        return cached
+    prices = {}
+    try:
+        for cid in TGJU_CATEGORY_IDS.values():
+            r = requests.get(
+                f'https://api.tgju.org/v1/market/list-data?category_ids={cid}&extra_data=1&lang=fa',
+                timeout=10,
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            r.raise_for_status()
+            data = r.json()
+            for row in data.get('data', []):
+                m = re.search(r'profile/([a-z0-9_]+)', row[0])
+                if not m:
+                    continue
+                slug = m.group(1)
+                price_rial = int(re.sub(r'[^\d]', '', re.sub(r'<[^>]+>', '', row[1])))
+                if price_rial:
+                    prices[slug] = price_rial // 10  # Rial → Toman
+        if prices:
+            cache_set('iran_gold', prices)
+            logger.info(f"Fetched Iran gold prices from tgju: {list(prices)}")
+        return prices
+    except Exception as e:
+        logger.error(f"tgju gold fetch failed: {e}")
+        return {}
+
+
+@rate_limited_api_call
+def _fx_to_irr(code: str, cache_key: str):
+    """Fiat currency → Toman rate via exchangerate-api: {code} → USD → IRR."""
+    cached = cache_get(cache_key)
     if cached:
         return cached
     try:
-        # Method: TRY → USD → IRR
-        # Get TRY/USD rate
-        r = requests.get('https://api.exchangerate-api.com/v4/latest/TRY', timeout=8)
+        r = requests.get(f'https://api.exchangerate-api.com/v4/latest/{code}', timeout=8)
         if r.status_code == 200:
-            try_data = r.json()
-            try_to_usd = try_data.get('rates', {}).get('USD')
-            if try_to_usd:
+            fx_to_usd = r.json().get('rates', {}).get('USD')
+            if fx_to_usd:
                 usd_to_irr = get_usd_to_irr()
                 if usd_to_irr is None:
                     return None
-                try_to_irr_rate = int(try_to_usd * usd_to_irr)
-                cache_set('try_irr', try_to_irr_rate)
-                logger.info(f"TRY rate: {try_to_irr_rate} Toman")
-                return try_to_irr_rate
+                rate = int(fx_to_usd * usd_to_irr)
+                cache_set(cache_key, rate)
+                logger.info(f"{code} rate: {rate} Toman")
+                return rate
     except Exception as e:
-        logger.error(f"TRY fetch failed: {e}")
+        logger.error(f"{code} fetch failed: {e}")
     return None
+
+
+def get_try_to_irr():
+    """Turkish Lira → Toman rate."""
+    return _fx_to_irr('TRY', 'try_irr')
+
+
+def get_eur_to_irr():
+    """Euro → Toman rate."""
+    return _fx_to_irr('EUR', 'eur_irr')
+
+
+def get_gbp_to_irr():
+    """British Pound → Toman rate."""
+    return _fx_to_irr('GBP', 'gbp_irr')
+
+
+def get_aed_to_irr():
+    """UAE Dirham → Toman rate."""
+    return _fx_to_irr('AED', 'aed_irr')
+
+
+def get_cny_to_irr():
+    """Chinese Yuan → Toman rate."""
+    return _fx_to_irr('CNY', 'cny_irr')
 
 
 # ─────────────────────────────────────────────
@@ -4013,16 +4091,64 @@ def try_command(message):
     logger.info(f"User {uid} requested TRY → Toman")
 
 
-@bot.message_handler(commands=['gold'])
+@bot.message_handler(commands=['eur'])
 @rate_limit_check
-def gold_command(message):
+def eur_command(message):
     bot.send_chat_action(message.chat.id, 'typing')
     uid = message.from_user.id
+    eur_rate = get_eur_to_irr()
+    if eur_rate is None:
+        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
+    else:
+        bot.reply_to(message, add_timestamp(T(uid, 'eur_rate', rate=f"{eur_rate:,.0f}")), parse_mode='HTML')
+    logger.info(f"User {uid} requested EUR → Toman")
+
+
+@bot.message_handler(commands=['gbp'])
+@rate_limit_check
+def gbp_command(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    gbp_rate = get_gbp_to_irr()
+    if gbp_rate is None:
+        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
+    else:
+        bot.reply_to(message, add_timestamp(T(uid, 'gbp_rate', rate=f"{gbp_rate:,.0f}")), parse_mode='HTML')
+    logger.info(f"User {uid} requested GBP → Toman")
+
+
+@bot.message_handler(commands=['aed'])
+@rate_limit_check
+def aed_command(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    aed_rate = get_aed_to_irr()
+    if aed_rate is None:
+        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
+    else:
+        bot.reply_to(message, add_timestamp(T(uid, 'aed_rate', rate=f"{aed_rate:,.0f}")), parse_mode='HTML')
+    logger.info(f"User {uid} requested AED → Toman")
+
+
+@bot.message_handler(commands=['cny'])
+@rate_limit_check
+def cny_command(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    cny_rate = get_cny_to_irr()
+    if cny_rate is None:
+        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
+    else:
+        bot.reply_to(message, add_timestamp(T(uid, 'cny_rate', rate=f"{cny_rate:,.0f}")), parse_mode='HTML')
+    logger.info(f"User {uid} requested CNY → Toman")
+
+
+def _build_gold_message(uid):
+    """Build full gold message: global XAU/USD + Iran tgju prices (Toman)."""
     prices = get_gold_prices()
     xau_price = prices.get('xau')
     if not xau_price:
-        bot.reply_to(message, T(uid, 'gold_fetch_fail'))
-        return
+        return None
 
     gram_price_usd = xau_price / 31.1035
     user_lang = db_get_lang(uid)
@@ -4033,6 +4159,37 @@ def gold_command(message):
         f"💵 XAU: <b>${xau_formatted}</b>\n"
         f"💵 1g: <b>${gram_usd_formatted}</b>"
     )
+    iran = get_iran_gold_prices()
+    if iran:
+        def fmt_toman(v):
+            return format_for_locale(f"{v:,}", user_lang) if v else ""
+        def iran_line(key, slug):
+            price = fmt_toman(iran.get(slug))
+            return T(uid, key, price=price) if price else ""
+        iran_section = (
+            T(uid, 'gold_iran') +
+            iran_line('gold_gram18', 'geram18') +
+            iran_line('gold_gram24', 'geram24') +
+            iran_line('gold_mesghal', 'mesghal') +
+            iran_line('gold_emami', 'sekee') +
+            iran_line('gold_bahar', 'sekeb') +
+            iran_line('gold_nim', 'nim') +
+            iran_line('gold_rob', 'rob')
+        )
+        if iran_section.strip():
+            msg += iran_section
+    return msg
+
+
+@bot.message_handler(commands=['gold'])
+@rate_limit_check
+def gold_command(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    uid = message.from_user.id
+    msg = _build_gold_message(uid)
+    if not msg:
+        bot.reply_to(message, T(uid, 'gold_fetch_fail'))
+        return
     bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
     logger.info(f"User {uid} requested gold prices")
 
@@ -4960,6 +5117,21 @@ def inline_query_handler(inline_query):
                 if irr_v:
                     xau_irr = xau * irr_v
                     lines.append(f"\n💰 {xau_irr:,.0f} {T(uid, 'toman_label')}/oz")
+                iran = cache_get('iran_gold')  # cache only - never blocks inline
+                if iran:
+                    parts = []
+                    for key, slug in (
+                        ('gold_gram18', 'geram18'),
+                        ('gold_gram24', 'geram24'),
+                        ('gold_mesghal', 'mesghal'),
+                        ('gold_emami', 'sekee'),
+                        ('gold_bahar', 'sekeb'),
+                    ):
+                        v = iran.get(slug)
+                        if v:
+                            parts.append(T(uid, key, price=f"{v:,}"))
+                    if parts:
+                        lines.append(T(uid, 'gold_iran') + "".join(parts))
                 txt = "".join(lines)
                 results.append(article("gold", "Gold Price", f"XAU/USD: ${xau:,.2f}", txt, html=True))
 
@@ -5012,6 +5184,21 @@ def inline_query_handler(inline_query):
                 toman_lbl = T(uid, 'toman_label')
                 txt = f"🇹🇷 <b>1 TRY = {try_rate} {toman_lbl}</b>"
                 results.append(article("try_rate", f"1 TRY = {try_rate} {toman_lbl}", f"TRY → {toman_lbl}", txt, html=True))
+
+        # ── 13b. EUR / GBP / AED / CNY to Toman ────────────────────────
+        fx_inline = [
+            (('eur', 'euro', '€'), 'EUR', '🇪🇺', get_eur_to_irr),
+            (('gbp', 'pound', '£'), 'GBP', '🇬🇧', get_gbp_to_irr),
+            (('aed', 'dirham', 'درهم'), 'AED', '🇦🇪', get_aed_to_irr),
+            (('cny', 'yuan', 'یوآن'), 'CNY', '🇨🇳', get_cny_to_irr),
+        ]
+        for fx_keys, fx_code, fx_emoji, fx_getter in fx_inline:
+            if ql in fx_keys:
+                fx_rate = fx_getter()
+                if fx_rate:
+                    toman_lbl = T(uid, 'toman_label')
+                    txt = f"{fx_emoji} <b>1 {fx_code} = {fx_rate} {toman_lbl}</b>"
+                    results.append(article(f"{fx_code.lower()}_rate", f"1 {fx_code} = {fx_rate} {toman_lbl}", f"{fx_code} → {toman_lbl}", txt, html=True))
 
         # ── 14. Holdings / Portfolio ────────────────────────────────────
         if ql in ('holdings', 'portfolio', 'port', 'پرتفو', 'دارایی'):
@@ -6209,6 +6396,48 @@ def handle_text(message):
         )
         return
 
+    # EUR / GBP / AED / CNY → Toman (support flexible number formats)
+    fx_defs = [
+        (r'^([\d.,۰-۹٬٫]+)?\s*(eur|euro|€)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_eur_to_irr, 'EUR', '🇪🇺'),
+        (r'^([\d.,۰-۹٬٫]+)?\s*(gbp|pound|£)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_gbp_to_irr, 'GBP', '🇬🇧'),
+        (r'^([\d.,۰-۹٬٫]+)?\s*(aed|dirham|درهم)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_aed_to_irr, 'AED', '🇦🇪'),
+        (r'^([\d.,۰-۹٬٫]+)?\s*(cny|yuan|yuen|یوآن)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_cny_to_irr, 'CNY', '🇨🇳'),
+    ]
+    for fx_pattern, fx_getter, fx_code, fx_emoji in fx_defs:
+        m = re.match(fx_pattern, text_lower)
+        if not m:
+            continue
+        amount_str = m.group(1)
+        amount = parse_number(amount_str) if amount_str else Decimal('1')
+        if amount is None:
+            amount = Decimal('1')
+
+        fx_to_irr = fx_getter()
+        if fx_to_irr is None:
+            bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
+            return
+        result_toman = amount * Decimal(str(fx_to_irr))
+
+        user_lang = db_get_lang(user_id)
+        amount_formatted = format_fiat(amount)
+        result_formatted = format_fiat(result_toman, decimals=0)
+        amount_formatted = format_for_locale(amount_formatted, user_lang)
+        result_formatted = format_for_locale(result_formatted, user_lang)
+
+        toman_label = "Toman" if user_lang == 'en' else "تومان"
+
+        if amount == Decimal('1'):
+            reply_text = f"1 {fx_code} = {result_formatted} {toman_label}"
+        else:
+            reply_text = f"{amount_formatted} {fx_code} = {result_formatted} {toman_label}"
+
+        bot.reply_to(
+            message,
+            add_timestamp(f"{fx_emoji} <b>{reply_text}</b>"),
+            parse_mode='HTML'
+        )
+        return
+
     # Gold → USD (gram to dollar conversion)
     gold_pattern = r'^([\d.,۰-۹٬٫]+)\s*(gold|طل|طلا)\s*(?:to|به)?\s*(\$|usd|dollar|دلار)?$'
     m = re.match(gold_pattern, text_lower)
@@ -6303,23 +6532,13 @@ def handle_text(message):
         )
         return
 
-    # Standalone "gold" / "طلا" / "xau" → show gold price (global only)
+    # Standalone "gold" / "طلا" / "xau" → show gold price
     if text_lower in ('gold', 'طل', 'طلا', 'xau') and not re.search(r'\d', text):
         bot.send_chat_action(message.chat.id, 'typing')
-        gold_prices = get_gold_prices()
-        xau_price = gold_prices.get('xau')
-        if not xau_price:
+        msg = _build_gold_message(user_id)
+        if not msg:
             bot.reply_to(message, T(user_id, 'price_fetch_fail'))
             return
-        gram_price_usd = xau_price / 31.1035
-        user_lang = db_get_lang(user_id)
-        xau_formatted = format_for_locale(format_fiat(Decimal(str(xau_price))), user_lang)
-        gram_usd_formatted = format_for_locale(format_fiat(Decimal(str(gram_price_usd))), user_lang)
-        msg = (
-            f"🥇 <b>Gold</b>\n\n"
-            f"💵 XAU: <b>${xau_formatted}</b>\n"
-            f"💵 1g: <b>${gram_usd_formatted}</b>"
-        )
         bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
         return
 

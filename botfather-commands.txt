@@ -6,10 +6,14 @@ market - Fear & Greed overview
 trending - Top 10 trending coins on CoinGecko
 gainers - Top gainers in 24h
 losers - Top losers in 24h
-gold - Gold prices (XAU/USD)
+gold - Gold prices (XAU/USD + Iran Tgju)
 convert - Coins · USD · Toman converter
 usd - USD to Toman rate
 try - TRY to Toman rate
+eur - EUR to Toman rate
+gbp - GBP to Toman rate
+aed - AED to Toman rate
+cny - CNY to Toman rate
 star - Telegram Stars price
 setexchange - Default price source (Coingecko/Binance/Crypto.com/Kraken)
 holdings - Portfolio P&L snapshot
