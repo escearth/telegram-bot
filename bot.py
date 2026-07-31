@@ -17,7 +17,6 @@ from collections import defaultdict
 from datetime import datetime
 from dotenv import load_dotenv
 from pycoingecko import CoinGeckoAPI
-import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from io import BytesIO
@@ -34,7 +33,6 @@ from number_utils import (
     format_fiat,
     format_for_locale,
     format_wallet_balance,
-    parse_conversion_command,
     normalize_digits
 )
 
