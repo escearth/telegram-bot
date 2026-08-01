@@ -1,0 +1,3 @@
+## 2024-08-01 - Cached string translation tables
+**Learning:** `str.maketrans` in Python creates translation tables dynamically, which is expensive when done repeatedly within frequently called utility functions like `normalize_digits` or `format_for_locale`. We observed redundant dictionary instantiations occurring inside inner loops and parsing functions.
+**Action:** When performing `string.translate()`, move `str.maketrans` into module-level pre-compiled constants instead of inline allocations. This simple caching significantly improves string manipulation performance. Combine multiple translate steps into a single call.
