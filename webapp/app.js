@@ -219,8 +219,8 @@
     const el = $("#tab-prices");
     const coins = data.coins || [];
     const html = `
-      <div class="search-wrap"><span class="search-ic">🔎</span>
-        <input id="coin-search" type="text" placeholder="${T("search")}" autocomplete="off"></div>
+      <div class="search-wrap"><span class="search-ic" aria-hidden="true">🔎</span>
+        <input id="coin-search" type="text" placeholder="${T("search")}" aria-label="${T("search")}" autocomplete="off"></div>
       <div id="coin-list">${coins.map(coinRow).join("") || emptyState("💱", T("price"), "")}</div>`;
     el.innerHTML = html;
     const input = $("#coin-search");
@@ -410,7 +410,7 @@
             </div>
             <div class="alert-meta">${T("target")}: ${fmtUsd(a.target)} · ${T("current")}: ${fmtUsd(a.price)}</div>
           </div>
-          <button class="alert-del" data-del-alert="${a.id}" title="${T("del")}">✕</button>
+          <button class="alert-del" data-del-alert="${a.id}" title="${T("del")}" aria-label="${T("del")}">✕</button>
         </div>`).join("");
     el.querySelectorAll("[data-del-alert]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -451,7 +451,7 @@
             <div class="wallet-trx">${fmtCoin(w.balance_trx)} TRX</div>
             <div class="wallet-usd">${w.balance_trx == null ? "—" : fmtUsd(w.balance_trx * (d.trx_price || 0))}</div>
           </div>
-          <button class="alert-del" data-del-wallet="${esc(w.address)}" title="${T("del")}">✕</button>
+          <button class="alert-del" data-del-wallet="${esc(w.address)}" title="${T("del")}" aria-label="${T("del")}">✕</button>
         </div>`).join("")}`;
     el.querySelectorAll("[data-del-wallet]").forEach((btn) => {
       btn.addEventListener("click", async () => {
