@@ -42,3 +42,6 @@ Thumbs.db
 .coverage
 htmlcov/
 *.session
+
+# ─── Passenger / bot process lock ────────────────────────────
+.bot.lock

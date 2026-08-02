@@ -4,6 +4,7 @@ import hmac
 import telebot
 from telebot import types
 from telebot.types import InlineKeyboardButton as IKB
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlparse, unquote
 import requests
@@ -6866,12 +6867,17 @@ bot.process_new_updates = _safe_process_new_updates
 #   * Serves the frontend in ./webapp and /api/* endpoints.
 #   * Every /api call is authenticated with Telegram initData
 #     (HMAC-SHA256 signed with the bot token).
-#   * Point HTTPS (Caddy/nginx/cloudflared) at WEBAPP_HOST:PORT.
+#   * Runs either as:
+#       - WSGI app `_webapp_wsgi` (cPanel/Passenger gives it HTTPS
+#         automatically via a Python app subdomain), or
+#       - a local HTTP server on WEBAPP_HOST:PORT when using
+#         `python3 bot.py` directly.
 # ═══════════════════════════════════════════════════════════════
 WEBAPP_HOST = os.getenv('WEBAPP_HOST', '127.0.0.1')
 WEBAPP_PORT = int(os.getenv('WEBAPP_PORT', '8080'))
 WEBAPP_ALLOW_DEV = os.getenv('WEBAPP_ALLOW_DEV', '') in ('1', 'true', 'yes')
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp')
+WEBAPP_JSON_CT = 'application/json; charset=utf-8'
 WEBAPP_MIME = {
     '.html':  'text/html; charset=utf-8',
     '.css':   'text/css; charset=utf-8',
@@ -7074,46 +7080,100 @@ def _webapp_wallets(uid):
     }
 
 
+def _webapp_static(rel):
+    """Serve a file from WEBAPP_DIR -> (status, headers, body_bytes)."""
+    root = os.path.realpath(WEBAPP_DIR)
+    full = os.path.realpath(os.path.join(root, rel))
+    if full != root and not full.startswith(root + os.sep):
+        return 403, [('Content-Type', WEBAPP_JSON_CT), ('Cache-Control', 'no-store')], \
+            json.dumps({'ok': False, 'error': 'forbidden'}).encode('utf-8')
+    if not os.path.isfile(full):
+        return 404, [('Content-Type', 'text/plain; charset=utf-8')], b'not found'
+    ctype = WEBAPP_MIME.get(os.path.splitext(full)[1].lower(), 'application/octet-stream')
+    try:
+        with open(full, 'rb') as f:
+            body = f.read()
+    except Exception:
+        return 404, [('Content-Type', 'text/plain; charset=utf-8')], b'not found'
+    return 200, [('Content-Type', ctype), ('Cache-Control', 'no-cache')], body
+
+
+def _webapp_json(obj, status=200):
+    return status, [('Content-Type', WEBAPP_JSON_CT), ('Cache-Control', 'no-store')], \
+        json.dumps(obj, ensure_ascii=False).encode('utf-8')
+
+
+def _webapp_api(path, uid, qs):
+    try:
+        if path == '/api/prices':
+            return _webapp_json(_webapp_prices())
+        if path == '/api/portfolio':
+            return _webapp_json(_webapp_portfolio(uid))
+        if path == '/api/market':
+            return _webapp_json(_webapp_market())
+        if path == '/api/alerts':
+            return _webapp_json(_webapp_alerts(uid))
+        if path == '/api/alerts/delete':
+            try:
+                alert_id = int(qs.get('alert_id', ''))
+            except (TypeError, ValueError):
+                return _webapp_json({'ok': False, 'error': 'bad request'}, 400)
+            return _webapp_json({'ok': bool(db_delete_alert(alert_id, uid))})
+        if path == '/api/wallets':
+            return _webapp_json(_webapp_wallets(uid))
+        if path == '/api/wallets/delete':
+            address = qs.get('address', '')
+            ok = bool(db_remove_wallet(uid, address)) if address else False
+            return _webapp_json({'ok': ok})
+        return _webapp_json({'ok': False, 'error': 'not found'}, 404)
+    except Exception as e:
+        logger.error(f"WebApp API {path} failed: {e}", exc_info=True)
+        return _webapp_json({'ok': False, 'error': 'server error'}, 500)
+
+
+def _webapp_route(method, path, uid, qs):
+    """Shared router used by both the HTTP server and the WSGI app.
+    Returns (status, headers, body_bytes)."""
+    if path in ('/api/ping', '/api/ping/'):
+        return _webapp_json({'ok': True, 'service': 'earth-crypto-webapp'})
+    if path.startswith('/api/'):
+        if uid is None:
+            return _webapp_json({'ok': False, 'error': 'unauthorized'}, 401)
+        return _webapp_api(path, uid, qs)
+    if path in ('/', '/index.html'):
+        return _webapp_static('index.html')
+    return _webapp_static(path.lstrip('/'))
+
+
+def _webapp_wsgi(environ, start_response):
+    """WSGI entry point for cPanel/Passenger (or any WSGI server)."""
+    path = unquote(environ.get('PATH_INFO', '/') or '/')
+    qs = dict(parse_qsl(environ.get('QUERY_STRING', '')))
+    init_data = environ.get('HTTP_X_TELEGRAM_INIT_DATA', '') or qs.get('initData', '')
+    uid = _webapp_validate_init_data(init_data)
+    if uid is None and WEBAPP_ALLOW_DEV and qs.get('dev_uid'):
+        try:
+            uid = int(qs['dev_uid'])
+        except (TypeError, ValueError):
+            uid = None
+    status, headers, body = _webapp_route(environ.get('REQUEST_METHOD', 'GET'), path, uid, qs)
+    start_response(f"{status} {HTTPStatus(status).phrase}", headers)
+    return [body]
+
+
 class _WebAppHandler(BaseHTTPRequestHandler):
     server_version = "EarthCryptoWebApp/1.0"
 
     def log_message(self, fmt, *args):
         logger.debug("WebApp: " + (fmt % args))
 
-    def _send_json(self, obj, status=200):
-        body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
+    def _send_bytes(self, status, headers, body):
         try:
-            self.wfile.write(body)
-        except Exception:
-            pass
-
-    def _send_file(self, rel):
-        root = os.path.realpath(WEBAPP_DIR)
-        full = os.path.realpath(os.path.join(root, rel))
-        if full != root and not full.startswith(root + os.sep):
-            self._send_json({'ok': False, 'error': 'forbidden'}, 403)
-            return
-        if not os.path.isfile(full):
-            self.send_error(404)
-            return
-        ctype = WEBAPP_MIME.get(os.path.splitext(full)[1].lower(), 'application/octet-stream')
-        try:
-            with open(full, 'rb') as f:
-                body = f.read()
-        except Exception:
-            self.send_error(404)
-            return
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Cache-Control', 'no-cache')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        try:
+            self.send_response(status)
+            for k, v in headers:
+                self.send_header(k, v)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
             self.wfile.write(body)
         except Exception:
             pass
@@ -7134,48 +7194,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
-        if path in ('/api/ping', '/api/ping/'):
-            self._send_json({'ok': True, 'service': 'earth-crypto-webapp'})
-            return
-        if path.startswith('/api/'):
+        qs = dict(parse_qsl(parsed.query))
+        uid = None
+        if path.startswith('/api/') and path not in ('/api/ping', '/api/ping/'):
             uid = self._uid()
-            if uid is None:
-                self._send_json({'ok': False, 'error': 'unauthorized'}, 401)
-                return
-            self._handle_api(path, uid, dict(parse_qsl(parsed.query)))
-            return
-        if path in ('/', '/index.html'):
-            self._send_file('index.html')
-        else:
-            self._send_file(path.lstrip('/'))
-
-    def _handle_api(self, path, uid, qs):
-        try:
-            if path == '/api/prices':
-                self._send_json(_webapp_prices())
-            elif path == '/api/portfolio':
-                self._send_json(_webapp_portfolio(uid))
-            elif path == '/api/market':
-                self._send_json(_webapp_market())
-            elif path == '/api/alerts':
-                self._send_json(_webapp_alerts(uid))
-            elif path == '/api/alerts/delete':
-                try:
-                    alert_id = int(qs.get('alert_id', ''))
-                except (TypeError, ValueError):
-                    self._send_json({'ok': False, 'error': 'bad request'}, 400)
-                    return
-                self._send_json({'ok': bool(db_delete_alert(alert_id, uid))})
-            elif path == '/api/wallets':
-                self._send_json(_webapp_wallets(uid))
-            elif path == '/api/wallets/delete':
-                address = qs.get('address', '')
-                self._send_json({'ok': bool(db_remove_wallet(uid, address)) if address else False})
-            else:
-                self._send_json({'ok': False, 'error': 'not found'}, 404)
-        except Exception as e:
-            logger.error(f"WebApp API {path} failed: {e}", exc_info=True)
-            self._send_json({'ok': False, 'error': 'server error'}, 500)
+        status, headers, body = _webapp_route('GET', path, uid, qs)
+        self._send_bytes(status, headers, body)
 
 
 def start_webapp_server():
@@ -7188,20 +7212,13 @@ def start_webapp_server():
 
 
 # ─────────────────────────────────────────────
-# Entry point - crash recovery polling loop
+# start_bot() - crash recovery polling loop
 # Restarts automatically on network errors or
 # unexpected crashes, with exponential back-off.
+# Used by both `python3 bot.py` and cPanel/Passenger
+# (via passenger_wsgi.py).
 # ─────────────────────────────────────────────
-if __name__ == "__main__":
-    logger.info("=" * 50)
-    logger.info(f"{EMOJIS['rocket']} Crypto Price Bot Starting...")
-    logger.info(f"{EMOJIS['info']} Bot: @{bot.get_me().username}")
-    logger.info(f"{EMOJIS['check']} Status: Running")
-    logger.info(f"{EMOJIS['chart']} Cache timeout: {CACHE_TIMEOUT}s")
-    logger.info(f"{EMOJIS['info']} Rate limit: {USER_RATE_LIMIT} req / {USER_RATE_WINDOW}s per user")
-    logger.info(f"{EMOJIS['info']} Max wallets per user: {MAX_WALLETS_PER_USER}")
-    logger.info("Math evaluation: using simpleeval (safe)")
-
+def start_bot(start_web=True):
     # Start background threads
     threading.Thread(target=_alert_checker_loop, daemon=True, name="AlertChecker").start()
     threading.Thread(target=_digest_loop, daemon=True, name="DigestSender").start()
@@ -7212,14 +7229,12 @@ if __name__ == "__main__":
     threading.Thread(target=lambda: get_usd_to_irr(), daemon=True, name="IRRPreWarm").start()
     logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, price pre-warm, IRR pre-warm)")
 
-    try:
-        start_webapp_server()
-        logger.info(f"{EMOJIS['chart']} Telegram Mini App server ready (webapp/)")
-    except Exception as e:
-        logger.error(f"WebApp server failed to start: {e}")
-
-    logger.info(f"{EMOJIS['star']} Press Ctrl+C to stop")
-    logger.info("=" * 50)
+    if start_web:
+        try:
+            start_webapp_server()
+            logger.info(f"{EMOJIS['chart']} Telegram Mini App server ready (webapp/)")
+        except Exception as e:
+            logger.error(f"WebApp server failed to start: {e}")
 
     RETRY_DELAY_MIN = 5    # seconds before first retry
     RETRY_DELAY_MAX = 300  # cap back-off at 5 minutes
@@ -7243,3 +7258,17 @@ if __name__ == "__main__":
         else:
             # Reset back-off on a clean run
             retry_delay = RETRY_DELAY_MIN
+
+
+if __name__ == "__main__":
+    logger.info("=" * 50)
+    logger.info(f"{EMOJIS['rocket']} Crypto Price Bot Starting...")
+    logger.info(f"{EMOJIS['info']} Bot: @{bot.get_me().username}")
+    logger.info(f"{EMOJIS['check']} Status: Running")
+    logger.info(f"{EMOJIS['chart']} Cache timeout: {CACHE_TIMEOUT}s")
+    logger.info(f"{EMOJIS['info']} Rate limit: {USER_RATE_LIMIT} req / {USER_RATE_WINDOW}s per user")
+    logger.info(f"{EMOJIS['info']} Max wallets per user: {MAX_WALLETS_PER_USER}")
+    logger.info("Math evaluation: using simpleeval (safe)")
+    logger.info(f"{EMOJIS['star']} Press Ctrl+C to stop")
+    logger.info("=" * 50)
+    start_bot()

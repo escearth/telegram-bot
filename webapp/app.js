@@ -49,6 +49,10 @@
       total_trx: "Total TRX",
       refresh: "Refreshed",
       err: "Something went wrong. Pull the bot back up and retry.",
+      err_unauthorized: "Not authorized — open this app from Telegram.",
+      err_timeout: "Request timed out. Pull the bot back up and retry.",
+      err_network: "No connection. Pull the bot back up and retry.",
+      err_badjson: "Unexpected server reply. Pull the bot back up and retry.",
       lang_btn: "EN",
       back: "Back",
     },
@@ -83,6 +87,10 @@
       total_trx: "مجموع TRX",
       refresh: "به‌روزرسانی شد",
       err: "مشکلی پیش آمد. دوباره تلاش کنید.",
+      err_unauthorized: "دسترسی غیرمجاز — این برنامه را از تلگرام باز کنید.",
+      err_timeout: "زمان درخواست تمام شد. ربات را دوباره بالا بیاورید و تلاش کنید.",
+      err_network: "اتصال برقرار نشد. ربات را دوباره بالا بیاورید و تلاش کنید.",
+      err_badjson: "پاسخ سرور نامعتبر بود. ربات را دوباره بالا بیاورید و تلاش کنید.",
       lang_btn: "فا",
       back: "بازگشت",
     }
@@ -136,9 +144,24 @@
     const headers = {};
     if (INIT_DATA) headers["X-Telegram-Init-Data"] = INIT_DATA;
     const url = (DEV_UID && !INIT_DATA) ? `${path}${path.includes("?") ? "&" : "?"}dev_uid=${encodeURIComponent(DEV_UID)}` : path;
-    const res = await fetch(url, { headers });
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
+    let res;
+    try {
+      res = await fetch(url, { headers, signal: ctrl ? ctrl.signal : undefined });
+    } catch (e) {
+      throw new Error(e && e.name === "AbortError" ? "timeout" : "network");
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     if (res.status === 401) throw new Error("unauthorized");
-    const data = await res.json();
+    if (!res.ok) throw new Error("http_" + res.status);
+    let data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      throw new Error("badjson");
+    }
     if (!data || data.ok !== true) throw new Error((data && data.error) || "api");
     return data;
   }
@@ -149,7 +172,13 @@
       return await api(path);
     } catch (e) {
       console.error(e);
-      setError(e.message === "unauthorized" ? "Not authorized" : T("err"));
+      const msg =
+        e.message === "unauthorized" ? T("err_unauthorized") :
+        e.message === "timeout" ? T("err_timeout") :
+        e.message === "network" ? T("err_network") :
+        e.message === "badjson" ? T("err_badjson") :
+        T("err");
+      setError(msg);
       throw e;
     } finally {
       showLoader(false);
