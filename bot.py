@@ -309,6 +309,11 @@ def init_db():
                 exchange TEXT NOT NULL DEFAULT 'coingecko'
             )
         """)
+
+        # ⚡ Bolt: Add indexes for frequently queried fields to prevent full table scans and improve performance
+        c.execute("CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_digest_enabled ON digest_prefs(enabled)")
+
         conn.commit()
         conn.close()
     logger.info("Database initialised")
