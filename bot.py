@@ -257,9 +257,20 @@ _rate_limit_notified_lock = threading.Lock()
 RATE_LIMIT_NOTIFY_COOLDOWN = 60  # Only notify once per minute
 
 
-def init_db():
+
+import contextlib
+
+@contextlib.contextmanager
+def get_db_conn():
     with db_lock:
         conn = sqlite3.connect(DB_FILE)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+def init_db():
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("""
             CREATE TABLE IF NOT EXISTS holdings (
@@ -316,7 +327,6 @@ def init_db():
             )
         """)
         conn.commit()
-        conn.close()
     logger.info("Database initialised")
 
 
@@ -331,12 +341,10 @@ def db_get_lang(user_id: int) -> str:
     with _lang_cache_lock:
         if user_id in _lang_cache:
             return _lang_cache[user_id]
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT lang FROM user_languages WHERE user_id=?", (user_id,))
         row = c.fetchone()
-        conn.close()
     lang = row[0] if row else 'en'
     with _lang_cache_lock:
         _lang_cache[user_id] = lang
@@ -350,15 +358,13 @@ def _get_lang_cached(user_id: int) -> str:
 
 
 def db_set_lang(user_id: int, lang: str) -> None:
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute(
             "INSERT OR REPLACE INTO user_languages (user_id, lang) VALUES (?,?)",
             (user_id, lang)
         )
         conn.commit()
-        conn.close()
     with _lang_cache_lock:
         _lang_cache[user_id] = lang
 
@@ -382,41 +388,34 @@ def _T_cached(user_id: int, key: str, **kwargs) -> str:
 
 
 def db_get_holdings(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT data FROM holdings WHERE user_id=?", (user_id,))
         row = c.fetchone()
-        conn.close()
     return json.loads(row[0]) if row else None
 
 
 def db_set_holdings(user_id, holdings_dict):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute(
             "INSERT OR REPLACE INTO holdings (user_id, data) VALUES (?,?)",
             (user_id, json.dumps(holdings_dict))
         )
         conn.commit()
-        conn.close()
 
 
 def db_get_wallets(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT address FROM wallets WHERE user_id=?", (user_id,))
         rows = c.fetchall()
-        conn.close()
     return [r[0] for r in rows]
 
 
 def db_add_wallet(user_id, address):
     """Returns False if already exists, True on success."""
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         try:
             c.execute("INSERT INTO wallets (user_id, address) VALUES (?,?)", (user_id, address))
@@ -424,30 +423,25 @@ def db_add_wallet(user_id, address):
             success = True
         except sqlite3.IntegrityError:
             success = False
-        conn.close()
     return success
 
 
 def db_clear_wallets(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM wallets WHERE user_id=?", (user_id,))
         affected = c.rowcount
         conn.commit()
-        conn.close()
     return affected > 0
 
 
 def db_remove_wallet(user_id, address):
     """Remove a single wallet. Returns True if it existed."""
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM wallets WHERE user_id=? AND address=?", (user_id, address))
         affected = c.rowcount
         conn.commit()
-        conn.close()
     return affected > 0
 
 
@@ -460,19 +454,16 @@ def db_remove_holding(user_id, symbol):
     if data:
         db_set_holdings(user_id, data)
     else:
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+        with get_db_conn() as conn:
             c = conn.cursor()
             c.execute("DELETE FROM holdings WHERE user_id=?", (user_id,))
             conn.commit()
-            conn.close()
     return True
 
 
 # ── Alerts ────────────────────────────────────
 def db_add_alert(user_id, crypto_id, symbol, target_price, direction):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute(
             "INSERT INTO alerts (user_id, crypto_id, symbol, target_price, direction, created_at) "
@@ -481,119 +472,98 @@ def db_add_alert(user_id, crypto_id, symbol, target_price, direction):
         )
         alert_id = c.lastrowid
         conn.commit()
-        conn.close()
     return alert_id
 
 
 def db_get_alerts(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute(
             "SELECT id, crypto_id, symbol, target_price, direction FROM alerts WHERE user_id=? ORDER BY id",
             (user_id,)
         )
         rows = c.fetchall()
-        conn.close()
     return [{'id': r[0], 'crypto_id': r[1], 'symbol': r[2],
              'target_price': r[3], 'direction': r[4]} for r in rows]
 
 
 def db_get_all_alerts():
     """Used by the alert checker thread."""
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT id, user_id, crypto_id, symbol, target_price, direction FROM alerts")
         rows = c.fetchall()
-        conn.close()
     return [{'id': r[0], 'user_id': r[1], 'crypto_id': r[2],
              'symbol': r[3], 'target_price': r[4], 'direction': r[5]} for r in rows]
 
 
 def db_delete_alert(alert_id, user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM alerts WHERE id=? AND user_id=?", (alert_id, user_id))
         affected = c.rowcount
         conn.commit()
-        conn.close()
     return affected > 0
 
 
 def db_delete_alert_by_id(alert_id):
     """Used internally by the alert firing thread."""
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM alerts WHERE id=?", (alert_id,))
         conn.commit()
-        conn.close()
 
 
 # ── Buy prices (P&L) ──────────────────────────
 def db_set_buy_price(user_id, symbol, buy_price):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute(
             "INSERT OR REPLACE INTO buy_prices (user_id, symbol, buy_price) VALUES (?,?,?)",
             (user_id, symbol.upper(), buy_price)
         )
         conn.commit()
-        conn.close()
 
 
 def db_get_buy_prices(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT symbol, buy_price FROM buy_prices WHERE user_id=?", (user_id,))
         rows = c.fetchall()
-        conn.close()
     return {r[0]: r[1] for r in rows}
 
 
 def db_delete_buy_price(user_id, symbol):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM buy_prices WHERE user_id=? AND symbol=?", (user_id, symbol.upper()))
         conn.commit()
-        conn.close()
 
 
 # ── Daily digest ──────────────────────────────
 def db_set_digest(user_id, enabled: bool, hour: int = 9):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute(
             "INSERT OR REPLACE INTO digest_prefs (user_id, enabled, hour) VALUES (?,?,?)",
             (user_id, int(enabled), hour)
         )
         conn.commit()
-        conn.close()
 
 
 def db_get_digest(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT enabled, hour FROM digest_prefs WHERE user_id=?", (user_id,))
         row = c.fetchone()
-        conn.close()
     return {'enabled': bool(row[0]), 'hour': row[1]} if row else None
 
 
 def db_get_all_digest_users():
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT user_id, hour FROM digest_prefs WHERE enabled=1")
         rows = c.fetchall()
-        conn.close()
     return [{'user_id': r[0], 'hour': r[1]} for r in rows]
 
 
@@ -2535,22 +2505,18 @@ def get_exchange_price(crypto_id, exchange='coingecko'):
 
 
 def get_user_exchange(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT exchange FROM exchange_prefs WHERE user_id=?", (user_id,))
         row = c.fetchone()
-        conn.close()
     return row[0] if row else 'coingecko'
 
 
 def set_user_exchange(user_id, exchange):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO exchange_prefs (user_id, exchange) VALUES (?,?)", (user_id, exchange))
         conn.commit()
-        conn.close()
 
 
 def _fmt_price_with_exchange(price, exchange):
@@ -3428,8 +3394,7 @@ def handle_callback(call):
             return
         
         # Get detailed stats
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+        with get_db_conn() as conn:
             c = conn.cursor()
             
             # Users by language
@@ -3446,7 +3411,6 @@ def handle_callback(call):
             """)
             top_alerts = c.fetchall()
             
-            conn.close()
         
         msg = "📊 <b>Detailed Statistics</b>\n\n"
         msg += "<b>Users by Language:</b>\n"
@@ -3904,8 +3868,7 @@ def handle_callback(call):
 
     if data == "gdpr_delete_confirm":
         bot.answer_callback_query(call.id)
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+        with get_db_conn() as conn:
             c = conn.cursor()
             c.execute("DELETE FROM holdings    WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM buy_prices  WHERE user_id=?", (user_id,))
@@ -3914,7 +3877,6 @@ def handle_callback(call):
             c.execute("DELETE FROM digest_prefs WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM user_languages WHERE user_id=?", (user_id,))
             conn.commit()
-            conn.close()
         del_user_state(user_id)
         with _lang_cache_lock:
             _lang_cache.pop(user_id, None)
@@ -4088,12 +4050,10 @@ def handle_callback(call):
 
     if data == "hclearall_confirm":
         bot.answer_callback_query(call.id)
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+        with get_db_conn() as conn:
             c = conn.cursor()
             c.execute("DELETE FROM holdings WHERE user_id=?", (user_id,))
             conn.commit()
-            conn.close()
         try:
             bot.edit_message_text(
                 T(user_id, 'holdings_cleared'),
@@ -5692,11 +5652,9 @@ def run_tests(message):
     # ── Database ──────────────────────────────────────────
     section("DATABASE")
     try:
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+        with get_db_conn() as conn:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM user_languages")
-            conn.close()
         ok("SQLite connection and user_languages table")
     except Exception as e:
         fail("SQLite", str(e))
@@ -5894,8 +5852,7 @@ def admin_panel(message):
         return
     
     # Get bot statistics
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
+    with get_db_conn() as conn:
         c = conn.cursor()
         
         # Count total users
@@ -5914,7 +5871,6 @@ def admin_panel(message):
         c.execute("SELECT COUNT(*) FROM wallets")
         total_wallets = c.fetchone()[0]
         
-        conn.close()
     
     # Get cache stats
     cache_size = len(_cache)
@@ -5984,12 +5940,10 @@ def handle_text(message):
         del_user_state(user_id)
         
         # Get all users
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+        with get_db_conn() as conn:
             c = conn.cursor()
             c.execute("SELECT DISTINCT user_id FROM user_languages")
             all_users = [row[0] for row in c.fetchall()]
-            conn.close()
         
         from telebot.apihelper import ApiTelegramException
 
@@ -6615,12 +6569,10 @@ def _handle_alert_callbacks(call, data, user_id):
         return True
 
     if data == "alertdelall":
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+        with get_db_conn() as conn:
             c = conn.cursor()
             c.execute("DELETE FROM alerts WHERE user_id=?", (user_id,))
             conn.commit()
-            conn.close()
         try:
             bot.edit_message_text(
                 T(user_id, 'alerts_all_deleted'),
