@@ -2898,10 +2898,7 @@ def _normalize_persian(text: str) -> str:
 def _fmt_number(value: str, user_id: int) -> str:
     """Format a number string in the user's locale digits."""
     lang = db_get_lang(user_id)
-    if lang == 'fa':
-        en_to_fa = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
-        return value.translate(en_to_fa)
-    return value
+    return format_for_locale(value, lang)
 
 
 def evaluate_math(expression, user_id: int = 0):
