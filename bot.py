@@ -201,8 +201,8 @@ def _emoji_send_photo(chat_id, photo, **kwargs):
         emoji_caption = apply_emoji(caption)
         try:
             return _orig_send_photo(chat_id, photo, **{**kwargs, 'caption': emoji_caption})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to use emoji caption, falling back: {e}")
     return _orig_send_photo(chat_id, photo, **kwargs)
 
 def _emoji_edit_message_caption(**kwargs):
@@ -211,8 +211,8 @@ def _emoji_edit_message_caption(**kwargs):
         emoji_caption = apply_emoji(caption)
         try:
             return _orig_edit_message_caption(**{**kwargs, 'caption': emoji_caption})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to use emoji caption, falling back: {e}")
     return _orig_edit_message_caption(**kwargs)
 
 bot.reply_to = _emoji_reply_to
