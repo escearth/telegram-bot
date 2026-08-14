@@ -5462,7 +5462,6 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
     try:
         ids_str = ','.join(ids)
         if ids_str:
-            from functools import partial
             @rate_limited_api_call
             def _fetch_extra():
                 return requests.get(
