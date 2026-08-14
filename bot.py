@@ -5940,20 +5940,8 @@ def admin_panel(message):
 # ─────────────────────────────────────────────
 # General text handler  ← catch-all, must stay LAST
 # ─────────────────────────────────────────────
-@bot.message_handler(func=lambda message: True)
-@rate_limit_check
-@loading_indicator
-def handle_text(message):
-    user_id = message.from_user.id
-    if not message.text:
-        return  # ignore stickers, photos, voice messages, etc.
-    text_original = message.text.strip()
-    # Normalize Persian-Indic digits/operators → ASCII so all regex matches work
-    text = _normalize_persian(text_original)
-    text_lower = text.lower()
-
+def _handle_text_state(message, user_id, text, text_lower, text_original, state):
     # ── State machine ─────────────────────────
-    state = get_user_state(user_id)
 
     # Suggestion forwarding (must be before admin broadcast)
     if state == 'awaiting_suggestion':
@@ -5973,12 +5961,12 @@ def handle_text(message):
                 bot.reply_to(message, T(user_id, 'suggest_fail'))
         else:
             bot.reply_to(message, T(user_id, 'suggest_fail'))
-        return
+        return True
 
     # Admin broadcast
     if state == 'admin_broadcast':
         if not is_owner(user_id):
-            return
+            return True
         
         del_user_state(user_id)
         
@@ -6027,13 +6015,13 @@ def handle_text(message):
             f"Failed: {failed_count}",
             parse_mode='HTML'
         )
-        return
+        return True
 
     # Adding a wallet via the inline ➕ button
     if state == 'add_wallet_inline':
         del_user_state(user_id)
         _process_add_wallet(message, user_id, text.strip())
-        return
+        return True
 
     # Digest custom time input
     if state == 'digest_custom_hour':
@@ -6044,7 +6032,7 @@ def handle_text(message):
                 raise ValueError
         except ValueError:
             bot.reply_to(message, T(user_id, 'invalid_hour'))
-            return
+            return True
         # Default to 9 AM Iran time
         pref = db_get_digest(user_id) or {'enabled': False, 'hour': 9}
         db_set_digest(user_id, pref['enabled'], hour)
@@ -6054,7 +6042,7 @@ def handle_text(message):
             parse_mode='HTML',
             reply_markup=_build_digest_keyboard(pref['enabled'], hour, user_id)
         )
-        return
+        return True
 
     # Convert wizard step 3 - waiting for amount
     if state and state.startswith('convert_'):
@@ -6066,7 +6054,7 @@ def handle_text(message):
             amount = float(text.strip().replace(',', ''))
         except ValueError:
             bot.reply_to(message, T(user_id, 'invalid_amount_conv'), parse_mode='HTML')
-            return
+            return True
         bot.send_chat_action(message.chat.id, 'typing')
         result_val, err = convert_amount(amount, from_cid, to_cid)
         if err:
@@ -6094,7 +6082,7 @@ def handle_text(message):
                 ),
                 parse_mode='HTML'
             )
-        return
+        return True
 
     # Stars amount calculator - waiting for the number of stars
     if state == 'stars_amount':
@@ -6112,7 +6100,7 @@ def handle_text(message):
             stars_price = float(os.getenv('STARS_PRICE_USD', '0.015'))
         msg = _stars_price_lines(user_id, stars_price, amount)
         bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
-        return
+        return True
 
     # Alert wizard step 3 - waiting for target price
     if state and state.startswith('alert_price_'):
@@ -6120,10 +6108,10 @@ def handle_text(message):
         parts_s = state.split('_', 3)
         if len(parts_s) != 4:
             bot.reply_to(message, T(user_id, 'alert_state_error'))
-            return
+            return True
         _, _, cid, direction = parts_s
         _finalize_alert(message, user_id, cid, direction, text.strip())
-        return
+        return True
 
     # Adding a holding via the inline ➕ button
     # Coin picker amount step (from /set, hadd, hpick buttons)
@@ -6153,7 +6141,7 @@ def handle_text(message):
             reply_markup=inner_kb
         )
         logger.info(f"User {user_id} updated holding: {sym}")
-        return
+        return True
 
     # Setting buy price for P&L
     if state and state.startswith('set_buy_price_'):
@@ -6164,7 +6152,7 @@ def handle_text(message):
                 raise ValueError("Price must be positive")
         except ValueError:
             bot.reply_to(message, T(user_id, 'invalid_price'))
-            return
+            return True
         db_set_buy_price(user_id, symbol, buy_price)
         del_user_state(user_id)
         saved = db_get_holdings(user_id) or {}
@@ -6176,7 +6164,7 @@ def handle_text(message):
             parse_mode='HTML',
             reply_markup=build_holdings_keyboard(saved)
         )
-        return
+        return True
 
     # Editing an existing holding amount
     if state and state.startswith('edit_holding_'):
@@ -6200,8 +6188,11 @@ def handle_text(message):
             parse_mode='HTML',
             reply_markup=build_holdings_keyboard(saved, user_id)
         )
-        return
+        return True
 
+    return False
+
+def _handle_text_math(message, user_id, text, text_lower, text_original):
     # Math expressions - accepts ASCII and Persian-Indic digits/operators (normalized above)
     _has_pct_of = ('% of' in text_lower or '%of' in text_lower
                 or '% از' in text_lower or '%از' in text_lower
@@ -6218,8 +6209,11 @@ def handle_text(message):
             or _has_pct_of:
         result = evaluate_math(text_original, user_id)
         bot.reply_to(message, result)
-        return
+        return True
 
+    return False
+
+def _handle_text_fiat(message, user_id, text_lower):
     # USD → Toman (support flexible number formats)
     usd_pattern = r'^([\d.,۰-۹٬٫]+)?\s*(\$|usd|dollar|دلار)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$'
     m = re.match(usd_pattern, text_lower)
@@ -6232,7 +6226,7 @@ def handle_text(message):
         usd_to_irr = get_usd_to_irr()
         if usd_to_irr is None:
             bot.reply_to(message, T(user_id, 'rate_unavailable'), parse_mode='HTML')
-            return
+            return True
         result_toman = amount * Decimal(str(usd_to_irr))
         
         # Format with proper number handling
@@ -6256,7 +6250,7 @@ def handle_text(message):
             add_timestamp(f"💵 <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
-        return
+        return True
 
     # TRY → Toman (support flexible number formats)
     try_pattern = r'^([\d.,۰-۹٬٫]+)?\s*(lira|tl|try|₺)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$'
@@ -6270,7 +6264,7 @@ def handle_text(message):
         try_to_irr = get_try_to_irr()
         if try_to_irr is None:
             bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
-            return
+            return True
         result_toman = amount * Decimal(str(try_to_irr))
 
         user_lang = db_get_lang(user_id)
@@ -6291,7 +6285,7 @@ def handle_text(message):
             add_timestamp(f"💱 <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
-        return
+        return True
 
     # EUR / GBP / AED / CNY → Toman (support flexible number formats)
     fx_defs = [
@@ -6312,7 +6306,7 @@ def handle_text(message):
         fx_to_irr = fx_getter()
         if fx_to_irr is None:
             bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
-            return
+            return True
         result_toman = amount * Decimal(str(fx_to_irr))
 
         user_lang = db_get_lang(user_id)
@@ -6333,8 +6327,11 @@ def handle_text(message):
             add_timestamp(f"{fx_emoji} <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
-        return
+        return True
 
+    return False
+
+def _handle_text_gold(message, user_id, text_lower):
     # Gold → USD (gram to dollar conversion)
     gold_pattern = r'^([\d.,۰-۹٬٫]+)\s*(gold|طل|طلا)\s*(?:to|به)?\s*(\$|usd|dollar|دلار)?$'
     m = re.match(gold_pattern, text_lower)
@@ -6347,7 +6344,7 @@ def handle_text(message):
         xau_price = gold_prices.get('xau')
         if not xau_price:
             bot.reply_to(message, T(user_id, 'price_fetch_fail'))
-            return
+            return True
 
         gram_price = Decimal(str(xau_price)) / Decimal('31.1035')
         result_usd = amount * gram_price
@@ -6361,8 +6358,11 @@ def handle_text(message):
             add_timestamp(f"🥇 <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
-        return
+        return True
 
+    return False
+
+def _handle_text_wallet_and_tx(message, user_id, text):
     # TRON wallet address
     if re.match(r'^[A-Za-z0-9]{34}$', text):
         if is_valid_tron_address(text):
@@ -6371,7 +6371,7 @@ def handle_text(message):
             bot.reply_to(message, add_timestamp(result), parse_mode='HTML')
         else:
             bot.reply_to(message, T(user_id, 'invalid_tron_addr'))
-        return
+        return True
 
     # TON wallet address (48 chars, starts with EQ or UQ)
     if len(text) == 48 and text[:2] in ['EQ', 'UQ']:
@@ -6379,10 +6379,10 @@ def handle_text(message):
             bot.send_chat_action(message.chat.id, 'typing')
             result = get_ton_wallet_balance(text, user_id)
             bot.reply_to(message, add_timestamp(result), parse_mode='HTML')
-            return
+            return True
         else:
             bot.reply_to(message, T(user_id, 'invalid_address'))
-            return
+            return True
 
     # Transaction hash or link - try TRON first, then TON (both use 64-char hex)
     ton_tx_match = re.match(r'^[A-Fa-f0-9]{64}$', text)
@@ -6406,19 +6406,22 @@ def handle_text(message):
         tron_result = get_tron_transaction_details(tx_hash, user_id)
         if tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower():
             bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
-            return
+            return True
         # If TRON failed, try TON
         ton_result = get_ton_transaction_details(tx_hash, user_id)
         bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
-        return
+        return True
 
+    return False
+
+def _handle_text_standalone(message, user_id, text, text_lower):
     # Standalone "try" → show TRY rate
     if text_lower in ('try', 'lira', 'tl', '₺') and not re.search(r'\d', text):
         bot.send_chat_action(message.chat.id, 'typing')
         try_to_irr = get_try_to_irr()
         if try_to_irr is None:
             bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
-            return
+            return True
         user_lang = db_get_lang(user_id)
         toman_label = "Toman" if user_lang == 'en' else "تومان"
         rate_formatted = format_for_locale(format_fiat(Decimal(str(try_to_irr)), decimals=0), user_lang)
@@ -6427,7 +6430,7 @@ def handle_text(message):
             add_timestamp(T(user_id, 'try_rate', rate=rate_formatted)),
             parse_mode='HTML'
         )
-        return
+        return True
 
     # Standalone "gold" / "طلا" / "xau" → show gold price
     if text_lower in ('gold', 'طل', 'طلا', 'xau') and not re.search(r'\d', text):
@@ -6435,10 +6438,13 @@ def handle_text(message):
         msg = _build_gold_message(user_id)
         if not msg:
             bot.reply_to(message, T(user_id, 'price_fetch_fail'))
-            return
+            return True
         bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
-        return
+        return True
 
+    return False
+
+def _handle_text_crypto(message, user_id, text, text_lower):
     # Single crypto symbol → instant sparkline + chart
     parts_raw = text.split()
     text_clean = parts_raw[0] if parts_raw else text
@@ -6468,7 +6474,7 @@ def handle_text(message):
             usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
             if not price_usd:
                 bot.reply_to(message, T(user_id, 'price_fetch_fail'))
-                return
+                return True
             toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
 
             kb = None
@@ -6484,7 +6490,7 @@ def handle_text(message):
                 parse_mode='HTML',
                 reply_markup=kb
             )
-            return
+            return True
 
     # Amount + single crypto (e.g. "10 trx")
     crypto_amount_match = re.match(r'^(\d+(?:\.\d+)?)\s*(\w+)$', text_lower)
@@ -6509,7 +6515,7 @@ def handle_text(message):
                 )
             else:
                 bot.reply_to(message, T(user_id, 'price_fetch_fail'))
-            return
+            return True
 
     # Conversion patterns
     if len(text.split()) <= 4:
@@ -6548,8 +6554,45 @@ def handle_text(message):
                     )
                 else:
                     bot.reply_to(message, T(user_id, 'convert_fail', err=error_msg))
-                return
+                return True
 
+
+    return False
+
+@bot.message_handler(func=lambda message: True, content_types=["text"])
+@rate_limit_check
+@loading_indicator
+def handle_text(message):
+    user_id = message.from_user.id
+    if not message.text:
+        return  # ignore stickers, photos, voice messages, etc.
+    text_original = message.text.strip()
+    # Normalize Persian-Indic digits/operators → ASCII so all regex matches work
+    text = _normalize_persian(text_original)
+    text_lower = text.lower()
+
+    state = get_user_state(user_id)
+
+    if state and _handle_text_state(message, user_id, text, text_lower, text_original, state):
+        return
+
+    if _handle_text_math(message, user_id, text, text_lower, text_original):
+        return
+
+    if _handle_text_fiat(message, user_id, text_lower):
+        return
+
+    if _handle_text_gold(message, user_id, text_lower):
+        return
+
+    if _handle_text_wallet_and_tx(message, user_id, text):
+        return
+
+    if _handle_text_standalone(message, user_id, text, text_lower):
+        return
+
+    if _handle_text_crypto(message, user_id, text, text_lower):
+        return
 
 # ─────────────────────────────────────────────
 # Alert + digest callbacks
