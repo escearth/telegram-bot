@@ -434,7 +434,7 @@
           <div class="alert-info">
             <div class="alert-head">
               <span class="alert-sym">${esc(a.sym)}</span>
-              <span class="alert-tag ${a.direction}">${T(a.direction)}</span>
+              <span class="alert-tag ${esc(a.direction)}">${T(a.direction)}</span>
               ${a.triggered ? `<span class="alert-tag" style="color:var(--gold);background:rgba(227,179,65,.15)">${T("triggered")}</span>` : ""}
             </div>
             <div class="alert-meta">${T("target")}: ${fmtUsd(a.target)} · ${T("current")}: ${fmtUsd(a.price)}</div>
