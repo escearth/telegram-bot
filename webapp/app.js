@@ -180,13 +180,13 @@
     try {
       return await api(path);
     } catch (e) {
-      console.error(e);
+      console.error("API error for", path, ":", e.message, e);
       const msg =
         e.message === "unauthorized" ? T("err_unauthorized") :
         e.message === "timeout" ? T("err_timeout") :
         e.message === "network" ? T("err_network") :
         e.message === "badjson" ? T("err_badjson") :
-        T("err");
+        T("err") + " [" + e.message + "]";
       setError(msg);
       throw e;
     } finally {
