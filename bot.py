@@ -6205,9 +6205,9 @@ def handle_text(message):
 
     # ⚠️ FIX: Validate before attempting math evaluation
     # Must contain digits AND operators, but not ONLY operators
-    has_digit = re.search(r'\d', text)
-    has_operator = any(c in text for c in '+-*/%^')
-    is_only_operator = text.strip() in ['+', '-', '*', '/', '%', '^', '(', ')', '+-', '--', '**', '//', '()', '^']
+    has_digit = bool(re.search(r'\d', text))
+    has_operator = bool(re.search(r'[\+\-\*\/\%\^]', text))
+    is_only_operator = bool(re.match(r'^[\+\-\*\/\%\^\(\)\.\s]+$', text))
 
     if (re.match(r'^[\d+\-*/().%\s^]+$', text) and len(text) > 1
             and has_digit and has_operator and not is_only_operator) \
