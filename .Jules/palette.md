@@ -1,0 +1,3 @@
+## 2024-05-18 - Missing ARIA Labels and Focus Styles on Interactive Elements
+**Learning:** Found a recurring pattern in the Earth Crypto app where icon-only buttons (like refresh, language, delete) and inputs were missing `aria-label`s, which makes the app confusing for screen reader users. Furthermore, interactive elements were completely lacking `:focus-visible` states, severely hindering keyboard navigation.
+**Action:** Always ensure that any icon-only button or custom interactive element includes an appropriate `aria-label`, and verify that `:focus-visible` styles are defined across interactive elements to support keyboard accessibility.
