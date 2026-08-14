@@ -2795,22 +2795,27 @@ def get_iran_gold_prices():
         return cached
     prices = {}
     try:
-        for cid in TGJU_CATEGORY_IDS.values():
+        def fetch_tgju_category(cid):
             r = requests.get(
                 f'https://api.tgju.org/v1/market/list-data?category_ids={cid}&extra_data=1&lang=fa',
                 timeout=10,
                 headers={'User-Agent': 'Mozilla/5.0'}
             )
             r.raise_for_status()
-            data = r.json()
-            for row in data.get('data', []):
-                m = re.search(r'profile/([a-z0-9_]+)', row[0])
-                if not m:
-                    continue
-                slug = m.group(1)
-                price_rial = int(re.sub(r'[^\d]', '', re.sub(r'<[^>]+>', '', row[1])))
-                if price_rial:
-                    prices[slug] = price_rial // 10  # Rial → Toman
+            return r.json()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(TGJU_CATEGORY_IDS))) as executor:
+            futures = {executor.submit(fetch_tgju_category, cid): cid for cid in TGJU_CATEGORY_IDS.values()}
+            for future in concurrent.futures.as_completed(futures):
+                data = future.result()
+                for row in data.get('data', []):
+                    m = re.search(r'profile/([a-z0-9_]+)', row[0])
+                    if not m:
+                        continue
+                    slug = m.group(1)
+                    price_rial = int(re.sub(r'[^\d]', '', re.sub(r'<[^>]+>', '', row[1])))
+                    if price_rial:
+                        prices[slug] = price_rial // 10  # Rial → Toman
         if prices:
             cache_set('iran_gold', prices)
             logger.info(f"Fetched Iran gold prices from tgju: {list(prices)}")
