@@ -169,14 +169,22 @@ def format_crypto(value: Decimal, max_decimals: int = 8) -> str:
         # Strip trailing zeros from decimal part
         dec_part = dec_part.rstrip('0')
         # Add thousands separators to integer part
-        int_part = f"{int(int_part):,}"
+        if int_part == "-0":
+            int_part = "-0"
+        else:
+            int_part = f"{int(int_part):,}"
         # Combine
         if dec_part:
             return f"{int_part}.{dec_part}"
         else:
+            # If no decimal part left and it's "-0", we should just return "0"
+            if int_part == "-0":
+                return "0"
             return int_part
     else:
         # No decimal part
+        if value_str == "-0":
+            return "0"
         return f"{int(value_str):,}"
 
 
