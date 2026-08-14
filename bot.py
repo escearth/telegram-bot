@@ -694,9 +694,10 @@ CACHE_TIMEOUT = 300  # 5 minute default cache for price data
 def cache_get(key):
     """Get cached value, returns None if missing or expired. Cleans up stale entries."""
     with _cache_lock:
-        if key not in _cache:
+        entry = _cache.get(key)
+        if entry is None:
             return None
-        value, timestamp, ttl = _cache[key]
+        value, timestamp, ttl = entry
         if time.time() - timestamp >= ttl:
             del _cache[key]
             return None
@@ -961,10 +962,15 @@ def is_user_rate_limited(user_id: int) -> bool:
     """
     now = time.time()
     with _user_rate_lock:
-        times = _user_request_times[user_id]
-        _user_request_times[user_id] = [t for t in times if now - t < USER_RATE_WINDOW]
-        if len(_user_request_times[user_id]) >= USER_RATE_LIMIT:
-            return True
+        times = _user_request_times.get(user_id)
+        if not times:
+            return False
+
+        # Optimize: only clean if we might be at limit
+        if len(times) >= USER_RATE_LIMIT:
+            _user_request_times[user_id] = [t for t in times if now - t < USER_RATE_WINDOW]
+            if len(_user_request_times[user_id]) >= USER_RATE_LIMIT:
+                return True
         return False
 
 
