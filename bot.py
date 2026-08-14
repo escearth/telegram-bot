@@ -410,6 +410,9 @@ def db_get_wallets(user_id):
 
 def db_add_wallet(user_id, address):
     """Returns False if already exists, True on success."""
+    if not re.match(r'^(T[A-Za-z0-9]{33}|(EQ|UQ)[A-Za-z0-9_-]{46})$', address):
+        raise ValueError("Invalid wallet address format")
+
     with db_lock:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -3234,7 +3237,12 @@ def _process_add_wallet(message, user_id, address):
     if len(existing) >= MAX_WALLETS_PER_USER:
         bot.send_message(chat_id, T(user_id, 'wallet_limit', max=MAX_WALLETS_PER_USER))
         return
-    if db_add_wallet(user_id, address):
+    try:
+        success = db_add_wallet(user_id, address)
+    except ValueError:
+        success = False
+
+    if success:
         kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(T(user_id, 'btn_view_wallets'), callback_data="show_wallets"),
         ]])
