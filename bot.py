@@ -2795,22 +2795,22 @@ def get_iran_gold_prices():
         return cached
     prices = {}
     try:
-        for cid in TGJU_CATEGORY_IDS.values():
-            r = requests.get(
-                f'https://api.tgju.org/v1/market/list-data?category_ids={cid}&extra_data=1&lang=fa',
-                timeout=10,
-                headers={'User-Agent': 'Mozilla/5.0'}
-            )
-            r.raise_for_status()
-            data = r.json()
-            for row in data.get('data', []):
-                m = re.search(r'profile/([a-z0-9_]+)', row[0])
-                if not m:
-                    continue
-                slug = m.group(1)
-                price_rial = int(re.sub(r'[^\d]', '', re.sub(r'<[^>]+>', '', row[1])))
-                if price_rial:
-                    prices[slug] = price_rial // 10  # Rial → Toman
+        cids_str = ",".join(map(str, TGJU_CATEGORY_IDS.values()))
+        r = requests.get(
+            f'https://api.tgju.org/v1/market/list-data?category_ids={cids_str}&extra_data=1&lang=fa',
+            timeout=10,
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        r.raise_for_status()
+        data = r.json()
+        for row in data.get('data', []):
+            m = re.search(r'profile/([a-z0-9_]+)', row[0])
+            if not m:
+                continue
+            slug = m.group(1)
+            price_rial = int(re.sub(r'[^\d]', '', re.sub(r'<[^>]+>', '', row[1])))
+            if price_rial:
+                prices[slug] = price_rial // 10  # Rial → Toman
         if prices:
             cache_set('iran_gold', prices)
             logger.info(f"Fetched Iran gold prices from tgju: {list(prices)}")
