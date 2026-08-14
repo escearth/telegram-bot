@@ -43,7 +43,13 @@ from number_utils import (
 # Animated emoji support (optional - requires Telethon + TG_API_ID/HASH)
 from emoji_utils import apply_emoji, ensure_emoji_map
 
+import simpleeval
 from simpleeval import simple_eval
+
+# Set simpleeval safety limits to prevent DoS attacks via huge numbers
+simpleeval.MAX_POWER = 10000
+simpleeval.MAX_STRING_LENGTH = 10000
+simpleeval.MAX_SHIFT = 1000
 
 cg = CoinGeckoAPI()
 load_dotenv()
@@ -2945,7 +2951,7 @@ def evaluate_math(expression, user_id: int = 0):
         # Evaluate safely using simpleeval
         try:
             result = simple_eval(sanitized)
-        except (SyntaxError, NameError, TypeError, ValueError, ZeroDivisionError):
+        except Exception:
             return T(user_id, 'invalid_expression')
 
         # Format result
