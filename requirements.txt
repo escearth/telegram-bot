@@ -2,7 +2,6 @@ pyTelegramBotAPI
 pycoingecko
 requests
 python-dotenv
-matplotlib
 pytz
 simpleeval
 telethon
