@@ -18,6 +18,14 @@ import re
 import logging
 import threading
 
+try:
+    import telethon
+    import telethon.sync
+    from telethon import functions, types
+    _TELETHON_AVAILABLE = True
+except ImportError:
+    _TELETHON_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Regex matching any emoji in the Unicode ranges used by this bot
 # ---------------------------------------------------------------------------
@@ -133,11 +141,7 @@ _emoji_map_lock = threading.Lock()
 
 
 def _telethon_available() -> bool:
-    try:
-        import telethon  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    return _TELETHON_AVAILABLE
 
 
 def _fetch_emoji_map_via_telethon(logger: logging.Logger) -> dict[str, str]:
@@ -147,9 +151,6 @@ def _fetch_emoji_map_via_telethon(logger: logging.Logger) -> dict[str, str]:
     e.g. ``RestrictedEmoji,MyPack``.  Each pack is fetched via Telethon; emoji
     characters are mapped to their ``DocumentAttributeCustomEmoji`` document IDs.
     """
-    import telethon.sync
-    from telethon import functions, types
-
     api_id = os.getenv('TG_API_ID')
     api_hash = os.getenv('TG_API_HASH')
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
