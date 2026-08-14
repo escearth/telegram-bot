@@ -3,7 +3,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import hmac
 import telebot
 from telebot import types
-from telebot.types import InlineKeyboardButton as IKB
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlparse, unquote
