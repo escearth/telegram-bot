@@ -4008,12 +4008,25 @@ def handle_callback(call):
             return
         # Fetch all prices
         prices = {}
+        cids_to_fetch = set()
+
+        # Determine all required CIDs
         for symbol in holdings:
             cid = detect_currency(symbol.lower())
             if cid:
-                p = get_crypto_price(cid)
-                if p:
-                    prices[cid] = p
+                cids_to_fetch.add(cid)
+
+        # Batch fetch
+        if cids_to_fetch:
+            batch_data = _fetch_prices_batch(','.join(cids_to_fetch))
+            for cid in cids_to_fetch:
+                if batch_data and cid in batch_data and 'usd' in batch_data[cid]:
+                    prices[cid] = batch_data[cid]['usd']
+                else:
+                    # Fallback if not in batch or cache issue
+                    p = get_crypto_price(cid)
+                    if p:
+                        prices[cid] = p
         try:
             img = get_portfolio_chart_image(holdings, prices, user_id)
             bot.send_photo(
