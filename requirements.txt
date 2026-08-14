@@ -6,3 +6,4 @@ matplotlib
 pytz
 simpleeval
 telethon
+waitress

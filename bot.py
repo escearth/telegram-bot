@@ -4,9 +4,9 @@ import hmac
 import telebot
 from telebot import types
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlparse, unquote
 import requests
+import waitress
 import re
 import time
 import logging
@@ -7166,54 +7166,21 @@ def _webapp_wsgi(environ, start_response):
     return [body]
 
 
-class _WebAppHandler(BaseHTTPRequestHandler):
-    server_version = "EarthCryptoWebApp/1.0"
-
-    def log_message(self, fmt, *args):
-        logger.debug("WebApp: " + (fmt % args))
-
-    def _send_bytes(self, status, headers, body):
-        try:
-            self.send_response(status)
-            for k, v in headers:
-                self.send_header(k, v)
-            self.send_header('Content-Length', str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        except Exception:
-            pass
-
-    def _uid(self):
-        init_data = self.headers.get('X-Telegram-Init-Data') or ''
-        qs = dict(parse_qsl(urlparse(self.path).query))
-        if not init_data:
-            init_data = qs.get('initData', '')
-        uid = _webapp_validate_init_data(init_data)
-        if uid is None and WEBAPP_ALLOW_DEV and qs.get('dev_uid'):
-            try:
-                uid = int(qs['dev_uid'])
-            except (TypeError, ValueError):
-                uid = None
-        return uid
-
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = unquote(parsed.path)
-        qs = dict(parse_qsl(parsed.query))
-        uid = None
-        if path.startswith('/api/') and path not in ('/api/ping', '/api/ping/'):
-            uid = self._uid()
-        status, headers, body = _webapp_route('GET', path, uid, qs)
-        self._send_bytes(status, headers, body)
-
-
 def start_webapp_server():
-    server = ThreadingHTTPServer((WEBAPP_HOST, WEBAPP_PORT), _WebAppHandler)
-    server.daemon_threads = True
-    server.allow_reuse_address = True
-    threading.Thread(target=server.serve_forever, daemon=True, name='WebAppServer').start()
-    logger.info(f"WebApp server listening on http://{WEBAPP_HOST}:{WEBAPP_PORT}")
-    return server
+    threading.Thread(
+        target=lambda: waitress.serve(
+            _webapp_wsgi,
+            host=WEBAPP_HOST,
+            port=WEBAPP_PORT,
+            clear_untrusted_proxy_headers=True,
+            threads=4,
+            _quiet=True
+        ),
+        daemon=True,
+        name='WebAppServer'
+    ).start()
+    logger.info(f"WebApp server listening on http://{WEBAPP_HOST}:{WEBAPP_PORT} (Waitress WSGI)")
+    return None
 
 
 # ─────────────────────────────────────────────
