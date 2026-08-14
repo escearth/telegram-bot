@@ -5,7 +5,18 @@ import telebot
 from telebot import types
 from http import HTTPStatus
 from urllib.parse import parse_qsl, urlparse, unquote
+
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Global highly-optimized session
+session = requests.Session()
+retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+adapter = HTTPAdapter(max_retries=retry, pool_connections=50, pool_maxsize=50)
+session.mount('http://', adapter)
+session.mount('https://', adapter)
+
 import waitress
 import re
 import time
@@ -21,7 +32,12 @@ from collections import defaultdict
 from datetime import datetime
 from dotenv import load_dotenv
 from pycoingecko import CoinGeckoAPI
+
+import matplotlib
+matplotlib.use('Agg') # Extremely important for server-side memory
 import matplotlib.pyplot as plt
+import gc
+
 import matplotlib.dates as mdates
 from io import BytesIO
 import concurrent.futures
@@ -790,7 +806,7 @@ def _fetch_prices_coingecko(ids) -> dict:
         return {}
     for attempt in range(2):
         try:
-            resp = requests.get(
+            resp = session.get(
                 f"https://api.coingecko.com/api/v3/simple/price"
                 f"?ids={ids}&vs_currencies=usd&include_24hr_change=true",
                 timeout=8
@@ -810,7 +826,7 @@ def _fetch_prices_coingecko(ids) -> dict:
 def _fetch_coingecko_global() -> dict:
     """Fetch global market data from CoinGecko (rate-limited)."""
     try:
-        resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=8)
+        resp = session.get("https://api.coingecko.com/api/v3/global", timeout=8)
         if resp.status_code == 200:
             return resp.json().get('data', {})
     except Exception as e:
@@ -822,7 +838,7 @@ def _fetch_coingecko_global() -> dict:
 def _fetch_fear_greed() -> dict | None:
     """Fetch Fear & Greed index (rate-limited)."""
     try:
-        resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+        resp = session.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         if resp.status_code == 200:
             data = resp.json().get('data', [{}])[0]
             return data
@@ -842,7 +858,7 @@ def _fetch_prices_coincap(ids) -> dict:
         if not id_list:
             return {}
         cap_ids = ','.join(_COINCAP_ID_MAP.get(i, i) for i in id_list)
-        resp = requests.get(f"https://api.coincap.io/v2/assets?ids={cap_ids}", timeout=10)
+        resp = session.get(f"https://api.coincap.io/v2/assets?ids={cap_ids}", timeout=10)
         if resp.status_code != 200:
             return {}
         data = resp.json().get('data', [])
@@ -870,7 +886,7 @@ def _fetch_prices_binance(ids) -> dict:
         if not id_list:
             return {}
         symbols = [f"{EXCHANGE_SYMBOL_MAP[c]}USDT" for c in id_list]
-        resp = requests.get(
+        resp = session.get(
             "https://api.binance.com/api/v3/ticker/24hr"
             f"?symbols={json.dumps(symbols, separators=(',', ':'))}",
             timeout=10
@@ -2202,7 +2218,7 @@ def get_ton_wallet_balance(address, user_id: int = 0):
     try:
         # Using TON Center API (public)
         url = f"https://toncenter.com/api/v2/getAddressInformation?address={address}"
-        response = requests.get(url, timeout=10)
+        response = session.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         
@@ -2252,7 +2268,7 @@ def get_ton_transaction_details(hash_value, user_id: int = 0):
     try:
         url = f"https://tonapi.io/v2/blockchain/transactions/{hash_value}"
         headers = {'accept': 'application/json'}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = session.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         
@@ -2337,7 +2353,7 @@ def _get_ton_tx_fallback(hash_value):
     try:
         url = f"https://toncenter.com/api/v3/transactionsByMessage?msg_hash={hash_value}"
         headers = {'accept': 'application/json'}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = session.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         
@@ -2415,7 +2431,7 @@ def get_crypto_price(crypto_id, cache_only=False):
     # 1) CoinGecko
     if not cache_get('cg_rate_limited'):
         try:
-            resp = requests.get(
+            resp = session.get(
                 f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd",
                 timeout=8
             )
@@ -2434,7 +2450,7 @@ def get_crypto_price(crypto_id, cache_only=False):
     try:
         sym = EXCHANGE_SYMBOL_MAP.get(crypto_id)
         if sym:
-            resp = requests.get(
+            resp = session.get(
                 "https://api.binance.com/api/v3/ticker/price",
                 params={'symbol': f"{sym}USDT"},
                 timeout=8
@@ -2456,7 +2472,7 @@ def get_crypto_price(crypto_id, cache_only=False):
         }
         sym = sym_map.get(crypto_id)
         if sym:
-            resp = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={sym}&tsyms=USD", timeout=8)
+            resp = session.get(f"https://min-api.cryptocompare.com/data/price?fsym={sym}&tsyms=USD", timeout=8)
             if resp.status_code == 200 and 'USD' in resp.json():
                 price = float(resp.json()['USD'])
                 cache_set(crypto_id, price)
@@ -2505,7 +2521,7 @@ def _fetch_exchange_price(symbol, exchange_id):
         return None
     url = info['url'].format(symbol)
     try:
-        resp = requests.get(url, timeout=8)
+        resp = session.get(url, timeout=8)
         resp.raise_for_status()
         return info['parse'](resp.json())
     except Exception:
@@ -2700,7 +2716,7 @@ def get_usd_to_irr():
     if cached is not None:
         return cached
     try:
-        response = requests.get(
+        response = session.get(
             'https://apiv2.nobitex.ir/market/stats?srcCurrency=usdt&dstCurrency=rls',
             timeout=10
         )
@@ -2760,7 +2776,7 @@ def get_gold_prices():
     # Fallback to Binance (PAXG/USDT - gold-backed token)
     try:
         url = "https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT"
-        response = requests.get(url, timeout=10)
+        response = session.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         
@@ -2791,7 +2807,7 @@ def get_iran_gold_prices():
     prices = {}
     try:
         for cid in TGJU_CATEGORY_IDS.values():
-            r = requests.get(
+            r = session.get(
                 f'https://api.tgju.org/v1/market/list-data?category_ids={cid}&extra_data=1&lang=fa',
                 timeout=10,
                 headers={'User-Agent': 'Mozilla/5.0'}
@@ -2822,7 +2838,7 @@ def _fx_to_irr(code: str, cache_key: str):
     if cached:
         return cached
     try:
-        r = requests.get(f'https://api.exchangerate-api.com/v4/latest/{code}', timeout=8)
+        r = session.get(f'https://api.exchangerate-api.com/v4/latest/{code}', timeout=8)
         if r.status_code == 200:
             fx_to_usd = r.json().get('rates', {}).get('USD')
             if fx_to_usd:
@@ -2961,7 +2977,7 @@ def evaluate_math(expression, user_id: int = 0):
 def get_tron_wallet_trx(address, user_id: int = 0):
     try:
         url = f"https://apilist.tronscan.org/api/account?address={address}"
-        response = requests.get(url, timeout=10)
+        response = session.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         if 'balance' in data:
@@ -3000,7 +3016,7 @@ def get_tron_wallet_trx(address, user_id: int = 0):
 def get_tron_transaction_details(hash_value, user_id: int = 0):
     try:
         url = f"https://apilist.tronscan.org/api/transaction-info?hash={hash_value}"
-        response = requests.get(url, timeout=10)
+        response = session.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         if not data or 'hash' not in data:
@@ -4610,7 +4626,7 @@ def _fetch_trending():
     if cached:
         return cached
     try:
-        resp = requests.get('https://api.coingecko.com/api/v3/search/trending', timeout=10)
+        resp = session.get('https://api.coingecko.com/api/v3/search/trending', timeout=10)
         if resp.status_code != 200:
             return None
         data = resp.json().get('coins', [])
@@ -4637,7 +4653,7 @@ def _fetch_gainers_losers():
     if cached:
         return cached
     try:
-        resp = requests.get(
+        resp = session.get(
             'https://api.coingecko.com/api/v3/coins/markets'
             '?vs_currency=usd&order=volume_desc&per_page=50&page=1'
             '&sparkline=false&price_change_percentage=24h',
@@ -5448,7 +5464,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         if ids_str:
             @rate_limited_api_call
             def _fetch_extra():
-                return requests.get(
+                return session.get(
                     "https://api.coingecko.com/api/v3/simple/price"
                     f"?ids={ids_str}&vs_currencies=usd"
                     f"&include_market_cap=true&include_24hr_vol=true",
@@ -5527,7 +5543,7 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
     if not g:
         for attempt in range(2):
             try:
-                resp = requests.get("https://api.coingecko.com/api/v3/global", timeout=8)
+                resp = session.get("https://api.coingecko.com/api/v3/global", timeout=8)
                 if resp.status_code == 200:
                     g = resp.json().get('data', {})
                     if g:
@@ -5546,7 +5562,7 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
         return
 
     try:
-        fg_resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=8)
+        fg_resp = session.get("https://api.alternative.me/fng/?limit=1", timeout=8)
         fg_data = fg_resp.json().get('data', [{}])[0]
         fg_val   = int(fg_data.get('value', 50))
         fg_label_raw = fg_data.get('value_classification', '?')
@@ -5758,7 +5774,7 @@ def run_tests(message):
 
     # CoinGecko direct
     try:
-        resp = requests.get("https://api.coingecko.com/api/v3/ping", timeout=10)
+        resp = session.get("https://api.coingecko.com/api/v3/ping", timeout=10)
         ok(f"CoinGecko ping: HTTP {resp.status_code}")
     except Exception as e:
         fail("CoinGecko ping", str(e))
@@ -5783,7 +5799,7 @@ def run_tests(message):
 
     # CryptoCompare fallback
     try:
-        resp = requests.get("https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD", timeout=10)
+        resp = session.get("https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD", timeout=10)
         ok(f"CryptoCompare: HTTP {resp.status_code}")
     except Exception as e:
         fail("CryptoCompare", str(e))
@@ -6713,7 +6729,7 @@ def _alert_checker_loop():
                 unique_ids = list({a['crypto_id'] for a in alerts})
                 price_map: dict[str, float] = {}
                 try:
-                    resp = requests.get(
+                    resp = session.get(
                         f"https://api.coingecko.com/api/v3/simple/price"
                         f"?ids={','.join(unique_ids)}&vs_currencies=usd",
                         timeout=10
@@ -6969,7 +6985,7 @@ def _webapp_sparklines(cids):
         return cached
     try:
         ids = ','.join(cids)
-        resp = requests.get(
+        resp = session.get(
             'https://api.coingecko.com/api/v3/coins/markets'
             f'?vs_currency=usd&ids={ids}&sparkline=true', timeout=10)
         if resp.status_code != 200:
@@ -7086,7 +7102,7 @@ def _webapp_alerts(uid):
 
 def _webapp_trx_balance(address):
     try:
-        resp = requests.get(f'https://apilist.tronscan.org/api/account?address={address}', timeout=10)
+        resp = session.get(f'https://apilist.tronscan.org/api/account?address={address}', timeout=10)
         if resp.status_code != 200:
             return None
         sun = resp.json().get('balance', 0)
@@ -7270,6 +7286,102 @@ def _webapp_cache_warmer_loop():
 # Used by both `python3 bot.py` and cPanel/Passenger
 # (via passenger_wsgi.py).
 # ─────────────────────────────────────────────
+
+def _background_scheduler_loop():
+    logger.info("Universal background scheduler loop started.")
+    last_cache_cleanup = time.time()
+    last_alert_check = time.time()
+    last_digest_send = time.time()
+    last_state_cleanup = time.time()
+    last_webapp_cache = time.time()
+    last_gc = time.time()
+
+    # Immediate pre-warm
+    try:
+        _prewarm_prices()
+        _prewarm_charts()
+        get_usd_to_irr()
+    except Exception as e:
+        logger.error(f"Initial pre-warm failed: {e}")
+
+    while True:
+        now = time.time()
+        
+        # 1. Alert Checker (every 60s)
+        if now - last_alert_check >= 60:
+            last_alert_check = now
+            try:
+                # inline logic from _alert_checker_loop
+                alerts = db_get_all_alerts()
+                if alerts:
+                    unique_ids = list({a['crypto_id'] for a in alerts})
+                    price_map = {}
+                    try:
+                        resp = session.get(f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(unique_ids)}&vs_currencies=usd", timeout=10)
+                        if resp.status_code == 200:
+                            price_map = {k: v.get('usd') for k, v in resp.json().items()}
+                    except Exception as e:
+                        logger.error(f"Alert price fetch error: {e}")
+
+                    for a in alerts:
+                        current_p = price_map.get(a['crypto_id'])
+                        if current_p is not None:
+                            _check_alert_condition(a, current_p)
+            except Exception as e:
+                logger.error(f"Alert checker loop error: {e}")
+
+        # 2. WebApp Cache Warmer (every 300s)
+        if now - last_webapp_cache >= 300:
+            last_webapp_cache = now
+            try:
+                ids = ','.join(k for k in CRYPTO_LIST if k != 'telegram-stars')
+                _fetch_prices_batch(ids)
+                _webapp_sparklines(CRYPTO_LIST)
+                _fetch_coingecko_global()
+                get_usd_to_irr()
+            except Exception as e:
+                logger.error(f"WebApp cache warmer failed: {e}")
+
+        # 3. Cache Cleanup (every 300s)
+        if now - last_cache_cleanup >= 300:
+            last_cache_cleanup = now
+            try:
+                cache_cleanup()
+            except Exception as e:
+                pass
+
+        # 4. State Cleanup (every 600s)
+        if now - last_state_cleanup >= 600:
+            last_state_cleanup = now
+            try:
+                _cleanup_user_state()
+            except Exception as e:
+                pass
+
+        # 5. Daily Digest (every 60s check)
+        if now - last_digest_send >= 60:
+            last_digest_send = now
+            try:
+                tehran_tz = pytz.timezone("Asia/Tehran")
+                now_t = datetime.now(tehran_tz)
+                if now_t.hour == 8 and now_t.minute == 0:
+                    # Not calling send_daily_digest directly because it doesn't exist, we must use _digest_loop logic
+                    users = db_get_all_digest_users()
+                    for uid in users:
+                        try:
+                            _send_digest_to_user(uid)
+                        except Exception:
+                            pass
+            except Exception as e:
+                pass
+
+        # 6. Garbage Collection (every 900s)
+        if now - last_gc >= 900:
+            last_gc = now
+            gc.collect()
+
+        time.sleep(10) # Base tick rate
+
 def start_bot(start_web=True):
     # Initialise the animated-emoji mapping (Telethon network call, so do it
     # here at startup rather than at module import).
@@ -7279,15 +7391,8 @@ def start_bot(start_web=True):
         logger.warning(f"Emoji map initialisation failed: {e}")
 
     # Start background threads
-    threading.Thread(target=_alert_checker_loop, daemon=True, name="AlertChecker").start()
-    threading.Thread(target=_digest_loop, daemon=True, name="DigestSender").start()
-    threading.Thread(target=cache_cleanup_loop, daemon=True, name="CacheCleanup").start()
-    threading.Thread(target=_cleanup_user_state_loop, daemon=True, name="UserStateCleanup").start()
-    threading.Thread(target=_prewarm_charts, daemon=True, name="ChartPrewarm").start()
-    threading.Thread(target=_prewarm_prices, daemon=True, name="PricePrewarm").start()
-    threading.Thread(target=lambda: get_usd_to_irr(), daemon=True, name="IRRPreWarm").start()
-    threading.Thread(target=_webapp_cache_warmer_loop, daemon=True, name="WebappCacheWarmer").start()
-    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, price pre-warm, IRR pre-warm, webapp cache warmer)")
+    threading.Thread(target=_background_scheduler_loop, daemon=True, name="Scheduler").start()
+    logger.info(f"{EMOJIS['check']} Universal background scheduler started (replaces 8 legacy threads)")
 
     if start_web:
         try:
