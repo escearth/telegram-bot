@@ -5992,40 +5992,43 @@ def handle_text(message):
         from telebot.apihelper import ApiTelegramException
 
         broadcast_msg = message.text
-        sent_count = 0
-        failed_count = 0
         
-        bot.reply_to(message, f"📢 Broadcasting to {len(all_users)} users...")
+        bot.reply_to(message, f"📢 Broadcasting to {len(all_users)} users in the background...")
         
-        for target_user in all_users:
-            for attempt in range(3):
-                try:
-                    bot.send_message(target_user, broadcast_msg, parse_mode='HTML')
-                    sent_count += 1
-                    time.sleep(0.033)
-                    break
-                except ApiTelegramException as e:
-                    if 'retry after' in str(e).lower():
-                        wait = re.search(r'(\d+)', str(e))
-                        wait_sec = int(wait.group(1)) + 1 if wait else 5
-                        logger.warning(f"Flood wait {wait_sec}s for user {target_user}")
-                        time.sleep(wait_sec)
-                        continue
-                    failed_count += 1
-                    logger.error(f"Broadcast failed for user {target_user}: {e}")
-                    break
-                except Exception as e:
-                    failed_count += 1
-                    logger.error(f"Broadcast failed for user {target_user}: {e}")
-                    break
+        def broadcast_task(users, msg_text, chat_id):
+            sent_count = 0
+            failed_count = 0
+            for target_user in users:
+                for attempt in range(3):
+                    try:
+                        bot.send_message(target_user, msg_text, parse_mode='HTML')
+                        sent_count += 1
+                        time.sleep(0.033)
+                        break
+                    except ApiTelegramException as e:
+                        if 'retry after' in str(e).lower():
+                            wait = re.search(r'(\d+)', str(e))
+                            wait_sec = int(wait.group(1)) + 1 if wait else 5
+                            logger.warning(f"Flood wait {wait_sec}s for user {target_user}")
+                            time.sleep(wait_sec)
+                            continue
+                        failed_count += 1
+                        logger.error(f"Broadcast failed for user {target_user}: {e}")
+                        break
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"Broadcast failed for user {target_user}: {e}")
+                        break
 
-        bot.send_message(
-            message.chat.id,
-            f"✅ <b>Broadcast Complete</b>\n\n"
-            f"Sent: {sent_count}\n"
-            f"Failed: {failed_count}",
-            parse_mode='HTML'
-        )
+            bot.send_message(
+                chat_id,
+                f"✅ <b>Broadcast Complete</b>\n\n"
+                f"Sent: {sent_count}\n"
+                f"Failed: {failed_count}",
+                parse_mode='HTML'
+            )
+
+        threading.Thread(target=broadcast_task, args=(all_users, broadcast_msg, message.chat.id), daemon=True).start()
         return
 
     # Adding a wallet via the inline ➕ button
