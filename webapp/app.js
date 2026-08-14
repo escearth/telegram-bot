@@ -133,6 +133,8 @@
   function setError(msg) {
     const el = document.createElement("div");
     el.className = "error-box";
+    el.setAttribute("role", "alert");
+    el.setAttribute("aria-live", "assertive");
     el.textContent = msg;
     const main = $("#main");
     main.prepend(el);
@@ -203,7 +205,11 @@
   function switchTab(name, force) {
     const current = $("#tabbar .tab-btn.active")?.dataset.tab;
     if (current === name && !force) return;
-    document.querySelectorAll("#tabbar .tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    document.querySelectorAll("#tabbar .tab-btn").forEach((b) => {
+      const isActive = b.dataset.tab === name;
+      b.classList.toggle("active", isActive);
+      b.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
     document.querySelectorAll("#main .tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
     const loaders = { prices: loadPrices, portfolio: loadPortfolio, market: loadMarket, alerts: loadAlerts, wallets: loadWallets };
     loaders[name] && loaders[name]();
