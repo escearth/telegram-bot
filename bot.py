@@ -16,6 +16,7 @@ import functools
 import sys
 import sqlite3
 import hashlib
+from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 from dotenv import load_dotenv
@@ -7084,20 +7085,21 @@ def _webapp_wallets(uid):
 
 def _webapp_static(rel):
     """Serve a file from WEBAPP_DIR -> (status, headers, body_bytes)."""
-    root = os.path.realpath(WEBAPP_DIR)
-    full = os.path.realpath(os.path.join(root, rel))
     try:
-        if os.path.commonpath([root, full]) != root:
+        root_path = Path(WEBAPP_DIR).resolve()
+        rel_path = rel.lstrip('/')
+        full_path = root_path.joinpath(rel_path).resolve()
+
+        if not full_path.is_relative_to(root_path):
             raise ValueError
-    except ValueError:
+    except (ValueError, RuntimeError):
         return 403, [('Content-Type', WEBAPP_JSON_CT), ('Cache-Control', 'no-store')], \
             json.dumps({'ok': False, 'error': 'forbidden'}).encode('utf-8')
-    if not os.path.isfile(full):
+    if not full_path.is_file():
         return 404, [('Content-Type', 'text/plain; charset=utf-8')], b'not found'
-    ctype = WEBAPP_MIME.get(os.path.splitext(full)[1].lower(), 'application/octet-stream')
+    ctype = WEBAPP_MIME.get(full_path.suffix.lower(), 'application/octet-stream')
     try:
-        with open(full, 'rb') as f:
-            body = f.read()
+        body = full_path.read_bytes()
     except Exception:
         return 404, [('Content-Type', 'text/plain; charset=utf-8')], b'not found'
     return 200, [('Content-Type', ctype), ('Cache-Control', 'no-cache')], body
