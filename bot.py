@@ -7243,6 +7243,26 @@ def start_webapp_server():
     return None
 
 
+def _webapp_cache_warmer_loop():
+    """Runs every 5 minutes to fetch prices and market data so they stay warm for webapp users."""
+    logger.info("WebApp cache warmer thread started.")
+    while True:
+        try:
+            # Re-warm prices batch cache (usually done when a user opens the app)
+            ids = ','.join(k for k in CRYPTO_LIST if k != 'telegram-stars')
+            batch = _fetch_prices_batch(ids)
+            
+            # Re-warm sparklines cache
+            _webapp_sparklines(CRYPTO_LIST)
+            
+            # Re-warm global market cache
+            _fetch_coingecko_global()
+        except Exception as e:
+            logger.error(f"WebApp cache warmer failed: {e}")
+        time.sleep(300)
+
+
+
 # ─────────────────────────────────────────────
 # start_bot() - crash recovery polling loop
 # Restarts automatically on network errors or
@@ -7266,7 +7286,8 @@ def start_bot(start_web=True):
     threading.Thread(target=_prewarm_charts, daemon=True, name="ChartPrewarm").start()
     threading.Thread(target=_prewarm_prices, daemon=True, name="PricePrewarm").start()
     threading.Thread(target=lambda: get_usd_to_irr(), daemon=True, name="IRRPreWarm").start()
-    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, price pre-warm, IRR pre-warm)")
+    threading.Thread(target=_webapp_cache_warmer_loop, daemon=True, name="WebappCacheWarmer").start()
+    logger.info(f"{EMOJIS['check']} Background threads started (alerts, digest, cache cleanup, state cleanup, chart pre-warm, price pre-warm, IRR pre-warm, webapp cache warmer)")
 
     if start_web:
         try:

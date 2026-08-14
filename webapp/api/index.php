@@ -17,7 +17,7 @@ if ($path === '/api/prices' || $path === '/api/market') {
 $ch = curl_init('http://127.0.0.1:8080' . $uri);
 curl_setopt_array($ch, [
     CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_TIMEOUT => 15,
+    CURLOPT_TIMEOUT => 30,
     CURLOPT_CONNECTTIMEOUT => 2,
 ]);
 if (isset($_SERVER['HTTP_X_TELEGRAM_INIT_DATA'])) {
