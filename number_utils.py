@@ -13,6 +13,14 @@ import re
 from typing import Optional, Tuple
 
 
+# Pre-compile translation tables for better performance
+_NORMALIZE_TRANS = str.maketrans(
+    '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٪×÷٬٫',
+    '01234567890123456789%*/,.'
+)
+
+_PERSIAN_TRANS = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
+
 def normalize_digits(text: str) -> str:
     """
     Normalize Persian/Arabic digits and operators to ASCII.
@@ -29,18 +37,7 @@ def normalize_digits(text: str) -> str:
     Returns:
         Text with normalized ASCII digits and operators
     """
-    # Persian digits: ۰۱۲۳۴۵۶۷۸۹
-    persian_digits = str.maketrans('۰۱۲۳۴۵۶۷۸۹', '0123456789')
-    # Arabic digits: ٠١٢٣٤٥٦٧٨٩
-    arabic_digits = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
-    # Persian operators and separators
-    persian_ops = str.maketrans('٪×÷٬٫', '%*/,.')
-    
-    text = text.translate(persian_digits)
-    text = text.translate(arabic_digits)
-    text = text.translate(persian_ops)
-    
-    return text
+    return text.translate(_NORMALIZE_TRANS)
 
 
 def parse_number(text: str) -> Optional[Decimal]:
@@ -244,8 +241,7 @@ def format_for_locale(text: str, locale: str = 'en') -> str:
     """
     if locale == 'fa':
         # Convert to Persian digits
-        persian_map = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
-        return text.translate(persian_map)
+        return text.translate(_PERSIAN_TRANS)
     
     return text
 

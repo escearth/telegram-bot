@@ -3,7 +3,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import hmac
 import telebot
 from telebot import types
-from telebot.types import InlineKeyboardButton as IKB
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlparse, unquote
@@ -43,7 +42,13 @@ from number_utils import (
 # Animated emoji support (optional - requires Telethon + TG_API_ID/HASH)
 from emoji_utils import apply_emoji, ensure_emoji_map
 
+import simpleeval
 from simpleeval import simple_eval
+
+# Set simpleeval safety limits to prevent DoS attacks via huge numbers
+simpleeval.MAX_POWER = 10000
+simpleeval.MAX_STRING_LENGTH = 10000
+simpleeval.MAX_SHIFT = 1000
 
 cg = CoinGeckoAPI()
 load_dotenv()
@@ -201,8 +206,8 @@ def _emoji_send_photo(chat_id, photo, **kwargs):
         emoji_caption = apply_emoji(caption)
         try:
             return _orig_send_photo(chat_id, photo, **{**kwargs, 'caption': emoji_caption})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to use emoji caption, falling back: {e}")
     return _orig_send_photo(chat_id, photo, **kwargs)
 
 def _emoji_edit_message_caption(**kwargs):
@@ -211,8 +216,8 @@ def _emoji_edit_message_caption(**kwargs):
         emoji_caption = apply_emoji(caption)
         try:
             return _orig_edit_message_caption(**{**kwargs, 'caption': emoji_caption})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to use emoji caption, falling back: {e}")
     return _orig_edit_message_caption(**kwargs)
 
 bot.reply_to = _emoji_reply_to
@@ -2898,10 +2903,7 @@ def _normalize_persian(text: str) -> str:
 def _fmt_number(value: str, user_id: int) -> str:
     """Format a number string in the user's locale digits."""
     lang = db_get_lang(user_id)
-    if lang == 'fa':
-        en_to_fa = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
-        return value.translate(en_to_fa)
-    return value
+    return format_for_locale(value, lang)
 
 
 def evaluate_math(expression, user_id: int = 0):
@@ -2948,7 +2950,7 @@ def evaluate_math(expression, user_id: int = 0):
         # Evaluate safely using simpleeval
         try:
             result = simple_eval(sanitized)
-        except (SyntaxError, NameError, TypeError, ValueError, ZeroDivisionError):
+        except Exception:
             return T(user_id, 'invalid_expression')
 
         # Format result
@@ -5460,7 +5462,6 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
     try:
         ids_str = ','.join(ids)
         if ids_str:
-            from functools import partial
             @rate_limited_api_call
             def _fetch_extra():
                 return requests.get(
@@ -6208,9 +6209,9 @@ def handle_text(message):
 
     # ⚠️ FIX: Validate before attempting math evaluation
     # Must contain digits AND operators, but not ONLY operators
-    has_digit = re.search(r'\d', text)
-    has_operator = any(c in text for c in '+-*/%^')
-    is_only_operator = text.strip() in ['+', '-', '*', '/', '%', '^', '(', ')', '+-', '--', '**', '//', '()', '^']
+    has_digit = bool(re.search(r'\d', text))
+    has_operator = bool(re.search(r'[\+\-\*\/\%\^]', text))
+    is_only_operator = bool(re.match(r'^[\+\-\*\/\%\^\(\)\.\s]+$', text))
 
     if (re.match(r'^[\d+\-*/().%\s^]+$', text) and len(text) > 1
             and has_digit and has_operator and not is_only_operator) \
@@ -7084,7 +7085,10 @@ def _webapp_static(rel):
     """Serve a file from WEBAPP_DIR -> (status, headers, body_bytes)."""
     root = os.path.realpath(WEBAPP_DIR)
     full = os.path.realpath(os.path.join(root, rel))
-    if full != root and not full.startswith(root + os.sep):
+    try:
+        if os.path.commonpath([root, full]) != root:
+            raise ValueError
+    except ValueError:
         return 403, [('Content-Type', WEBAPP_JSON_CT), ('Cache-Control', 'no-store')], \
             json.dumps({'ok': False, 'error': 'forbidden'}).encode('utf-8')
     if not os.path.isfile(full):
