@@ -7195,6 +7195,10 @@ def _webapp_route(method, path, uid, qs):
     Returns (status, headers, body_bytes)."""
     if path in ('/api/ping', '/api/ping/'):
         return _webapp_json({'ok': True, 'service': 'earth-crypto-webapp'})
+    if path in ('/api/prices', '/api/market'):
+        if uid is not None and _webapp_rate_limited(uid):
+            return _webapp_json({'ok': False, 'error': 'rate limited'}, 429)
+        return _webapp_api(path, uid, qs)
     if path.startswith('/api/'):
         if uid is None:
             return _webapp_json({'ok': False, 'error': 'unauthorized'}, 401)

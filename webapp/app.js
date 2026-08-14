@@ -13,8 +13,10 @@
     } catch (e) { /* non-fatal */ }
   }
 
-  const INIT_DATA = (tg && tg.initData) || "";
-  const DEV_UID = new URLSearchParams(location.search).get("dev_uid");
+  const hashParams = new URLSearchParams(location.hash.startsWith("#") ? location.hash.slice(1) : location.hash);
+  const searchParams = new URLSearchParams(location.search);
+  const INIT_DATA = (tg && tg.initData) || hashParams.get("tgWebAppData") || searchParams.get("initData") || "";
+  const DEV_UID = searchParams.get("dev_uid");
 
   /* ── i18n ──────────────────────────────────────────────────────── */
   const I18N = {
@@ -145,7 +147,12 @@
   async function api(path) {
     const headers = {};
     if (INIT_DATA) headers["X-Telegram-Init-Data"] = INIT_DATA;
-    const url = (DEV_UID && !INIT_DATA) ? `${path}${path.includes("?") ? "&" : "?"}dev_uid=${encodeURIComponent(DEV_UID)}` : path;
+    let url = path;
+    if (DEV_UID && !INIT_DATA) {
+      url += `${url.includes("?") ? "&" : "?"}dev_uid=${encodeURIComponent(DEV_UID)}`;
+    } else if (INIT_DATA) {
+      url += `${url.includes("?") ? "&" : "?"}initData=${encodeURIComponent(INIT_DATA)}`;
+    }
     const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
     let res;
@@ -286,7 +293,12 @@
   async function loadPrices(force) {
     const el = $("#tab-prices");
     if (pricesCache && !force) { renderPrices(pricesCache); return; }
-    try { renderPrices(await request("/api/prices")); } catch (e) { el.innerHTML = emptyState("📉", T("price"), T("err")); }
+    try {
+      renderPrices(await request("/api/prices"));
+    } catch (e) {
+      const msg = e.message === "unauthorized" ? T("err_unauthorized") : T("err");
+      el.innerHTML = emptyState("📉", T("price"), msg);
+    }
   }
 
   /* ── rendering: portfolio ──────────────────────────────────────── */
@@ -356,7 +368,12 @@
 
   async function loadPortfolio(force) {
     const el = $("#tab-portfolio");
-    try { renderPortfolio(await request("/api/portfolio")); } catch (e) { el.innerHTML = emptyState("💼", T("err"), ""); }
+    try {
+      renderPortfolio(await request("/api/portfolio"));
+    } catch (e) {
+      const msg = e.message === "unauthorized" ? T("err_unauthorized") : T("err");
+      el.innerHTML = emptyState("💼", msg, "");
+    }
   }
 
   /* ── rendering: market ─────────────────────────────────────────── */
@@ -425,7 +442,12 @@
 
   async function loadMarket(force) {
     const el = $("#tab-market");
-    try { renderMarket(await request("/api/market")); } catch (e) { el.innerHTML = emptyState("🌍", T("err"), ""); }
+    try {
+      renderMarket(await request("/api/market"));
+    } catch (e) {
+      const msg = e.message === "unauthorized" ? T("err_unauthorized") : T("err");
+      el.innerHTML = emptyState("🌍", msg, "");
+    }
   }
 
   /* ── rendering: alerts ─────────────────────────────────────────── */
@@ -460,7 +482,12 @@
 
   async function loadAlerts(force) {
     const el = $("#tab-alerts");
-    try { renderAlerts(await request("/api/alerts")); } catch (e) { el.innerHTML = emptyState("🔔", T("err"), ""); }
+    try {
+      renderAlerts(await request("/api/alerts"));
+    } catch (e) {
+      const msg = e.message === "unauthorized" ? T("err_unauthorized") : T("err");
+      el.innerHTML = emptyState("🔔", msg, "");
+    }
   }
 
   /* ── rendering: wallets ────────────────────────────────────────── */
@@ -501,7 +528,12 @@
 
   async function loadWallets(force) {
     const el = $("#tab-wallets");
-    try { renderWallets(await request("/api/wallets")); } catch (e) { el.innerHTML = emptyState("👛", T("err"), ""); }
+    try {
+      renderWallets(await request("/api/wallets"));
+    } catch (e) {
+      const msg = e.message === "unauthorized" ? T("err_unauthorized") : T("err");
+      el.innerHTML = emptyState("👛", msg, "");
+    }
   }
 
   /* ── shared ────────────────────────────────────────────────────── */
