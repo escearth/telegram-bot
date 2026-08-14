@@ -84,3 +84,52 @@ def test_apply_emoji_mixed(mock_emoji_map):
     text = "Start 🇹🇷 processing ✅ but skip 🟠 and unknown 👽 with warning ⚠!"
     expected = 'Start <tg-emoji emoji-id="99999">🌍</tg-emoji> processing <tg-emoji emoji-id="12345">✅</tg-emoji> but skip 🟠 and unknown 👽 with warning <tg-emoji emoji-id="11111">\u26a0\ufe0f</tg-emoji>!'
     assert emoji_utils.apply_emoji(text) == expected
+
+
+def test_ensure_emoji_map_already_populated(monkeypatch):
+    """Test that ensure_emoji_map returns immediately if _emoji_map is already populated."""
+    mock_map = {'✅': '12345'}
+    monkeypatch.setattr(emoji_utils, '_emoji_map', mock_map)
+
+    # Mock _telethon_available to verify it is NOT called
+    telethon_called = False
+    def mock_telethon_available():
+        nonlocal telethon_called
+        telethon_called = True
+        return True
+    monkeypatch.setattr(emoji_utils, '_telethon_available', mock_telethon_available)
+
+    result = emoji_utils.ensure_emoji_map()
+    assert result == mock_map
+    assert not telethon_called
+
+
+def test_ensure_emoji_map_telethon_available(monkeypatch):
+    """Test that ensure_emoji_map fetches the map when telethon is available and map is empty."""
+    monkeypatch.setattr(emoji_utils, '_emoji_map', {})
+
+    monkeypatch.setattr(emoji_utils, '_telethon_available', lambda: True)
+
+    mock_fetched_map = {'✅': '54321'}
+    def mock_fetch_emoji_map_via_telethon(logger):
+        return mock_fetched_map
+    monkeypatch.setattr(emoji_utils, '_fetch_emoji_map_via_telethon', mock_fetch_emoji_map_via_telethon)
+
+    result = emoji_utils.ensure_emoji_map()
+    assert result == mock_fetched_map
+    assert emoji_utils._emoji_map == mock_fetched_map
+
+
+def test_ensure_emoji_map_telethon_unavailable(monkeypatch):
+    """Test that ensure_emoji_map logs and returns empty map when telethon is unavailable."""
+    monkeypatch.setattr(emoji_utils, '_emoji_map', {})
+
+    monkeypatch.setattr(emoji_utils, '_telethon_available', lambda: False)
+
+    import logging
+    mock_logger = logging.getLogger("test_emoji")
+
+    # We will just verify it returns the empty map as expected
+    result = emoji_utils.ensure_emoji_map(logger=mock_logger)
+    assert result == {}
+    assert emoji_utils._emoji_map == {}
