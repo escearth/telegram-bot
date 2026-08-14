@@ -206,19 +206,26 @@ def format_fiat(value: Decimal, decimals: int = 2) -> str:
     if decimals == 0:
         # Toman: no decimals
         return f"{int(value):,}"
-    
+
     # Round to specified decimals
     quantum = Decimal(10) ** -decimals
     value_rounded = value.quantize(quantum, rounding=ROUND_DOWN)
-    
-    # Format with fixed decimals
-    format_str = f"{{:,.{decimals}f}}"
-    result = format_str.format(float(value_rounded))
-    
+
+    # Format with fixed decimals using Decimal only (no float() round-trip,
+    # which could lose precision on very large values).
+    value_str = format(value_rounded, 'f')
+    if '.' in value_str:
+        int_part, dec_part = value_str.split('.')
+    else:
+        int_part, dec_part = value_str, ''
+    result = f"{int(int_part):,}"
+    if dec_part:
+        result += "." + dec_part
+
     # Strip .00 for whole numbers (only when decimals=2)
     if decimals == 2 and result.endswith('.00'):
         result = result[:-3]
-    
+
     return result
 
 

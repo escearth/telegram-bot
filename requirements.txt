@@ -7,3 +7,4 @@ pytz
 simpleeval
 telethon
 waitress
+pytest

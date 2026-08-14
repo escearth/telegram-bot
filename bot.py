@@ -148,9 +148,8 @@ def _send_join_required(chat_id: int):
     )
 
 
-# ── Animated emoji setup ──────────────────────────────────────────────
-ensure_emoji_map(logger)
-
+# ── Animated emoji setup (initialised lazily in start_bot to avoid
+#    import-time network calls to Telegram via Telethon) ───────────────
 _TG_EMOJI_RE = re.compile(r'<tg-emoji[^>]*>|</tg-emoji>')
 
 def _strip_emoji_tags(text: str) -> str:
@@ -261,8 +260,16 @@ RATE_LIMIT_NOTIFY_COOLDOWN = 60  # Only notify once per minute
 
 import contextlib
 
+_db_initialized = False
+
+
 @contextlib.contextmanager
 def get_db_conn():
+    global _db_initialized
+    if not _db_initialized:
+        with db_lock:
+            if not _db_initialized:
+                init_db()
     with db_lock:
         conn = sqlite3.connect(DB_FILE)
         try:
@@ -270,8 +277,11 @@ def get_db_conn():
         finally:
             conn.close()
 
+
 def init_db():
-    with get_db_conn() as conn:
+    global _db_initialized
+    conn = sqlite3.connect(DB_FILE)
+    try:
         c = conn.cursor()
         c.execute("""
             CREATE TABLE IF NOT EXISTS holdings (
@@ -328,6 +338,9 @@ def init_db():
             )
         """)
         conn.commit()
+    finally:
+        conn.close()
+    _db_initialized = True
     logger.info("Database initialised")
 
 
@@ -567,8 +580,6 @@ def db_get_all_digest_users():
         rows = c.fetchall()
     return [{'user_id': r[0], 'hour': r[1]} for r in rows]
 
-
-init_db()
 
 # ─────────────────────────────────────────────
 # Helper Functions - Timestamps, Security, Monitoring
@@ -1051,6 +1062,12 @@ def _cleanup_stale_dicts():
         for cid in stale:
             del group_message_history[cid]
             group_slowdown_last_warning.pop(cid, None)
+    # _webapp_rate_times - remove users with no recent activity
+    with _webapp_rate_lock:
+        stale = [uid for uid, times in _webapp_rate_times.items()
+                 if not times or now - max(times) > WEBAPP_RATE_WINDOW * 2]
+        for uid in stale:
+            del _webapp_rate_times[uid]
 
 
 _me_cache = None
@@ -2923,6 +2940,8 @@ def evaluate_math(expression, user_id: int = 0):
         # Evaluate safely using simpleeval
         try:
             result = simple_eval(sanitized)
+        except ZeroDivisionError:
+            return T(user_id, 'division_by_zero')
         except Exception:
             return T(user_id, 'invalid_expression')
 
@@ -2931,8 +2950,6 @@ def evaluate_math(expression, user_id: int = 0):
             result = int(result)
         expr_display = _normalize_persian(original_expr)
         return T(user_id, 'math_result', expr=expr_display, result=f"{result:,}")
-    except ZeroDivisionError:
-        return T(user_id, 'division_by_zero')
     except Exception as e:
         logger.error(f"Math evaluation error: {e}")
         return T(user_id, 'invalid_expression')
@@ -3084,13 +3101,10 @@ def start(message):
         return
     # On first /start, show language picker if no language set yet
     if message.text and message.text.strip().lower() == '/start':
-        import sqlite3 as _sq
-        with db_lock:
-            _c = _sq.connect(DB_FILE)
-            cur = _c.cursor()
-            cur.execute("SELECT lang FROM user_languages WHERE user_id=?", (user_id,))
-            _row = cur.fetchone()
-            _c.close()
+        with get_db_conn() as conn:
+            _row = conn.cursor().execute(
+                "SELECT lang FROM user_languages WHERE user_id=?", (user_id,)
+            ).fetchone()
         if _row is None:
             _send_language_picker(message.chat.id)
             return
@@ -3323,6 +3337,12 @@ def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, u
 # ─────────────────────────────────────────────
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
+    if call.message is None:
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+        return
     user_id = call.from_user.id
     data = call.data
     message_id = call.message.message_id
@@ -3343,13 +3363,10 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, "✅ Welcome! You're verified.")
             # Re-send welcome
             name = call.from_user.first_name or "there"
-            import sqlite3 as _sq
-            with db_lock:
-                _c = _sq.connect(DB_FILE)
-                cur = _c.cursor()
-                cur.execute("SELECT lang FROM user_languages WHERE user_id=?", (user_id,))
-                _row = cur.fetchone()
-                _c.close()
+            with get_db_conn() as conn:
+                _row = conn.cursor().execute(
+                    "SELECT lang FROM user_languages WHERE user_id=?", (user_id,)
+                ).fetchone()
             if _row is None:
                 _send_language_picker(call.message.chat.id)
             else:
@@ -6879,6 +6896,11 @@ bot.process_new_updates = _safe_process_new_updates
 WEBAPP_HOST = os.getenv('WEBAPP_HOST', '127.0.0.1')
 WEBAPP_PORT = int(os.getenv('WEBAPP_PORT', '8080'))
 WEBAPP_ALLOW_DEV = os.getenv('WEBAPP_ALLOW_DEV', '') in ('1', 'true', 'yes')
+if WEBAPP_ALLOW_DEV:
+    logger.warning(
+        "⚠️  WEBAPP_ALLOW_DEV is ENABLED — anyone passing ?dev_uid=<id> can "
+        "impersonate any user and read/delete their data. NEVER enable in production!"
+    )
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp')
 WEBAPP_JSON_CT = 'application/json; charset=utf-8'
 WEBAPP_MIME = {
@@ -6903,6 +6925,17 @@ def _webapp_validate_init_data(init_data):
         return None
     received_hash = params.pop('hash', None)
     if not received_hash:
+        return None
+    # Reject initData older than 24h (Telegram spec) so stolen tokens can't
+    # be replayed indefinitely. auth_date is required and part of the HMAC.
+    auth_date = params.get('auth_date')
+    if not auth_date:
+        return None
+    try:
+        auth_ts = int(auth_date)
+    except (TypeError, ValueError):
+        return None
+    if abs(time.time() - auth_ts) > 86400:
         return None
     data_check = "\n".join(f"{k}={params[k]}" for k in sorted(params))
     secret = hmac.new(b"WebAppData", TELEGRAM_BOT_TOKEN.encode('utf-8'), hashlib.sha256).digest()
@@ -7138,6 +7171,25 @@ def _webapp_api(path, uid, qs):
         return _webapp_json({'ok': False, 'error': 'server error'}, 500)
 
 
+# ── WebApp API per-user rate limiting ─────────────────────────────────
+WEBAPP_RATE_LIMIT = 60
+WEBAPP_RATE_WINDOW = 60
+_webapp_rate_times: dict[int, list[float]] = defaultdict(list)
+_webapp_rate_lock = threading.Lock()
+
+
+def _webapp_rate_limited(uid: int) -> bool:
+    """Return True if the user exceeded the WebApp API rate limit."""
+    now = time.time()
+    with _webapp_rate_lock:
+        times = _webapp_rate_times[uid]
+        _webapp_rate_times[uid] = [t for t in times if now - t < WEBAPP_RATE_WINDOW]
+        if len(_webapp_rate_times[uid]) >= WEBAPP_RATE_LIMIT:
+            return True
+        _webapp_rate_times[uid].append(now)
+        return False
+
+
 def _webapp_route(method, path, uid, qs):
     """Shared router used by both the HTTP server and the WSGI app.
     Returns (status, headers, body_bytes)."""
@@ -7146,6 +7198,8 @@ def _webapp_route(method, path, uid, qs):
     if path.startswith('/api/'):
         if uid is None:
             return _webapp_json({'ok': False, 'error': 'unauthorized'}, 401)
+        if _webapp_rate_limited(uid):
+            return _webapp_json({'ok': False, 'error': 'rate limited'}, 429)
         return _webapp_api(path, uid, qs)
     if path in ('/', '/index.html'):
         return _webapp_static('index.html')
@@ -7193,6 +7247,13 @@ def start_webapp_server():
 # (via passenger_wsgi.py).
 # ─────────────────────────────────────────────
 def start_bot(start_web=True):
+    # Initialise the animated-emoji mapping (Telethon network call, so do it
+    # here at startup rather than at module import).
+    try:
+        ensure_emoji_map(logger)
+    except Exception as e:
+        logger.warning(f"Emoji map initialisation failed: {e}")
+
     # Start background threads
     threading.Thread(target=_alert_checker_loop, daemon=True, name="AlertChecker").start()
     threading.Thread(target=_digest_loop, daemon=True, name="DigestSender").start()

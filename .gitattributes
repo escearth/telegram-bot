@@ -1,0 +1,19 @@
+* text=auto
+
+# Lock line endings for Python/JS/CSS/HTML so diffs stay clean
+*.py     text eol=lf
+*.js     text eol=lf
+*.css    text eol=lf
+*.html   text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.json   text eol=lf
+
+# Binary files
+*.png    binary
+*.jpg    binary
+*.gif    binary
+*.ico    binary
+*.woff2  binary
+*.db     binary
+*.session binary
