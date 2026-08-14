@@ -7084,7 +7084,10 @@ def _webapp_static(rel):
     """Serve a file from WEBAPP_DIR -> (status, headers, body_bytes)."""
     root = os.path.realpath(WEBAPP_DIR)
     full = os.path.realpath(os.path.join(root, rel))
-    if full != root and not full.startswith(root + os.sep):
+    try:
+        if os.path.commonpath([root, full]) != root:
+            raise ValueError
+    except ValueError:
         return 403, [('Content-Type', WEBAPP_JSON_CT), ('Cache-Control', 'no-store')], \
             json.dumps({'ok': False, 'error': 'forbidden'}).encode('utf-8')
     if not os.path.isfile(full):
