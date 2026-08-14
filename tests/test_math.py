@@ -37,8 +37,10 @@ def test_evaluate_math_persian():
 def test_evaluate_math_invalid():
     assert evaluate_math("invalid") == "❌ Invalid expression."
     assert evaluate_math("2 + ") == "❌ Invalid expression."
-    assert evaluate_math("1 / 0") == "❌ Invalid expression."
     assert evaluate_math("+") == "❌ Invalid expression."
+
+def test_evaluate_math_division_by_zero():
+    assert evaluate_math("1 / 0") == "❌ Division by zero."
 
 def test_evaluate_math_large_numbers():
     assert evaluate_math("1000 * 1000") == "✅ 1000 * 1000 = 1,000,000"
