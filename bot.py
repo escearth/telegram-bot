@@ -7065,8 +7065,16 @@ def _webapp_wallets(uid):
     trx_price = get_crypto_price('tron')
     items = []
     total_trx = 0.0
+
+    balances = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        fut_map = {ex.submit(_webapp_trx_balance, addr): addr for addr in wallets}
+        for fut in concurrent.futures.as_completed(fut_map):
+            addr = fut_map[fut]
+            balances[addr] = fut.result()
+
     for addr in wallets:
-        bal = _webapp_trx_balance(addr)
+        bal = balances.get(addr)
         if bal is not None:
             total_trx += bal
         items.append({
