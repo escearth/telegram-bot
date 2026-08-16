@@ -1373,8 +1373,8 @@ STRINGS = {
             "<code>/digest</code> — daily summary settings\n"
             "<code>/alert</code> — set a new price alert\n"
             "<code>/alerts</code> — manage your alerts\n"
-            "<code>/wallets</code> — manage TRON addresses\n"
-            "<code>/mywallets</code> — live TRX balances\n"
+            "<code>/wallets</code> — manage TRON \x26amp; TON addresses\n"
+            "<code>/mywallets</code> — live wallet balances\n"
             "<code>/clearwallets</code> — remove all saved wallets</blockquote>\n\n"
             "⚙️ <b>Settings &amp; More</b>\n"
             "<blockquote><code>/language</code> — switch language (English / فارسی)\n"
@@ -1408,7 +1408,7 @@ STRINGS = {
             "Earth Crypto stores the following data linked to your Telegram user ID:\n\n"
             "• <b>Holdings</b> - coin amounts you set via /set or /holdings\n"
             "• <b>Buy prices</b> - average buy prices for P&amp;L tracking\n"
-            "• <b>Wallets</b> - TRON wallet addresses you add via /wallets\n"
+            "• <b>Wallets</b> - TRON & TON wallet addresses you add via /wallets\n"
             "• <b>Alerts</b> - price alert targets you set via /alert\n"
             "• <b>Digest preference</b> - your daily digest on/off setting and time\n"
             "• <b>Language</b> - your chosen interface language\n\n"
@@ -1438,7 +1438,7 @@ STRINGS = {
         'wallets_header':      "👛 <b>Your Saved Wallets</b>\n",
         'wallet_added':        "✅ <b>Wallet added!</b>\n\n<code>{address}</code>\n\nYou now have {count}/{max} wallets saved.",
         'wallet_limit':        "⚠️ Wallet limit reached ({max} max).\nUse /wallets to remove one first.",
-        'wallet_invalid':      "❌ <b>Invalid address</b>\n\n<code>{address}</code>\n\nA TRON address starts with <b>T</b> and is exactly <b>34 characters</b> long. Please double-check and try again.",
+        'wallet_invalid':      "❌ <b>Invalid address</b>\n\n<code>{address}</code>\n\nSupported formats:\n• <b>TRON</b> — starts with <b>T</b>, 34 characters\n• <b>TON</b> — starts with <b>EQ</b> or <b>UQ</b>, 48 characters\n\nPlease double-check and try again.",
         'wallet_already_saved':"⚠️ This wallet is already saved.",
         'wallet_not_found':    "Wallet not found - list may have changed.",
         'wallet_removed_toast':"✅ Wallet removed.",
@@ -1448,7 +1448,7 @@ STRINGS = {
         'btn_add_wallet':      "➕ Add Wallet",
         'btn_close':           "❌ Close",
         'btn_remove':          "🗑 Remove",
-        'send_wallet_addr':    "🔗 Send your TRON wallet address:\n(or /cancel to abort)",
+        'send_wallet_addr':    "🔗 Send your TRON or TON wallet address:\n(or /cancel to abort)",
         'no_balance':          "❌ No balance found for this address.",
         'trx_balance':         "👛 TRX Balance: {bal} TRX",
         'tron_timeout':        "⏳ Request timed out. Try again.",
@@ -1766,8 +1766,8 @@ STRINGS = {
             "<code>/digest</code> — تنظیمات خلاصه روزانه\n"
             "<code>/alert</code> — تنظیم هشدار قیمت جدید\n"
             "<code>/alerts</code> — مدیریت هشدارهای شما\n"
-            "<code>/wallets</code> — مدیریت آدرس‌های ترون\n"
-            "<code>/mywallets</code> — موجودی زنده TRX\n"
+            "<code>/wallets</code> — مدیریت آدرس‌های ترون و تان\n"
+            "<code>/mywallets</code> — موجودی زنده کیف پول‌ها\n"
             "<code>/clearwallets</code> — حذف همه کیف پول‌ها</blockquote>\n\n"
             "⚙️ <b>تنظیمات و موارد دیگر</b>\n"
             "<blockquote><code>/language</code> — تغییر زبان (English / فارسی)\n"
@@ -1801,7 +1801,7 @@ STRINGS = {
             "Earth Crypto اطلاعات زیر را مرتبط با شناسه تلگرام شما ذخیره می‌کند:\n\n"
             "• <b>دارایی‌ها</b> - مقادیر ارز که از طریق /set یا /holdings وارد کردید\n"
             "• <b>قیمت خرید</b> - میانگین قیمت خرید برای محاسبه سود/زیان\n"
-            "• <b>کیف پول‌ها</b> - آدرس‌های ترون که اضافه کردید\n"
+            "• <b>کیف پول‌ها</b> - آدرس‌های ترون و تان که اضافه کردید\n"
             "• <b>هشدارها</b> - اهداف قیمتی که تنظیم کردید\n"
             "• <b>تنظیمات خلاصه</b> - وضعیت و زمان خلاصه روزانه\n"
             "• <b>زبان</b> - زبان انتخابی شما\n\n"
@@ -1831,7 +1831,7 @@ STRINGS = {
         'wallets_header':      "👛 <b>کیف پول‌های ذخیره‌شده</b>\n",
         'wallet_added':        "✅ <b>کیف پول اضافه شد!</b>\n\n<code>{address}</code>\n\nشما {count}/{max} کیف پول دارید.",
         'wallet_limit':        "⚠️ به حداکثر تعداد کیف پول ({max}) رسیدید.\nاول یکی را با /wallets حذف کنید.",
-        'wallet_invalid':      "❌ <b>آدرس نامعتبر</b>\n\n<code>{address}</code>\n\nآدرس ترون با <b>T</b> شروع می‌شود و دقیقاً <b>۳۴ کاراکتر</b> دارد. لطفاً دوباره بررسی کنید.",
+        'wallet_invalid':      "❌ <b>آدرس نامعتبر</b>\n\n<code>{address}</code>\n\nفرمت‌های پشتیبانی‌شده:\n• <b>ترون</b> — با <b>T</b> شروع می‌شود، ۳۴ کاراکتر\n• <b>تان</b> — با <b>EQ</b> یا <b>UQ</b> شروع می‌شود، ۴۸ کاراکتر\n\nلطفاً دوباره بررسی کنید.",
         'wallet_already_saved':"⚠️ این کیف پول قبلاً ذخیره شده.",
         'wallet_not_found':    "کیف پول پیدا نشد - لیست ممکن است تغییر کرده باشد.",
         'wallet_removed_toast':"✅ کیف پول حذف شد.",
@@ -1841,7 +1841,7 @@ STRINGS = {
         'btn_add_wallet':      "➕ افزودن کیف پول",
         'btn_close':           "❌ بستن",
         'btn_remove':          "🗑 حذف",
-        'send_wallet_addr':    "🔗 آدرس کیف پول ترون خود را بفرستید:\n(یا /cancel برای لغو)",
+        'send_wallet_addr':    "🔗 آدرس کیف پول ترون یا تان خود را بفرستید:\n(یا /cancel برای لغو)",
         'no_balance':          "❌ موجودی برای این آدرس یافت نشد.",
         'trx_balance':         "👛 موجودی TRX: {bal} TRX",
         'tron_timeout':        "⏳ درخواست منقضی شد. دوباره امتحان کنید.",
@@ -2204,6 +2204,28 @@ def is_valid_ton_address(address: str) -> bool:
             return True
     
     return False
+
+
+def detect_wallet_chain(address: str) -> str | None:
+    """Detect blockchain from wallet address format.
+    Returns 'tron', 'ton', or None if unrecognised."""
+    if not address:
+        return None
+    if len(address) == 34 and address.startswith('T'):
+        return 'tron'
+    if len(address) == 48 and address[:2] in ('EQ', 'UQ'):
+        return 'ton'
+    return None
+
+
+def get_wallet_balance(address: str, user_id: int = 0) -> str:
+    """Fetch balance for any supported wallet address (auto-detects chain)."""
+    chain = detect_wallet_chain(address)
+    if chain == 'tron':
+        return get_tron_wallet_trx(address, user_id)
+    elif chain == 'ton':
+        return get_ton_wallet_balance(address, user_id)
+    return "❌ Unknown wallet type"
 
 
 def get_ton_wallet_balance(address, user_id: int = 0):
@@ -3246,7 +3268,12 @@ def donate_cmd(message):
 
 def _process_add_wallet(message, user_id, address):
     chat_id = message.chat.id
-    if not is_valid_tron_address(address):
+    chain = detect_wallet_chain(address)
+    if chain == 'tron' and not is_valid_tron_address(address):
+        chain = None  # looks like TRON but fails checksum
+    elif chain == 'ton' and not is_valid_ton_address(address):
+        chain = None  # looks like TON but fails validation
+    if chain is None:
         bot.send_message(
             chat_id,
             T(user_id, 'wallet_invalid', address=html.escape(address)),
@@ -3267,7 +3294,7 @@ def _process_add_wallet(message, user_id, address):
             parse_mode='HTML',
             reply_markup=kb
         )
-        logger.info(f"User {user_id} added wallet {address[:6]}…{address[-4:]}")
+        logger.info(f"User {user_id} added {chain.upper()} wallet {address[:6]}…{address[-4:]}")
     else:
         bot.send_message(chat_id, T(user_id, 'wallet_already_saved'))
 
@@ -3276,14 +3303,23 @@ def _process_add_wallet(message, user_id, address):
 # Inline keyboard builders
 # ─────────────────────────────────────────────
 
+def _wallet_chain_icon(addr: str) -> str:
+    """Return a chain icon prefix for display."""
+    chain = detect_wallet_chain(addr)
+    if chain == 'ton':
+        return '💎'  # TON diamond
+    return '🔗'      # TRON default
+
+
 def build_wallets_keyboard(wallets: list[str], user_id: int = 0) -> types.InlineKeyboardMarkup:
-    """One row per wallet: [🔗 Txxx…xxx]  [🗑 Remove]
+    """One row per wallet: [💎/🔗 Txxx…xxx]  [🗑 Remove]
     Plus an ➕ Add Wallet button at the bottom."""
     keyboard = []
     for i, addr in enumerate(wallets):
         short = f"{addr[:6]}…{addr[-4:]}"
+        icon = _wallet_chain_icon(addr)
         keyboard.append([
-            types.InlineKeyboardButton(f"🔗 {short}", callback_data=f"wnoop_{i}"),
+            types.InlineKeyboardButton(f"{icon} {short}", callback_data=f"wnoop_{i}"),
             types.InlineKeyboardButton(T(user_id, 'btn_remove'), callback_data=f"wrem_{i}"),
         ])
     keyboard.append([
@@ -3322,7 +3358,9 @@ def wallets_message_text(wallets: list[str], user_id: int = 0) -> str:
     header = T(user_id, 'wallets_header')
     rows = []
     for i, addr in enumerate(wallets, 1):
-        rows.append(f"{i}. <code>{html.escape(addr)}</code>")
+        chain = detect_wallet_chain(addr)
+        chain_tag = 'TON' if chain == 'ton' else 'TRC'
+        rows.append(f"{i}. [{chain_tag}] <code>{html.escape(addr)}</code>")
     return header + quote("\n".join(rows))
 
 
@@ -4244,13 +4282,14 @@ def show_wallets_with_balance(message):
         return
     bot.send_chat_action(message.chat.id, 'typing')
     reply = T(user_id, 'wallets_balances_hdr')
-    # Fetch all wallet balances in parallel
+    # Fetch all wallet balances in parallel (auto-detect chain)
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        fut_map = {ex.submit(get_tron_wallet_trx, addr, user_id): addr for addr in wallets}
+        fut_map = {ex.submit(get_wallet_balance, addr, user_id): addr for addr in wallets}
         for fut in concurrent.futures.as_completed(fut_map):
             addr = fut_map[fut]
             balance_msg = fut.result()
-            reply += f"🔗 <code>{html.escape(addr)}</code>\n {balance_msg}\n\n"
+            icon = _wallet_chain_icon(addr)
+            reply += f"{icon} <code>{html.escape(addr)}</code>\n {balance_msg}\n\n"
     bot.reply_to(message, reply, parse_mode='HTML')
     logger.info(f"User {user_id} viewed wallets with balances")
 
@@ -5232,7 +5271,7 @@ def inline_query_handler(inline_query):
                             html=True
                         ))
                         try:
-                            bal = get_tron_wallet_trx(addr, uid)
+                            bal = get_wallet_balance(addr, uid)
                             results.append(article(
                                 f"wbal_{i}", f"👛 {wlbl} - {T(uid, 'wallet_with_balance_label')}",
                                 bal,
@@ -7130,23 +7169,47 @@ def _webapp_trx_balance(address):
         return None
 
 
+def _webapp_ton_balance(address):
+    try:
+        resp = session.get(f'https://toncenter.com/api/v2/getAddressInformation?address={address}', timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if data.get('ok') and 'result' in data:
+            nano = int(data['result'].get('balance', 0))
+            return float(Decimal(str(nano)) / Decimal('1000000000'))
+        return None
+    except Exception as e:
+        logger.error(f"WebApp TON balance failed for {address}: {e}")
+        return None
+
+
 def _webapp_wallets(uid):
     wallets = db_get_wallets(uid) or []
     trx_price = get_crypto_price('tron')
+    ton_price = get_crypto_price('the-open-network')
     items = []
-    total_trx = 0.0
+    total_usd = 0.0
     for addr in wallets:
-        bal = _webapp_trx_balance(addr)
-        if bal is not None:
-            total_trx += bal
+        chain = detect_wallet_chain(addr)
+        if chain == 'ton':
+            bal = _webapp_ton_balance(addr)
+            symbol = 'TON'
+            price = ton_price
+        else:
+            bal = _webapp_trx_balance(addr)
+            symbol = 'TRX'
+            price = trx_price
+        usd_val = (bal * price) if (bal is not None and price) else None
+        if usd_val is not None:
+            total_usd += usd_val
         items.append({
-            'address': addr, 'balance_trx': bal,
-            'balance_usd': (bal * trx_price) if (bal is not None and trx_price) else None,
+            'address': addr, 'chain': chain or 'tron', 'symbol': symbol,
+            'balance': bal, 'balance_usd': usd_val,
         })
     return {
-        'ok': True, 'items': items, 'total_trx': total_trx,
-        'total_usd': total_trx * trx_price if trx_price else None,
-        'trx_price': trx_price,
+        'ok': True, 'items': items, 'total_usd': total_usd,
+        'trx_price': trx_price, 'ton_price': ton_price,
     }
 
 
