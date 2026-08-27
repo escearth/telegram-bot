@@ -5,6 +5,7 @@ import telebot
 from telebot import types
 from http import HTTPStatus
 from urllib.parse import parse_qsl, urlparse, unquote, quote
+from io import BytesIO
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -254,6 +255,19 @@ group_slowdown_last_warning = {}  # {chat_id: timestamp of last warning}
 group_activity_lock = threading.Lock()  # ← NEW: Protect shared state
 SLOWDOWN_THRESHOLD = 40  # messages per minute
 SLOWDOWN_COOLDOWN = 300  # 5 minutes between warnings
+
+# Group-specific rate limiting
+# Format: {chat_id: {user_id: [timestamps]}}
+group_user_request_times = defaultdict(lambda: defaultdict(list))
+group_user_rate_lock = threading.Lock()
+GROUP_USER_RATE_LIMIT = 20      # max requests per user per window
+GROUP_USER_RATE_WINDOW = 60     # per N seconds
+
+# Group-wide request deduplication cache
+# Format: {chat_id: {query_key: (result, timestamp)}}
+group_query_cache = defaultdict(dict)
+group_query_cache_lock = threading.Lock()
+GROUP_QUERY_CACHE_TTL = 30  # seconds - short TTL for deduplication
 
 # ─────────────────────────────────────────────
 # SQLite persistence (replaces JSON files)
@@ -1004,6 +1018,75 @@ def record_user_request(user_id: int):
 
 
 # ─────────────────────────────────────────────
+# Group-specific rate limiting
+# ─────────────────────────────────────────────
+def is_group_user_rate_limited(chat_id: int, user_id: int) -> bool:
+    """Check if a user in a group has exceeded their rate limit."""
+    now = time.time()
+    with group_user_rate_lock:
+        times = group_user_request_times[chat_id].get(user_id)
+        if not times:
+            return False
+        if len(times) >= GROUP_USER_RATE_LIMIT:
+            group_user_request_times[chat_id][user_id] = [t for t in times if now - t < GROUP_USER_RATE_WINDOW]
+            if len(group_user_request_times[chat_id][user_id]) >= GROUP_USER_RATE_LIMIT:
+                return True
+        return False
+
+
+def record_group_user_request(chat_id: int, user_id: int):
+    """Record a completed request timestamp for group user rate limiting."""
+    now = time.time()
+    with group_user_rate_lock:
+        group_user_request_times[chat_id][user_id].append(now)
+
+
+def get_group_cached_query(chat_id: int, query_key: str):
+    """Get cached query result for a group (for deduplication)."""
+    with group_query_cache_lock:
+        entry = group_query_cache[chat_id].get(query_key)
+        if entry is None:
+            return None
+        value, timestamp = entry
+        if time.time() - timestamp >= GROUP_QUERY_CACHE_TTL:
+            del group_query_cache[chat_id][query_key]
+            return None
+        return value
+
+
+def set_group_cached_query(chat_id: int, query_key: str, value):
+    """Cache a query result for a group (for deduplication)."""
+    with group_query_cache_lock:
+        group_query_cache[chat_id][query_key] = (value, time.time())
+
+
+def _cleanup_group_rate_limit_dicts():
+    """Remove stale entries from group rate limiting dicts."""
+    now = time.time()
+    with group_user_rate_lock:
+        stale_chats = []
+        for chat_id, users in group_user_request_times.items():
+            stale_users = [uid for uid, times in users.items()
+                           if not times or now - max(times) > GROUP_USER_RATE_WINDOW * 2]
+            for uid in stale_users:
+                del group_user_request_times[chat_id][uid]
+            if not group_user_request_times[chat_id]:
+                stale_chats.append(chat_id)
+        for cid in stale_chats:
+            del group_user_request_times[cid]
+    with group_query_cache_lock:
+        stale_chats = []
+        for chat_id, queries in group_query_cache.items():
+            stale_queries = [k for k, (_, ts) in queries.items() if now - ts >= GROUP_QUERY_CACHE_TTL]
+            for k in stale_queries:
+                del group_query_cache[chat_id][k]
+            if not group_query_cache[chat_id]:
+                stale_chats.append(chat_id)
+        for cid in stale_chats:
+            del group_query_cache[cid]
+
+
+# ─────────────────────────────────────────────
 # Refresh-button rate limiter
 # Cooldown between refreshes + overall cap.
 # Owner is exempt.
@@ -1073,6 +1156,8 @@ def _cleanup_stale_dicts():
         for cid in stale:
             del group_message_history[cid]
             group_slowdown_last_warning.pop(cid, None)
+    # Group rate limiting dicts
+    _cleanup_group_rate_limit_dicts()
     # _webapp_rate_times - remove users with no recent activity
     with _webapp_rate_lock:
         stale = [uid for uid, times in _webapp_rate_times.items()
@@ -1172,8 +1257,9 @@ def _looks_like_bot_query(message):
 
 def _is_bot_directed_group_message(message):
     """In groups, only messages that clearly target the bot are processed:
-    our registered commands, a @botusername mention, or a reply to the bot
-    that is an actual query. Everything else is fully ignored."""
+    our registered commands, a @botusername mention, a reply to the bot
+    that is an actual query, OR a recognized plain-text query (crypto symbol,
+    wallet address, tx hash, math, fiat conversion, etc.). Everything else is fully ignored."""
     text = (message.text or '').strip()
     if not text:
         return False
@@ -1193,6 +1279,11 @@ def _is_bot_directed_group_message(message):
     if message.reply_to_message and message.reply_to_message.from_user \
             and getattr(message.reply_to_message.from_user, 'id', None) == me.id:
         return _looks_like_bot_query(message)
+
+    # Also accept recognized plain-text queries in groups (no mention/reply needed)
+    # This allows users to just type "btc", "10 trx", wallet addresses, etc.
+    if _looks_like_bot_query(message):
+        return True
 
     return False
 
@@ -1215,11 +1306,13 @@ def rate_limit_check(func):
     Also monitors group command frequency for slowdown warnings.
     Records the request timestamp AFTER the handler completes so slow commands
     don't inflate the rate-limit window.
+    For groups, applies per-user rate limiting and query deduplication.
     """
     @functools.wraps(func)
     def wrapper(message, *args, **kwargs):
         global _last_memory_cleanup
         user_id = message.from_user.id
+        chat_id = message.chat.id
 
         # In groups, fully ignore messages that aren't meant for the bot
         # (no registration, no rate-limit, no fetch, no loading indicator).
@@ -1238,45 +1331,53 @@ def rate_limit_check(func):
 
         is_command = (hasattr(message, 'text') and message.text
                       and message.text.startswith('/'))
-        # Only rate-limit bot commands, not regular chat messages
-        if is_command and is_user_rate_limited(user_id):
-            logger.warning(f"User {user_id} rate-limited - request dropped")
-            
-            # Only notify once per minute to avoid spam
-            current_time = time.time()
-            with _rate_limit_notified_lock:
-                last_notified = _rate_limit_notified.get(user_id, 0)
-                if current_time - last_notified <= RATE_LIMIT_NOTIFY_COOLDOWN:
-                    return
-                _rate_limit_notified[user_id] = current_time
-            try:
-                lang = db_get_lang(user_id)
-                if lang == 'fa':
-                    msg = "⏳ <b>آروم‌تر!</b>\n\nلطفاً یک لحظه صبر کنید."
-                else:
-                    msg = "⏳ <b>Slow down!</b>\n\nYou're sending messages too quickly. Please wait a moment before trying again."
-                bot.reply_to(message, msg, parse_mode='HTML')
-            except:
-                pass  # If notification fails, just drop silently
-            
-            return
+        is_group = message.chat.type in ['group', 'supergroup']
 
-        # ⭐ Force-join check for all bot commands (not regular chat messages)
+        # Rate limiting: commands use global user rate limit, group plain-text uses group-specific limit
+        if is_command:
+            if is_user_rate_limited(user_id):
+                logger.warning(f"User {user_id} rate-limited (command) - request dropped")
+                current_time = time.time()
+                with _rate_limit_notified_lock:
+                    last_notified = _rate_limit_notified.get(user_id, 0)
+                    if current_time - last_notified <= RATE_LIMIT_NOTIFY_COOLDOWN:
+                        return
+                    _rate_limit_notified[user_id] = current_time
+                try:
+                    lang = db_get_lang(user_id)
+                    if lang == 'fa':
+                        msg = "⏳ <b>آروم‌تر!</b>\n\nلطفاً یک لحظه صبر کنید."
+                    else:
+                        msg = "⏳ <b>Slow down!</b>\n\nYou're sending messages too quickly. Please wait a moment before trying again."
+                    bot.reply_to(message, msg, parse_mode='HTML')
+                except:
+                    pass
+                return
+        elif is_group:
+            # Group plain-text queries: apply group-specific rate limit
+            if is_group_user_rate_limited(chat_id, user_id):
+                logger.warning(f"User {user_id} in group {chat_id} rate-limited (group query) - request dropped")
+                return  # Silently drop to avoid spam in groups
+
+        # Force-join check for all bot commands (not regular chat messages)
         if is_command and REQUIRED_CHANNEL and _is_joined_channel(user_id) is False:
-            _send_join_required(message.chat.id)
+            _send_join_required(chat_id)
             return
 
-        # ⭐ Monitor group command rate for slowdown warnings (bot commands only)
-        if is_command and message.chat.type in ['group', 'supergroup']:
-            warning = monitor_group_activity(message.chat.id, time.time())
+        # Monitor group command rate for slowdown warnings (bot commands only)
+        if is_command and is_group:
+            warning = monitor_group_activity(chat_id, time.time())
             if warning:
                 try:
-                    bot.send_message(message.chat.id, warning)
+                    bot.send_message(chat_id, warning)
                 except:
                     pass
 
         if is_command:
             record_user_request(user_id)
+        elif is_group:
+            record_group_user_request(chat_id, user_id)
+
         try:
             result = func(message, *args, **kwargs)
             return result
@@ -2325,25 +2426,29 @@ def get_ton_transaction_details(hash_value, user_id: int = 0):
                     value_nano = int(first_out.get('value', 0))
                     value_ton = value_nano / 1_000_000_000
         
-        # Build result
+        # Build result - escape all dynamic content for safety
+        source_escaped = html.escape(str(source_address)) if source_address != 'N/A' else 'N/A'
+        dest_escaped = html.escape(str(dest_address)) if dest_address != 'N/A' else 'N/A'
+        hash_escaped = html.escape(str(hash_value))
+        
         result = (
             f"ℹ️ <b>TON Transaction</b>\n\n"
             f"🕐 Time: {time_str}\n\n"
         )
         
         if source_address != 'N/A':
-            result += f"📤 From:\n<code>{source_address}</code>\n\n"
+            result += f"📤 From:\n<code>{source_escaped}</code>\n\n"
         
         if dest_address != 'N/A':
-            result += f"📥 To:\n<code>{dest_address}</code>\n\n"
+            result += f"📥 To:\n<code>{dest_escaped}</code>\n\n"
         
         if value_ton > 0:
             result += f"💰 Amount: {value_ton:.4f} TON\n\n"
         
-        result += f"📝 Hash:\n<code>{hash_value}</code>\n\n"
+        result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
         result += (
-            f"🔗 <a href='https://tonviewer.com/transaction/{hash_value}'>TonViewer</a> · "
-            f"<a href='https://tonscan.org/tx/{hash_value}'>TonScan</a>"
+            f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
+            f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
         )
         
         return result
@@ -2394,6 +2499,11 @@ def _get_ton_tx_fallback(hash_value):
         value_nano = int(in_msg.get('value', 0))
         value_ton = value_nano / 1_000_000_000
         
+        # Build result - escape all dynamic content for safety
+        source_escaped = html.escape(str(source)) if source and source != 'N/A' else 'N/A'
+        dest_escaped = html.escape(str(destination)) if destination and destination != 'N/A' else 'N/A'
+        hash_escaped = html.escape(str(hash_value))
+        
         # Build result
         result = (
             f"ℹ️ <b>TON Transaction</b>\n"
@@ -2402,28 +2512,29 @@ def _get_ton_tx_fallback(hash_value):
         )
         
         if source and source != 'N/A':
-            result += f"📤 From:\n<code>{source}</code>\n\n"
+            result += f"📤 From:\n<code>{source_escaped}</code>\n\n"
         
         if destination and destination != 'N/A':
-            result += f"📥 To:\n<code>{destination}</code>\n\n"
+            result += f"📥 To:\n<code>{dest_escaped}</code>\n\n"
         
         if value_ton > 0:
             result += f"💰 Amount: {value_ton:.4f} TON\n\n"
         
-        result += f"📝 Hash:\n<code>{hash_value}</code>\n\n"
+        result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
         result += (
-            f"🔗 <a href='https://tonviewer.com/transaction/{hash_value}'>TonViewer</a> · "
-            f"<a href='https://tonscan.org/tx/{hash_value}'>TonScan</a>"
+            f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
+            f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
         )
         
         return result
         
     except Exception as e:
         logger.error(f"TonScan fallback error: {e}")
+        hash_escaped = html.escape(str(hash_value))
         return (
             f"❌ Could not fetch transaction details\n\n"
-            f"📝 Hash: <code>{hash_value}</code>\n\n"
-            f"🔗 <a href='https://tonviewer.com/transaction/{hash_value}'>View on TonViewer</a>"
+            f"📝 Hash: <code>{hash_escaped}</code>\n\n"
+            f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>View on TonViewer</a>"
         )
 
 # ─────────────────────────────────────────────
@@ -2618,6 +2729,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         sliced_prices = prices[::step]
         sliced_dates = [datetime.fromtimestamp(ts / 1000).strftime('%b %d') for ts in timestamps[::step]]
         
+        # Use Chart.js v3+ compatible config (QuickChart supports this)
         chart_config = {
             "type": "line",
             "data": {
@@ -2626,26 +2738,34 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
                     "label": f"{crypto_id.upper()} USD",
                     "data": sliced_prices,
                     "borderColor": "#00cc96",
+                    "backgroundColor": "rgba(0, 204, 150, 0.1)",
                     "borderWidth": 2,
-                    "fill": False,
-                    "pointRadius": 0
+                    "fill": True,
+                    "pointRadius": 0,
+                    "tension": 0.2
                 }]
             },
             "options": {
-                "legend": {"display": False},
-                "title": {"display": True, "text": f"{crypto_id.upper()} - {days}d", "fontColor": "#ccc", "fontSize": 16},
+                "plugins": {
+                    "legend": {"display": False},
+                    "title": {"display": True, "text": f"{crypto_id.upper()} - {days}d", "color": "#ccc", "font": {"size": 16}}
+                },
                 "scales": {
-                    "xAxes": [{"gridLines": {"color": "#333", "zeroLineColor": "#555"}, "ticks": {"fontColor": "#aaa", "maxTicksLimit": 10}}],
-                    "yAxes": [{"gridLines": {"color": "#333", "zeroLineColor": "#555"}, "ticks": {"fontColor": "#aaa"}}]
+                    "x": {"grid": {"color": "#333", "borderColor": "#555"}, "ticks": {"color": "#aaa", "maxTicksLimit": 10}},
+                    "y": {"grid": {"color": "#333", "borderColor": "#555"}, "ticks": {"color": "#aaa"}}
                 },
                 "layout": {"padding": 10}
             }
         }
         
-        qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config))}&w=600&h=380&bkg=0e1117"
-        resp = session.get(qc_url, timeout=15)
+        qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config, separators=(',', ':')))}&w=600&h=380&bkg=0e1117&f=png"
+        resp = session.get(qc_url, timeout=20)
         if resp.status_code != 200:
+            logger.error(f"QuickChart API failed: {resp.status_code}, response: {resp.text[:500]}")
             raise ValueError(f"QuickChart API failed: {resp.status_code}")
+        
+        if not resp.content or len(resp.content) < 100:
+            raise ValueError("QuickChart returned empty or invalid image")
         
         result = resp.content
         cache_set(cache_key, result, ttl=21600)
@@ -2715,19 +2835,21 @@ def get_portfolio_chart_image(holdings: dict, prices: dict, user_id: int = 0) ->
     wedge_colours = [colours_pool[i % len(colours_pool)] for i in range(len(labels))]
     total = sum(sizes)
     
+    # Use Chart.js v3+ compatible config with outlabels plugin
     chart_config = {
-        "type": "outlabeledPie",
+        "type": "pie",
         "data": {
             "labels": labels,
             "datasets": [{
                 "backgroundColor": wedge_colours,
-                "data": sizes
+                "data": sizes,
+                "borderWidth": 0
             }]
         },
         "options": {
-            "title": {"display": True, "text": f"Portfolio Breakdown (Total: ${total:,.2f})", "fontColor": "#fff", "fontSize": 20},
             "plugins": {
-                "legend": False,
+                "legend": {"display": False},
+                "title": {"display": True, "text": f"Portfolio Breakdown (Total: ${total:,.2f})", "color": "#fff", "font": {"size": 20}},
                 "outlabels": {
                     "text": "%l %p",
                     "color": "white",
@@ -2742,10 +2864,14 @@ def get_portfolio_chart_image(holdings: dict, prices: dict, user_id: int = 0) ->
         }
     }
     
-    qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config))}&w=700&h=700&bkg=0e1117"
-    resp = session.get(qc_url, timeout=15)
+    qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config, separators=(',', ':')))}&w=700&h=700&bkg=0e1117&f=png"
+    resp = session.get(qc_url, timeout=20)
     if resp.status_code != 200:
+        logger.error(f"QuickChart API failed for portfolio: {resp.status_code}, response: {resp.text[:500]}")
         raise ValueError(f"QuickChart API failed: {resp.status_code}")
+    
+    if not resp.content or len(resp.content) < 100:
+        raise ValueError("QuickChart returned empty or invalid image")
     
     return resp.content
 
@@ -3077,9 +3203,11 @@ def get_tron_transaction_details(hash_value, user_id: int = 0):
             owner = contract.get('owner_address', 'N/A')
             to = contract.get('to_address', 'N/A')
             amount = contract.get('amount', 0)
-            # Make addresses copyable with code tags
-            result += T(user_id, 'tx_from', addr=f"<code>{owner}</code>")
-            result += T(user_id, 'tx_to', addr=f"<code>{to}</code>")
+            # Make addresses copyable with code tags - escape for safety
+            owner_escaped = html.escape(str(owner))
+            to_escaped = html.escape(str(to))
+            result += T(user_id, 'tx_from', addr=f"<code>{owner_escaped}</code>")
+            result += T(user_id, 'tx_to', addr=f"<code>{to_escaped}</code>")
             if amount:
                 result += T(user_id, 'tx_amount', amount=f"{float(amount) / 1_000_000:,.6f}")
         if 'cost' in data:
@@ -3088,9 +3216,10 @@ def get_tron_transaction_details(hash_value, user_id: int = 0):
             total_fee = fee + energy_fee
             if total_fee > 0:
                 result += T(user_id, 'tx_fee', fee=f"{total_fee:,.6f}")
-        # Make hash copyable with code tag and add Tronscan link
-        result += T(user_id, 'tx_hash', hash=f"<code>{hash_value}</code>")
-        result += f"\n\n🔗 <a href='https://tronscan.org/#/transaction/{hash_value}'>View on Tronscan</a>"
+        # Make hash copyable with code tag and add Tronscan link - escape for safety
+        hash_escaped = html.escape(str(hash_value))
+        result += T(user_id, 'tx_hash', hash=f"<code>{hash_escaped}</code>")
+        result += f"\n\n🔗 <a href='https://tronscan.org/#/transaction/{hash_escaped}'>View on Tronscan</a>"
         return result
     except requests.Timeout:
         return T(user_id, 'tx_timeout')
@@ -4789,26 +4918,85 @@ def inline_query_handler(inline_query):
             )
         )
 
-    # ── 1. TRON tx hash (64 hex chars) OR tronscan link ──────────────
-    tx_hash_match = re.match(r'^[A-Fa-f0-9]{64}$', q)
+    # ── 1. Transaction hash or link - detect chain from URL ──────────────
     tronscan_match = re.match(r'https?://tronscan\.org/#/transaction/([A-Fa-f0-9]{64})', q)
-    
+    tonviewer_match = re.match(r'https?://tonviewer\.com/transaction/([A-Fa-f0-9]{64})', q)
+    tonscan_match = re.match(r'https?://tonscan\.org/tx/([A-Fa-f0-9]{64})', q)
+    bare_hash_match = re.match(r'^[A-Fa-f0-9]{64}$', q)
+
     tx_hash = None
-    if tx_hash_match:
-        tx_hash = q
-    elif tronscan_match:
+    detected_chain = None  # 'tron', 'ton', or None for bare hash
+
+    if tronscan_match:
         tx_hash = tronscan_match.group(1)
-    
+        detected_chain = 'tron'
+    elif tonviewer_match:
+        tx_hash = tonviewer_match.group(1)
+        detected_chain = 'ton'
+    elif tonscan_match:
+        tx_hash = tonscan_match.group(1)
+        detected_chain = 'ton'
+    elif bare_hash_match:
+        tx_hash = q
+        detected_chain = None  # Unknown - will try both
+
     if tx_hash:
-        try:
-            tx = get_tron_transaction_details(tx_hash, uid)
-            tronscan_link = f"https://tronscan.org/#/transaction/{tx_hash}"
-            results.append(article(
-                "txhash", "TRON Transaction", "Tap to share TX details",
-                f"{tx}\n\n🔗 {tronscan_link}"
-            ))
-        except Exception:
-            pass
+        if detected_chain == 'tron':
+            # TRON-specific URL - only try TRON
+            try:
+                tx = get_tron_transaction_details(tx_hash, uid)
+                tronscan_link = f"https://tronscan.org/#/transaction/{tx_hash}"
+                results.append(article(
+                    "txhash", "TRON Transaction", "Tap to share TX details",
+                    f"{tx}\n\n🔗 {tronscan_link}"
+                ))
+            except Exception:
+                pass
+        elif detected_chain == 'ton':
+            # TON-specific URL - only try TON
+            try:
+                tx = get_ton_transaction_details(tx_hash, uid)
+                results.append(article(
+                    "ton_tx", "TON Transaction", "Tap to share TX details",
+                    tx
+                ))
+            except Exception:
+                pass
+        else:
+            # Bare hash - try both and show both if found
+            tron_result = None
+            ton_result = None
+            try:
+                tron_result = get_tron_transaction_details(tx_hash, uid)
+            except Exception:
+                pass
+            try:
+                ton_result = get_ton_transaction_details(tx_hash, uid)
+            except Exception:
+                pass
+            
+            tron_ok = tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower()
+            ton_ok = ton_result and "not found" not in ton_result.lower() and "error" not in ton_result.lower()
+            
+            if tron_ok:
+                tronscan_link = f"https://tronscan.org/#/transaction/{tx_hash}"
+                results.append(article(
+                    "txhash_tron", "TRON Transaction", "Tap to share TX details",
+                    f"{tron_result}\n\n🔗 {tronscan_link}"
+                ))
+            if ton_ok:
+                results.append(article(
+                    "txhash_ton", "TON Transaction", "Tap to share TX details",
+                    ton_result
+                ))
+            if not tron_ok and not ton_ok:
+                # Neither found - show a helpful message
+                results.append(article(
+                    "txhash_none", "Transaction Not Found", 
+                    f"Hash: {tx_hash[:16]}...",
+                    f"❌ Transaction not found on TRON or TON networks.\n\n📝 Hash: <code>{html.escape(tx_hash)}</code>", 
+                    html=True
+                ))
 
     # ── 2. TRON wallet address (34 chars) ────────────────────────────
     elif re.match(r'^[A-Za-z0-9]{34}$', q) and is_valid_tron_address(q):
@@ -4826,28 +5014,7 @@ def inline_query_handler(inline_query):
                 f"{EMOJIS['wallet']} <code>{q}</code>", html=True
             ))
 
-    # ── 3. TON tx hash OR tonviewer/tonscan link ───────────────────
-    ton_tx_match = re.match(r'^[A-Fa-f0-9]{64}$', q)
-    tonviewer_match = re.match(r'https?://tonviewer\.com/transaction/([A-Fa-f0-9]{64})', q)
-    tonscan_match = re.match(r'https?://tonscan\.org/tx/([A-Fa-f0-9]{64})', q)
-    ton_tx_hash = None
-    if ton_tx_match:
-        ton_tx_hash = q
-    elif tonviewer_match:
-        ton_tx_hash = tonviewer_match.group(1)
-    elif tonscan_match:
-        ton_tx_hash = tonscan_match.group(1)
-    if ton_tx_hash:
-        try:
-            tx = get_ton_transaction_details(ton_tx_hash, uid)
-            results.append(article(
-                "ton_tx", "TON Transaction", "Tap to share TX details",
-                tx
-            ))
-        except Exception:
-            pass
-
-    # ── 4. TON wallet address (48 chars, EQ/UQ) ────────────────────
+    # ── 3. TON wallet address (48 chars, EQ/UQ) ────────────────────
     elif len(q) == 48 and q[:2] in ('EQ', 'UQ') and is_valid_ton_address(q):
         try:
             bal = get_ton_wallet_balance(q, uid)
@@ -6435,33 +6602,75 @@ def _handle_text_wallet_and_tx(message, user_id, text):
             bot.reply_to(message, T(user_id, 'invalid_address'))
             return True
 
-    # Transaction hash or link - try TRON first, then TON (both use 64-char hex)
-    ton_tx_match = re.match(r'^[A-Fa-f0-9]{64}$', text)
+    # Transaction hash or link - detect chain from URL or try both for bare hashes
     tronscan_match = re.match(r'https?://tronscan\.org/#/transaction/([A-Fa-f0-9]{64})', text)
     tonscan_match = re.match(r'https?://tonscan\.org/tx/([A-Fa-f0-9]{64})', text)
     tonviewer_match = re.match(r'https?://tonviewer\.com/transaction/([A-Fa-f0-9]{64})', text)
+    bare_hash_match = re.match(r'^[A-Fa-f0-9]{64}$', text)
 
     tx_hash = None
-    if ton_tx_match:
-        tx_hash = text
-    elif tronscan_match:
+    detected_chain = None  # 'tron', 'ton', or None for unknown
+
+    if tronscan_match:
         tx_hash = tronscan_match.group(1)
-    elif tonscan_match:
-        tx_hash = tonscan_match.group(1)
+        detected_chain = 'tron'
     elif tonviewer_match:
         tx_hash = tonviewer_match.group(1)
+        detected_chain = 'ton'
+    elif tonscan_match:
+        tx_hash = tonscan_match.group(1)
+        detected_chain = 'ton'
+    elif bare_hash_match:
+        tx_hash = text
+        detected_chain = None  # Unknown - will try both
 
     if tx_hash:
         bot.send_chat_action(message.chat.id, 'typing')
-        # Try as TRON first
-        tron_result = get_tron_transaction_details(tx_hash, user_id)
-        if tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower():
+        
+        if detected_chain == 'tron':
+            # TRON-specific URL - only try TRON
+            tron_result = get_tron_transaction_details(tx_hash, user_id)
             bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
             return True
-        # If TRON failed, try TON
-        ton_result = get_ton_transaction_details(tx_hash, user_id)
-        bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
-        return True
+        elif detected_chain == 'ton':
+            # TON-specific URL - only try TON
+            ton_result = get_ton_transaction_details(tx_hash, user_id)
+            bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
+            return True
+        else:
+            # Bare hash - try both chains, but label results clearly
+            # Try TRON first
+            tron_result = get_tron_transaction_details(tx_hash, user_id)
+            tron_success = tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower()
+            
+            # Try TON
+            ton_result = get_ton_transaction_details(tx_hash, user_id)
+            ton_success = ton_result and "not found" not in ton_result.lower() and "error" not in ton_result.lower()
+            
+            if tron_success and not ton_success:
+                bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
+                return True
+            elif ton_success and not tron_success:
+                bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
+                return True
+            elif tron_success and ton_success:
+                # Both succeeded - this shouldn't happen but show both with clear labels
+                combined = (
+                    f"⚠️ <b>Hash matches both TRON and TON networks</b>\n\n"
+                    f"━━━ <b>TRON</b> ━━━\n{tron_result}\n\n"
+                    f"━━━ <b>TON</b> ━━━\n{ton_result}"
+                )
+                bot.reply_to(message, add_timestamp(combined), parse_mode='HTML')
+                return True
+            else:
+                # Neither succeeded - show both error messages
+                combined = (
+                    f"❌ <b>Transaction not found on either network</b>\n\n"
+                    f"<b>TRON:</b> {tron_result}\n\n"
+                    f"<b>TON:</b> {ton_result}"
+                )
+                bot.reply_to(message, add_timestamp(combined), parse_mode='HTML')
+                return True
 
     return False
 
@@ -6615,6 +6824,9 @@ def _handle_text_crypto(message, user_id, text, text_lower):
 @loading_indicator
 def handle_text(message):
     user_id = message.from_user.id
+    chat_id = message.chat.id
+    is_group = message.chat.type in ('group', 'supergroup')
+    
     if not message.text:
         return  # ignore stickers, photos, voice messages, etc.
     text_original = message.text.strip()
@@ -6626,6 +6838,29 @@ def handle_text(message):
 
     if state and _handle_text_state(message, user_id, text, text_lower, text_original, state):
         return
+
+    # For group plain-text queries, use deduplication cache for common queries
+    query_key = None
+    if is_group and not state:
+        # Create a cache key for common query types
+        if re.match(r'^[A-Za-z0-9]{3,10}$', text_lower) and text_lower in CRYPTO_ALIASES:
+            query_key = f"crypto:{text_lower}"
+        elif re.match(r'^\d+(?:\.\d+)?\s+\w+$', text_lower):
+            query_key = f"amount_crypto:{text_lower}"
+        elif re.match(r'^[A-Za-z0-9]{34}$', text) or (len(text) == 48 and text[:2] in ('EQ', 'UQ')):
+            query_key = f"wallet:{text}"
+        elif re.match(r'^[A-Fa-f0-9]{64}$', text):
+            query_key = f"txhash:{text}"
+        
+        if query_key:
+            cached_result = get_group_cached_query(chat_id, query_key)
+            if cached_result is not None:
+                # Send cached result
+                try:
+                    bot.reply_to(message, cached_result, parse_mode='HTML')
+                except Exception:
+                    pass
+                return
 
     if _handle_text_math(message, user_id, text, text_lower, text_original):
         return
