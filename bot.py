@@ -2377,6 +2377,16 @@ def get_ton_wallet_balance(address, user_id: int = 0):
 
 
 def get_ton_transaction_details(hash_value, user_id: int = 0):
+    """Full verbose format for regular messages."""
+    return _format_ton_transaction(hash_value, user_id, inline=False)
+
+
+def get_ton_transaction_details_inline(hash_value, user_id: int = 0):
+    """Compact format for inline query results."""
+    return _format_ton_transaction(hash_value, user_id, inline=True)
+
+
+def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
     """
     Fetch TON transaction details.
     Primary: TonViewer API
@@ -2431,44 +2441,61 @@ def get_ton_transaction_details(hash_value, user_id: int = 0):
         dest_escaped = html.escape(str(dest_address)) if dest_address != 'N/A' else 'N/A'
         hash_escaped = html.escape(str(hash_value))
         
-        result = (
-            f"ℹ️ <b>TON Transaction</b>\n\n"
-            f"🕐 Time: {time_str}\n\n"
-        )
-        
-        if source_address != 'N/A':
-            result += f"📤 From:\n<code>{source_escaped}</code>\n\n"
-        
-        if dest_address != 'N/A':
-            result += f"📥 To:\n<code>{dest_escaped}</code>\n\n"
-        
-        if value_ton > 0:
-            result += f"💰 Amount: {value_ton:.4f} TON\n\n"
-        
-        result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
-        result += (
-            f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
-            f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
-        )
-        
-        return result
+        if inline:
+            # Compact inline format
+            lines = [
+                f"ℹ️ <b>TON Transaction</b>",
+                f"🕐 {time_str}",
+            ]
+            if source_address != 'N/A':
+                lines.append(f"📤 From: <code>{source_escaped}</code>")
+            if dest_address != 'N/A':
+                lines.append(f"📥 To: <code>{dest_escaped}</code>")
+            if value_ton > 0:
+                lines.append(f"💰 Amount: {value_ton:.4f} TON")
+            lines.append(f"📝 Hash: <code>{hash_escaped}</code>")
+            lines.append(f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · <a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>")
+            return "\n".join(lines)
+        else:
+            # Full verbose format
+            result = (
+                f"ℹ️ <b>TON Transaction</b>\n\n"
+                f"🕐 Time: {time_str}\n\n"
+            )
+            
+            if source_address != 'N/A':
+                result += f"📤 From:\n<code>{source_escaped}</code>\n\n"
+            
+            if dest_address != 'N/A':
+                result += f"📥 To:\n<code>{dest_escaped}</code>\n\n"
+            
+            if value_ton > 0:
+                result += f"💰 Amount: {value_ton:.4f} TON\n\n"
+            
+            result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
+            result += (
+                f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
+                f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
+            )
+            
+            return result
         
     except requests.HTTPError as e:
         if e.response.status_code == 404:
             # Try TonScan as fallback
             logger.info(f"TonViewer 404, trying TonScan for {hash_value}")
-            return _get_ton_tx_fallback(hash_value)
+            return _get_ton_tx_fallback(hash_value, user_id, inline)
         logger.error(f"TonViewer HTTP error: {e}")
-        return _get_ton_tx_fallback(hash_value)
+        return _get_ton_tx_fallback(hash_value, user_id, inline)
     except requests.Timeout:
         logger.error(f"TonViewer timeout for {hash_value}")
-        return _get_ton_tx_fallback(hash_value)
+        return _get_ton_tx_fallback(hash_value, user_id, inline)
     except Exception as e:
         logger.error(f"TonViewer error: {e}")
-        return _get_ton_tx_fallback(hash_value)
+        return _get_ton_tx_fallback(hash_value, user_id, inline)
 
 
-def _get_ton_tx_fallback(hash_value):
+def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
     """
     Fallback method using TonScan API when TonViewer fails.
     """
@@ -2504,38 +2531,56 @@ def _get_ton_tx_fallback(hash_value):
         dest_escaped = html.escape(str(destination)) if destination and destination != 'N/A' else 'N/A'
         hash_escaped = html.escape(str(hash_value))
         
-        # Build result
-        result = (
-            f"ℹ️ <b>TON Transaction</b>\n"
-            f"<i>(via TonScan fallback)</i>\n\n"
-            f"🕐 Time: {time_str}\n\n"
-        )
-        
-        if source and source != 'N/A':
-            result += f"📤 From:\n<code>{source_escaped}</code>\n\n"
-        
-        if destination and destination != 'N/A':
-            result += f"📥 To:\n<code>{dest_escaped}</code>\n\n"
-        
-        if value_ton > 0:
-            result += f"💰 Amount: {value_ton:.4f} TON\n\n"
-        
-        result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
-        result += (
-            f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
-            f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
-        )
-        
-        return result
+        if inline:
+            lines = [
+                f"ℹ️ <b>TON Transaction</b> (via TonScan)",
+                f"🕐 {time_str}",
+            ]
+            if source and source != 'N/A':
+                lines.append(f"📤 From: <code>{source_escaped}</code>")
+            if destination and destination != 'N/A':
+                lines.append(f"📥 To: <code>{dest_escaped}</code>")
+            if value_ton > 0:
+                lines.append(f"💰 Amount: {value_ton:.4f} TON")
+            lines.append(f"📝 Hash: <code>{hash_escaped}</code>")
+            lines.append(f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · <a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>")
+            return "\n".join(lines)
+        else:
+            # Build result
+            result = (
+                f"ℹ️ <b>TON Transaction</b>\n"
+                f"<i>(via TonScan fallback)</i>\n\n"
+                f"🕐 Time: {time_str}\n\n"
+            )
+            
+            if source and source != 'N/A':
+                result += f"📤 From:\n<code>{source_escaped}</code>\n\n"
+            
+            if destination and destination != 'N/A':
+                result += f"📥 To:\n<code>{dest_escaped}</code>\n\n"
+            
+            if value_ton > 0:
+                result += f"💰 Amount: {value_ton:.4f} TON\n\n"
+            
+            result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
+            result += (
+                f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
+                f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
+            )
+            
+            return result
         
     except Exception as e:
         logger.error(f"TonScan fallback error: {e}")
         hash_escaped = html.escape(str(hash_value))
-        return (
-            f"❌ Could not fetch transaction details\n\n"
-            f"📝 Hash: <code>{hash_escaped}</code>\n\n"
-            f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>View on TonViewer</a>"
-        )
+        if inline:
+            return f"❌ Could not fetch transaction details\n\n📝 Hash: <code>{hash_escaped}</code>\n\n🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>View on TonViewer</a>"
+        else:
+            return (
+                f"❌ Could not fetch transaction details\n\n"
+                f"📝 Hash: <code>{hash_escaped}</code>\n\n"
+                f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>View on TonViewer</a>"
+            )
 
 # ─────────────────────────────────────────────
 # API helpers
@@ -3180,6 +3225,16 @@ def get_tron_wallet_trx(address, user_id: int = 0):
 
 
 def get_tron_transaction_details(hash_value, user_id: int = 0):
+    """Full verbose format for regular messages."""
+    return _format_tron_transaction(hash_value, user_id, inline=False)
+
+
+def get_tron_transaction_details_inline(hash_value, user_id: int = 0):
+    """Compact format for inline query results."""
+    return _format_tron_transaction(hash_value, user_id, inline=True)
+
+
+def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False):
     try:
         url = f"https://apilist.tronscan.org/api/transaction-info?hash={hash_value}"
         response = session.get(url, timeout=10)
@@ -3192,35 +3247,68 @@ def get_tron_transaction_details(hash_value, user_id: int = 0):
         confirmed = data.get('confirmed', False)
         status_emoji = '✅' if confirmed else '⏳'
         status_text = T(user_id, 'tx_confirmed') if confirmed else T(user_id, 'tx_pending')
-        result = (
-            T(user_id, 'tx_header') +
-            T(user_id, 'tx_status', emoji=status_emoji, status=status_text) +
-            T(user_id, 'tx_block', block=f"{data.get('block', 'N/A'):,}") +
-            T(user_id, 'tx_time', time=time_str)
-        )
-        if 'contractData' in data:
-            contract = data['contractData']
-            owner = contract.get('owner_address', 'N/A')
-            to = contract.get('to_address', 'N/A')
-            amount = contract.get('amount', 0)
-            # Make addresses copyable with code tags - escape for safety
-            owner_escaped = html.escape(str(owner))
-            to_escaped = html.escape(str(to))
-            result += T(user_id, 'tx_from', addr=f"<code>{owner_escaped}</code>")
-            result += T(user_id, 'tx_to', addr=f"<code>{to_escaped}</code>")
-            if amount:
-                result += T(user_id, 'tx_amount', amount=f"{float(amount) / 1_000_000:,.6f}")
-        if 'cost' in data:
-            fee = float(data['cost'].get('net_fee', 0)) / 1_000_000
-            energy_fee = float(data['cost'].get('energy_fee', 0)) / 1_000_000
-            total_fee = fee + energy_fee
-            if total_fee > 0:
-                result += T(user_id, 'tx_fee', fee=f"{total_fee:,.6f}")
-        # Make hash copyable with code tag and add Tronscan link - escape for safety
+        block = data.get('block', 'N/A')
+        
         hash_escaped = html.escape(str(hash_value))
-        result += T(user_id, 'tx_hash', hash=f"<code>{hash_escaped}</code>")
-        result += f"\n\n🔗 <a href='https://tronscan.org/#/transaction/{hash_escaped}'>View on Tronscan</a>"
-        return result
+        
+        if inline:
+            # Compact inline format
+            lines = [
+                f"ℹ️ <b>TRON Transaction</b>",
+                f"{status_emoji} {status_text}",
+                f"🔗 Block: #{block:,}",
+                f"🕐 {time_str}",
+            ]
+            if 'contractData' in data:
+                contract = data['contractData']
+                owner = contract.get('owner_address', 'N/A')
+                to = contract.get('to_address', 'N/A')
+                amount = contract.get('amount', 0)
+                owner_escaped = html.escape(str(owner))
+                to_escaped = html.escape(str(to))
+                if owner != 'N/A':
+                    lines.append(f"📤 From: <code>{owner_escaped}</code>")
+                if to != 'N/A':
+                    lines.append(f"📥 To: <code>{to_escaped}</code>")
+                if amount:
+                    lines.append(f"💰 Amount: {float(amount) / 1_000_000:,.6f} TRX")
+            if 'cost' in data:
+                fee = float(data['cost'].get('net_fee', 0)) / 1_000_000
+                energy_fee = float(data['cost'].get('energy_fee', 0)) / 1_000_000
+                total_fee = fee + energy_fee
+                if total_fee > 0:
+                    lines.append(f"⛽ Fee: {total_fee:,.6f} TRX")
+            lines.append(f"📝 Hash: <code>{hash_escaped}</code>")
+            lines.append(f"🔗 <a href='https://tronscan.org/#/transaction/{hash_escaped}'>Tronscan</a>")
+            return "\n".join(lines)
+        else:
+            # Full verbose format (existing)
+            result = (
+                T(user_id, 'tx_header') +
+                T(user_id, 'tx_status', emoji=status_emoji, status=status_text) +
+                T(user_id, 'tx_block', block=f"{block:,}") +
+                T(user_id, 'tx_time', time=time_str)
+            )
+            if 'contractData' in data:
+                contract = data['contractData']
+                owner = contract.get('owner_address', 'N/A')
+                to = contract.get('to_address', 'N/A')
+                amount = contract.get('amount', 0)
+                owner_escaped = html.escape(str(owner))
+                to_escaped = html.escape(str(to))
+                result += T(user_id, 'tx_from', addr=f"<code>{owner_escaped}</code>")
+                result += T(user_id, 'tx_to', addr=f"<code>{to_escaped}</code>")
+                if amount:
+                    result += T(user_id, 'tx_amount', amount=f"{float(amount) / 1_000_000:,.6f}")
+            if 'cost' in data:
+                fee = float(data['cost'].get('net_fee', 0)) / 1_000_000
+                energy_fee = float(data['cost'].get('energy_fee', 0)) / 1_000_000
+                total_fee = fee + energy_fee
+                if total_fee > 0:
+                    result += T(user_id, 'tx_fee', fee=f"{total_fee:,.6f}")
+            result += T(user_id, 'tx_hash', hash=f"<code>{hash_escaped}</code>")
+            result += f"\n\n🔗 <a href='https://tronscan.org/#/transaction/{hash_escaped}'>View on Tronscan</a>"
+            return result
     except requests.Timeout:
         return T(user_id, 'tx_timeout')
     except Exception as e:
@@ -4944,21 +5032,21 @@ def inline_query_handler(inline_query):
         if detected_chain == 'tron':
             # TRON-specific URL - only try TRON
             try:
-                tx = get_tron_transaction_details(tx_hash, uid)
+                tx = get_tron_transaction_details_inline(tx_hash, uid)
                 tronscan_link = f"https://tronscan.org/#/transaction/{tx_hash}"
                 results.append(article(
                     "txhash", "TRON Transaction", "Tap to share TX details",
-                    f"{tx}\n\n🔗 {tronscan_link}"
+                    f"{tx}\n\n🔗 {tronscan_link}", html=True
                 ))
             except Exception:
                 pass
         elif detected_chain == 'ton':
             # TON-specific URL - only try TON
             try:
-                tx = get_ton_transaction_details(tx_hash, uid)
+                tx = get_ton_transaction_details_inline(tx_hash, uid)
                 results.append(article(
                     "ton_tx", "TON Transaction", "Tap to share TX details",
-                    tx
+                    tx, html=True
                 ))
             except Exception:
                 pass
@@ -4967,11 +5055,11 @@ def inline_query_handler(inline_query):
             tron_result = None
             ton_result = None
             try:
-                tron_result = get_tron_transaction_details(tx_hash, uid)
+                tron_result = get_tron_transaction_details_inline(tx_hash, uid)
             except Exception:
                 pass
             try:
-                ton_result = get_ton_transaction_details(tx_hash, uid)
+                ton_result = get_ton_transaction_details_inline(tx_hash, uid)
             except Exception:
                 pass
             
@@ -4982,12 +5070,12 @@ def inline_query_handler(inline_query):
                 tronscan_link = f"https://tronscan.org/#/transaction/{tx_hash}"
                 results.append(article(
                     "txhash_tron", "TRON Transaction", "Tap to share TX details",
-                    f"{tron_result}\n\n🔗 {tronscan_link}"
+                    f"{tron_result}\n\n🔗 {tronscan_link}", html=True
                 ))
             if ton_ok:
                 results.append(article(
                     "txhash_ton", "TON Transaction", "Tap to share TX details",
-                    ton_result
+                    ton_result, html=True
                 ))
             if not tron_ok and not ton_ok:
                 # Neither found - show a helpful message
