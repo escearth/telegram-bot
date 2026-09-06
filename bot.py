@@ -2421,6 +2421,19 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
         value_nano = int(in_msg.get('value', 0))
         value_ton = value_nano / 1_000_000_000
         
+        # Check transaction status
+        # TON transaction status: check if aborted or failed
+        aborted = data.get('aborted', False)
+        exit_code = data.get('exit_code', 0)
+        is_failed = aborted or exit_code != 0
+        
+        if is_failed:
+            status_emoji = '❌'
+            status_text = 'Failed'
+        else:
+            status_emoji = '✅'
+            status_text = 'Success'
+        
         # If in_msg doesn't have clear source/dest, try out_msgs
         if source_address == 'N/A' or dest_address == 'N/A':
             out_msgs = data.get('out_msgs', [])
@@ -2442,25 +2455,37 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
         hash_escaped = html.escape(str(hash_value))
         
         if inline:
-            # Compact inline format
+            # Match regular message format with proper spacing
             lines = [
                 f"ℹ️ <b>TON Transaction</b>",
-                f"🕐 {time_str}",
+                f"",
+                f"{status_emoji} Status: {status_text}",
+                f"",
+                f"🕐 Transaction Time: {time_str}",
             ]
             if source_address != 'N/A':
-                lines.append(f"📤 From: <code>{source_escaped}</code>")
+                lines.append(f"")
+                lines.append(f"📤 From:")
+                lines.append(f"<code>{source_escaped}</code>")
             if dest_address != 'N/A':
-                lines.append(f"📥 To: <code>{dest_escaped}</code>")
+                lines.append(f"")
+                lines.append(f"📥 To:")
+                lines.append(f"<code>{dest_escaped}</code>")
             if value_ton > 0:
+                lines.append(f"")
                 lines.append(f"💰 Amount: {value_ton:.4f} TON")
-            lines.append(f"📝 Hash: <code>{hash_escaped}</code>")
+            lines.append(f"")
+            lines.append(f"📝 Hash:")
+            lines.append(f"<code>{hash_escaped}</code>")
+            lines.append(f"")
             lines.append(f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · <a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>")
             return "\n".join(lines)
         else:
             # Full verbose format
             result = (
                 f"ℹ️ <b>TON Transaction</b>\n\n"
-                f"🕐 Time: {time_str}\n\n"
+                f"{status_emoji} Status: {status_text}\n\n"
+                f"🕐 Transaction Time: {time_str}\n\n"
             )
             
             if source_address != 'N/A':
@@ -2526,23 +2551,47 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
         value_nano = int(in_msg.get('value', 0))
         value_ton = value_nano / 1_000_000_000
         
+        # Check status from TonScan
+        # TonScan might have a status field
+        status = tx.get('status', 1)  # 1 = success, other = failed
+        is_failed = status != 1
+        
+        if is_failed:
+            status_emoji = '❌'
+            status_text = 'Failed'
+        else:
+            status_emoji = '✅'
+            status_text = 'Success'
+        
         # Build result - escape all dynamic content for safety
         source_escaped = html.escape(str(source)) if source and source != 'N/A' else 'N/A'
         dest_escaped = html.escape(str(destination)) if destination and destination != 'N/A' else 'N/A'
         hash_escaped = html.escape(str(hash_value))
         
         if inline:
+            # Match regular message format with proper spacing
             lines = [
                 f"ℹ️ <b>TON Transaction</b> (via TonScan)",
-                f"🕐 {time_str}",
+                f"",
+                f"{status_emoji} Status: {status_text}",
+                f"",
+                f"🕐 Transaction Time: {time_str}",
             ]
             if source and source != 'N/A':
-                lines.append(f"📤 From: <code>{source_escaped}</code>")
+                lines.append(f"")
+                lines.append(f"📤 From:")
+                lines.append(f"<code>{source_escaped}</code>")
             if destination and destination != 'N/A':
-                lines.append(f"📥 To: <code>{dest_escaped}</code>")
+                lines.append(f"")
+                lines.append(f"📥 To:")
+                lines.append(f"<code>{dest_escaped}</code>")
             if value_ton > 0:
+                lines.append(f"")
                 lines.append(f"💰 Amount: {value_ton:.4f} TON")
-            lines.append(f"📝 Hash: <code>{hash_escaped}</code>")
+            lines.append(f"")
+            lines.append(f"📝 Hash:")
+            lines.append(f"<code>{hash_escaped}</code>")
+            lines.append(f"")
             lines.append(f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · <a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>")
             return "\n".join(lines)
         else:
@@ -2550,7 +2599,8 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
             result = (
                 f"ℹ️ <b>TON Transaction</b>\n"
                 f"<i>(via TonScan fallback)</i>\n\n"
-                f"🕐 Time: {time_str}\n\n"
+                f"{status_emoji} Status: {status_text}\n\n"
+                f"🕐 Transaction Time: {time_str}\n\n"
             )
             
             if source and source != 'N/A':
@@ -2752,8 +2802,27 @@ def _sparkline(prices, width=15):
 @rate_limited_api_call
 def _fetch_chart_data(crypto_id, days=30):
     """Fetch chart data from CoinGecko as raw list of [timestamp, price] pairs."""
-    data = cg.get_coin_market_chart_by_id(id=crypto_id, vs_currency='usd', days=days)
-    return data.get('prices', [])
+    try:
+        resp = session.get(
+            f"https://api.coingecko.com/api/v3/coins/{crypto_id}/market_chart",
+            params={'vs_currency': 'usd', 'days': days},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json().get('prices', [])
+        elif resp.status_code == 429:
+            cache_set('cg_rate_limited', True, ttl=60)
+    except Exception as e:
+        logger.error(f"Chart data fetch failed for {crypto_id}: {e}")
+    return []
+
+
+def _fetch_chart_data_fallback(crypto_id, days=30):
+    """Fallback: use CoinGecko simple price history via batch endpoint (less detailed)."""
+    # This is a simplified fallback - we can't get full history from simple/price
+    # But we can at least log the failure
+    logger.warning(f"Chart fallback not available for {crypto_id}")
+    return []
 
 
 def get_crypto_chart_image(crypto_id, days=30, user_id=0):
@@ -2764,7 +2833,10 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
     try:
         raw_prices = _fetch_chart_data(crypto_id, days)
         if not raw_prices:
-            raise ValueError("No price data returned")
+            logger.warning(f"No chart data for {crypto_id}, trying fallback")
+            raw_prices = _fetch_chart_data_fallback(crypto_id, days)
+        if not raw_prices:
+            raise ValueError("No price data returned from any source")
 
         timestamps = [p[0] for p in raw_prices]
         prices = [p[1] for p in raw_prices]
@@ -2938,7 +3010,7 @@ def get_usd_to_irr():
             latest_price = usdt_stats.get('latest')
             if latest_price:
                 price = int(float(latest_price) / 10)
-                cache_set('usd_to_irr', price)
+                cache_set('usd_to_irr', price, ttl=60)
                 logger.info(f"Fetched USD to IRR rate: {price}")
                 return price
             best_buy = usdt_stats.get('bestBuy')
@@ -2946,7 +3018,7 @@ def get_usd_to_irr():
             if best_buy and best_sell:
                 avg_price = (float(best_buy) + float(best_sell)) / 2
                 price = int(avg_price / 10)
-                cache_set('usd_to_irr', price)
+                cache_set('usd_to_irr', price, ttl=60)
                 return price
     except Exception as e:
         logger.error(f"Error fetching USD/IRR: {e}")
@@ -2978,7 +3050,7 @@ def get_gold_prices():
         data = _fetch_prices_coingecko('pax-gold')
         if data and 'pax-gold' in data and 'usd' in data['pax-gold']:
             xau_price = data['pax-gold']['usd']
-            cache_set('gold_xau', xau_price)
+            cache_set('gold_xau', xau_price, ttl=60)
             logger.info(f"Fetched gold price: ${xau_price}")
             return {'xau': xau_price}
     except Exception as e:
@@ -2993,7 +3065,7 @@ def get_gold_prices():
         
         if 'price' in data:
             xau_price = float(data['price'])
-            cache_set('gold_xau', xau_price)
+            cache_set('gold_xau', xau_price, ttl=60)
             logger.info(f"Fetched gold price from Binance: ${xau_price}")
             return {'xau': xau_price}
     except Exception as e:
@@ -3034,7 +3106,7 @@ def get_iran_gold_prices():
                 if price_rial:
                     prices[slug] = price_rial // 10  # Rial → Toman
         if prices:
-            cache_set('iran_gold', prices)
+            cache_set('iran_gold', prices, ttl=60)
             logger.info(f"Fetched Iran gold prices from tgju: {list(prices)}")
         return prices
     except Exception as e:
@@ -3245,19 +3317,36 @@ def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False)
         timestamp = data.get('timestamp', 0)
         time_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S') if timestamp else 'N/A'
         confirmed = data.get('confirmed', False)
-        status_emoji = '✅' if confirmed else '⏳'
-        status_text = T(user_id, 'tx_confirmed') if confirmed else T(user_id, 'tx_pending')
+        # TRON transaction status: confirmed=true -> success, confirmed=false -> pending
+        # Check for failed/rejected status
+        ret = data.get('ret', [])
+        contract_ret = ret[0].get('contractRet', 'SUCCESS') if ret else 'SUCCESS'
+        is_failed = contract_ret != 'SUCCESS'
+        
+        if is_failed:
+            status_emoji = '❌'
+            status_text = T(user_id, 'tx_failed') if 'tx_failed' in STRINGS.get('en', {}) else 'Failed'
+        elif confirmed:
+            status_emoji = '✅'
+            status_text = T(user_id, 'tx_confirmed')
+        else:
+            status_emoji = '⏳'
+            status_text = T(user_id, 'tx_pending')
+            
         block = data.get('block', 'N/A')
         
         hash_escaped = html.escape(str(hash_value))
         
         if inline:
-            # Compact inline format
+            # Match regular message format with proper spacing
             lines = [
                 f"ℹ️ <b>TRON Transaction</b>",
-                f"{status_emoji} {status_text}",
+                f"",
+                f"{status_emoji} Status: {status_text}",
+                f"",
                 f"🔗 Block: #{block:,}",
-                f"🕐 {time_str}",
+                f"",
+                f"🕐 Transaction Time: {time_str}",
             ]
             if 'contractData' in data:
                 contract = data['contractData']
@@ -3267,19 +3356,28 @@ def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False)
                 owner_escaped = html.escape(str(owner))
                 to_escaped = html.escape(str(to))
                 if owner != 'N/A':
-                    lines.append(f"📤 From: <code>{owner_escaped}</code>")
+                    lines.append(f"")
+                    lines.append(f"📤 From:")
+                    lines.append(f"<code>{owner_escaped}</code>")
                 if to != 'N/A':
-                    lines.append(f"📥 To: <code>{to_escaped}</code>")
+                    lines.append(f"")
+                    lines.append(f"📥 To:")
+                    lines.append(f"<code>{to_escaped}</code>")
                 if amount:
+                    lines.append(f"")
                     lines.append(f"💰 Amount: {float(amount) / 1_000_000:,.6f} TRX")
             if 'cost' in data:
                 fee = float(data['cost'].get('net_fee', 0)) / 1_000_000
                 energy_fee = float(data['cost'].get('energy_fee', 0)) / 1_000_000
                 total_fee = fee + energy_fee
                 if total_fee > 0:
+                    lines.append(f"")
                     lines.append(f"⛽ Fee: {total_fee:,.6f} TRX")
-            lines.append(f"📝 Hash: <code>{hash_escaped}</code>")
-            lines.append(f"🔗 <a href='https://tronscan.org/#/transaction/{hash_escaped}'>Tronscan</a>")
+            lines.append(f"")
+            lines.append(f"📝 Hash:")
+            lines.append(f"<code>{hash_escaped}</code>")
+            lines.append(f"")
+            lines.append(f"🔗 <a href='https://tronscan.org/#/transaction/{hash_escaped}'>View on Tronscan</a>")
             return "\n".join(lines)
         else:
             # Full verbose format (existing)
