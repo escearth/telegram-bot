@@ -770,19 +770,24 @@ def cache_cleanup_loop():
             logger.error(f"Cache cleanup error: {e}")
 
 
+def _cleanup_user_state():
+    """Purge expired user state entries (30 min TTL)."""
+    now = time.time()
+    with _user_state_lock:
+        expired = [uid for uid, expiry in _user_state_ttl.items() if now > expiry]
+        for uid in expired:
+            user_state.pop(uid, None)
+            _user_state_ttl.pop(uid, None)
+        if expired:
+            logger.debug(f"Cleaned {len(expired)} stale user state entries")
+
+
 def _cleanup_user_state_loop():
     """Periodically purge expired user state entries (30 min TTL)."""
     while True:
         time.sleep(120)
         try:
-            now = time.time()
-            with _user_state_lock:
-                expired = [uid for uid, expiry in _user_state_ttl.items() if now > expiry]
-                for uid in expired:
-                    user_state.pop(uid, None)
-                    _user_state_ttl.pop(uid, None)
-                if expired:
-                    logger.debug(f"Cleaned {len(expired)} stale user state entries")
+            _cleanup_user_state()
         except Exception as e:
             logger.error(f"User state cleanup error: {e}")
 
@@ -2455,13 +2460,13 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
         hash_escaped = html.escape(str(hash_value))
         
         if inline:
-            # Match regular message format with proper spacing
+            # Match regular message format exactly - use the same structure with proper spacing
             lines = [
-                f"ℹ️ <b>TON Transaction</b>",
+                f"ℹ️ <b>TON Transaction Details</b>",
                 f"",
                 f"{status_emoji} Status: {status_text}",
                 f"",
-                f"🕐 Transaction Time: {time_str}",
+                f"🕐 Time: {time_str}",
             ]
             if source_address != 'N/A':
                 lines.append(f"")
@@ -2475,7 +2480,7 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
                 lines.append(f"")
                 lines.append(f"💰 Amount: {value_ton:.4f} TON")
             lines.append(f"")
-            lines.append(f"📝 Hash:")
+            lines.append(f"📝 TX Hash:")
             lines.append(f"<code>{hash_escaped}</code>")
             lines.append(f"")
             lines.append(f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · <a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>")
@@ -2485,7 +2490,7 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
             result = (
                 f"ℹ️ <b>TON Transaction</b>\n\n"
                 f"{status_emoji} Status: {status_text}\n\n"
-                f"🕐 Transaction Time: {time_str}\n\n"
+                f"🕐 Time: {time_str}\n\n"
             )
             
             if source_address != 'N/A':
@@ -2497,7 +2502,7 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
             if value_ton > 0:
                 result += f"💰 Amount: {value_ton:.4f} TON\n\n"
             
-            result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
+            result += f"📝 TX Hash:\n<code>{hash_escaped}</code>\n\n"
             result += (
                 f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
                 f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
@@ -2569,13 +2574,13 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
         hash_escaped = html.escape(str(hash_value))
         
         if inline:
-            # Match regular message format with proper spacing
+            # Match regular message format exactly
             lines = [
-                f"ℹ️ <b>TON Transaction</b> (via TonScan)",
+                f"ℹ️ <b>TON Transaction Details</b> <i>(via TonScan)</i>",
                 f"",
                 f"{status_emoji} Status: {status_text}",
                 f"",
-                f"🕐 Transaction Time: {time_str}",
+                f"🕐 Time: {time_str}",
             ]
             if source and source != 'N/A':
                 lines.append(f"")
@@ -2589,7 +2594,7 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
                 lines.append(f"")
                 lines.append(f"💰 Amount: {value_ton:.4f} TON")
             lines.append(f"")
-            lines.append(f"📝 Hash:")
+            lines.append(f"📝 TX Hash:")
             lines.append(f"<code>{hash_escaped}</code>")
             lines.append(f"")
             lines.append(f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · <a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>")
@@ -2600,7 +2605,7 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
                 f"ℹ️ <b>TON Transaction</b>\n"
                 f"<i>(via TonScan fallback)</i>\n\n"
                 f"{status_emoji} Status: {status_text}\n\n"
-                f"🕐 Transaction Time: {time_str}\n\n"
+                f"🕐 Time: {time_str}\n\n"
             )
             
             if source and source != 'N/A':
@@ -2612,7 +2617,7 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
             if value_ton > 0:
                 result += f"💰 Amount: {value_ton:.4f} TON\n\n"
             
-            result += f"📝 Hash:\n<code>{hash_escaped}</code>\n\n"
+            result += f"📝 TX Hash:\n<code>{hash_escaped}</code>\n\n"
             result += (
                 f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>TonViewer</a> · "
                 f"<a href='https://tonscan.org/tx/{hash_escaped}'>TonScan</a>"
@@ -2624,11 +2629,11 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
         logger.error(f"TonScan fallback error: {e}")
         hash_escaped = html.escape(str(hash_value))
         if inline:
-            return f"❌ Could not fetch transaction details\n\n📝 Hash: <code>{hash_escaped}</code>\n\n🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>View on TonViewer</a>"
+            return f"❌ Could not fetch transaction details\n\n📝 TX Hash: <code>{hash_escaped}</code>\n\n🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>View on TonViewer</a>"
         else:
             return (
                 f"❌ Could not fetch transaction details\n\n"
-                f"📝 Hash: <code>{hash_escaped}</code>\n\n"
+                f"📝 TX Hash: <code>{hash_escaped}</code>\n\n"
                 f"🔗 <a href='https://tonviewer.com/transaction/{hash_escaped}'>View on TonViewer</a>"
             )
 
@@ -2806,7 +2811,7 @@ def _fetch_chart_data(crypto_id, days=30):
         resp = session.get(
             f"https://api.coingecko.com/api/v3/coins/{crypto_id}/market_chart",
             params={'vs_currency': 'usd', 'days': days},
-            timeout=10
+            timeout=15
         )
         if resp.status_code == 200:
             return resp.json().get('prices', [])
@@ -2818,10 +2823,21 @@ def _fetch_chart_data(crypto_id, days=30):
 
 
 def _fetch_chart_data_fallback(crypto_id, days=30):
-    """Fallback: use CoinGecko simple price history via batch endpoint (less detailed)."""
-    # This is a simplified fallback - we can't get full history from simple/price
-    # But we can at least log the failure
-    logger.warning(f"Chart fallback not available for {crypto_id}")
+    """Fallback: try CoinCap for historical data."""
+    coincap_id = _COINCAP_ID_MAP.get(crypto_id, crypto_id)
+    if coincap_id == crypto_id and crypto_id == 'the-open-network':
+        coincap_id = 'toncoin'
+    try:
+        resp = session.get(
+            f"https://api.coincap.io/v2/assets/{coincap_id}/history",
+            params={'interval': 'd1' if days <= 7 else 'd7' if days <= 90 else 'd30'},
+            timeout=15
+        )
+        if resp.status_code == 200:
+            data = resp.json().get('data', [])
+            return [[int(d['time']), float(d['priceUsd'])] for d in data]
+    except Exception as e:
+        logger.error(f"CoinCap chart fallback failed for {crypto_id}: {e}")
     return []
 
 
@@ -2833,7 +2849,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
     try:
         raw_prices = _fetch_chart_data(crypto_id, days)
         if not raw_prices:
-            logger.warning(f"No chart data for {crypto_id}, trying fallback")
+            logger.warning(f"No CoinGecko chart data for {crypto_id}, trying CoinCap fallback")
             raw_prices = _fetch_chart_data_fallback(crypto_id, days)
         if not raw_prices:
             raise ValueError("No price data returned from any source")
@@ -2841,12 +2857,12 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         timestamps = [p[0] for p in raw_prices]
         prices = [p[1] for p in raw_prices]
         
-        # Downsample to ~100 points for the URL API to keep it light
-        step = max(1, len(prices) // 100)
+        # Downsample to ~120 points for the URL API to keep it light
+        step = max(1, len(prices) // 120)
         sliced_prices = prices[::step]
         sliced_dates = [datetime.fromtimestamp(ts / 1000).strftime('%b %d') for ts in timestamps[::step]]
         
-        # Use Chart.js v3+ compatible config (QuickChart supports this)
+        # Use Chart.js v4+ compatible config (QuickChart supports this)
         chart_config = {
             "type": "line",
             "data": {
@@ -2875,11 +2891,27 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
             }
         }
         
-        qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config, separators=(',', ':')))}&w=600&h=380&bkg=0e1117&f=png"
-        resp = session.get(qc_url, timeout=20)
+        qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config, separators=(',', ':')))}&w=700&h=420&bkg=0e1117&f=png"
+        resp = session.get(qc_url, timeout=25)
         if resp.status_code != 200:
             logger.error(f"QuickChart API failed: {resp.status_code}, response: {resp.text[:500]}")
-            raise ValueError(f"QuickChart API failed: {resp.status_code}")
+            # Try with simpler config as last resort
+            simple_config = {
+                "type": "line",
+                "data": {
+                    "labels": sliced_dates,
+                    "datasets": [{
+                        "data": sliced_prices,
+                        "borderColor": "#00cc96",
+                        "fill": False
+                    }]
+                },
+                "options": {"plugins": {"legend": {"display": False}}, "elements": {"point": {"radius": 0}}}
+            }
+            qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(simple_config, separators=(',', ':')))}&w=700&h=420&bkg=0e1117&f=png"
+            resp = session.get(qc_url, timeout=25)
+            if resp.status_code != 200:
+                raise ValueError(f"QuickChart API failed: {resp.status_code}")
         
         if not resp.content or len(resp.content) < 100:
             raise ValueError("QuickChart returned empty or invalid image")
@@ -2889,6 +2921,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         return result, crypto_id.upper()
     except Exception as e:
         logger.error(f"Chart generation failed for {crypto_id}: {e}")
+        # Return a simple text-based fallback or raise
         raise
 
 
@@ -3338,15 +3371,15 @@ def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False)
         hash_escaped = html.escape(str(hash_value))
         
         if inline:
-            # Match regular message format with proper spacing
+            # Match regular message format exactly - use the same structure with proper spacing
             lines = [
-                f"ℹ️ <b>TRON Transaction</b>",
+                f"ℹ️ <b>TRON Transaction Details</b>",
                 f"",
                 f"{status_emoji} Status: {status_text}",
                 f"",
                 f"🔗 Block: #{block:,}",
                 f"",
-                f"🕐 Transaction Time: {time_str}",
+                f"🕐 Time: {time_str}",
             ]
             if 'contractData' in data:
                 contract = data['contractData']
@@ -3372,9 +3405,9 @@ def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False)
                 total_fee = fee + energy_fee
                 if total_fee > 0:
                     lines.append(f"")
-                    lines.append(f"⛽ Fee: {total_fee:,.6f} TRX")
+                    lines.append(f"⛽ Network Fee: {total_fee:,.6f} TRX")
             lines.append(f"")
-            lines.append(f"📝 Hash:")
+            lines.append(f"📝 TX Hash:")
             lines.append(f"<code>{hash_escaped}</code>")
             lines.append(f"")
             lines.append(f"🔗 <a href='https://tronscan.org/#/transaction/{hash_escaped}'>View on Tronscan</a>")
@@ -5105,9 +5138,9 @@ def inline_query_handler(inline_query):
         )
 
     # ── 1. Transaction hash or link - detect chain from URL ──────────────
-    tronscan_match = re.match(r'https?://tronscan\.org/#/transaction/([A-Fa-f0-9]{64})', q)
-    tonviewer_match = re.match(r'https?://tonviewer\.com/transaction/([A-Fa-f0-9]{64})', q)
-    tonscan_match = re.match(r'https?://tonscan\.org/tx/([A-Fa-f0-9]{64})', q)
+    tronscan_match = re.match(r'https?://tronscan\.org/#/transaction/([A-Fa-f0-9]{64})', q, re.IGNORECASE)
+    tonviewer_match = re.match(r'https?://tonviewer\.com/transaction/([A-Fa-f0-9]{64})', q, re.IGNORECASE)
+    tonscan_match = re.match(r'https?://tonscan\.org/tx/([A-Fa-f0-9]{64})', q, re.IGNORECASE)
     bare_hash_match = re.match(r'^[A-Fa-f0-9]{64}$', q)
 
     tx_hash = None
@@ -5131,13 +5164,13 @@ def inline_query_handler(inline_query):
             # TRON-specific URL - only try TRON
             try:
                 tx = get_tron_transaction_details_inline(tx_hash, uid)
-                tronscan_link = f"https://tronscan.org/#/transaction/{tx_hash}"
+                # Result already contains the Tronscan link
                 results.append(article(
                     "txhash", "TRON Transaction", "Tap to share TX details",
-                    f"{tx}\n\n🔗 {tronscan_link}", html=True
+                    tx, html=True
                 ))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Inline TRON tx error: {e}")
         elif detected_chain == 'ton':
             # TON-specific URL - only try TON
             try:
@@ -5146,29 +5179,28 @@ def inline_query_handler(inline_query):
                     "ton_tx", "TON Transaction", "Tap to share TX details",
                     tx, html=True
                 ))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Inline TON tx error: {e}")
         else:
             # Bare hash - try both and show both if found
             tron_result = None
             ton_result = None
             try:
                 tron_result = get_tron_transaction_details_inline(tx_hash, uid)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Inline TRON tx bare error: {e}")
             try:
                 ton_result = get_ton_transaction_details_inline(tx_hash, uid)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Inline TON tx bare error: {e}")
             
-            tron_ok = tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower()
-            ton_ok = ton_result and "not found" not in ton_result.lower() and "error" not in ton_result.lower()
+            tron_ok = tron_result and "not found" not in tron_result.lower() and "error" not in tron_result.lower() and "timeout" not in tron_result.lower()
+            ton_ok = ton_result and "not found" not in ton_result.lower() and "error" not in ton_result.lower() and "timeout" not in ton_result.lower()
             
             if tron_ok:
-                tronscan_link = f"https://tronscan.org/#/transaction/{tx_hash}"
                 results.append(article(
                     "txhash_tron", "TRON Transaction", "Tap to share TX details",
-                    f"{tron_result}\n\n🔗 {tronscan_link}", html=True
+                    tron_result, html=True
                 ))
             if ton_ok:
                 results.append(article(
@@ -7194,6 +7226,71 @@ def _handle_alert_callbacks(call, data, user_id):
     return False
 
 
+def _check_alert_condition(alert: dict, current_price: float) -> bool:
+    """Check if an alert condition is met."""
+    if alert['direction'] == 'above':
+        return current_price >= alert['target_price']
+    else:  # below
+        return current_price <= alert['target_price']
+
+
+def _send_digest_to_user(user_id: int):
+    """Send daily digest to a specific user."""
+    try:
+        saved = db_get_holdings(user_id)
+        if not saved:
+            return
+        usd_to_irr = get_usd_to_irr()
+        buy_prices = db_get_buy_prices(user_id)
+
+        # Batch-fetch prices + 24h change for all held coins (seeds individual caches too)
+        crypto_ids = [detect_currency(s.lower()) for s in saved if detect_currency(s.lower())]
+        change_map = {}
+        if crypto_ids:
+            batch = _fetch_prices_batch(','.join(set(crypto_ids)))
+            for cid in crypto_ids:
+                change_map[cid] = batch.get(cid, {}).get('usd_24h_change')
+
+        total_usd = 0.0
+        lines = [_T_cached(user_id, 'digest_morning')]
+        for symbol, amount in saved.items():
+            cid = detect_currency(symbol.lower())
+            if not cid:
+                continue
+            price = get_crypto_price(cid)
+            if not price:
+                continue
+            value = amount * price
+            total_usd += value
+            change = change_map.get(cid)
+            change_str = ""
+            if change is not None:
+                arrow = '📈' if change >= 0 else '📉'
+                change_str = f" {arrow} {change:+.2f}%"
+            pnl_str = ""
+            buy = buy_prices.get(symbol.upper())
+            if buy and buy > 0:
+                pnl_usd = (price - buy) * amount
+                sign = "+" if pnl_usd >= 0 else ""
+                pnl_usd_abs = abs(pnl_usd)
+                pnl_str = f" | P&L: {sign}{fmt_price(pnl_usd_abs)}"
+            lines.append(f"🪙 <b>{symbol}</b>: {fmt_price(value)}{change_str}{pnl_str}")
+
+        if usd_to_irr:
+            total_irr = total_usd * usd_to_irr
+            lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
+        else:
+            lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr="N/A"))
+        lines.append(f"\n<i>📅 {datetime.now(datetime.UTC).strftime('%b %d, %Y  %H:%M UTC')}</i>")
+        kb = types.InlineKeyboardMarkup([[
+            types.InlineKeyboardButton(_T_cached(user_id, 'btn_portfolio'), callback_data="show_holdings"),
+            types.InlineKeyboardButton(_T_cached(user_id, 'btn_alerts'),    callback_data="show_alerts"),
+        ]])
+        bot.send_message(user_id, "\n".join(lines), parse_mode='HTML', reply_markup=kb)
+    except Exception as e:
+        logger.error(f"Digest send failed for user {user_id}: {e}")
+
+
 # ─────────────────────────────────────────────
 # Background: alert checker (runs every 60s)
 # ─────────────────────────────────────────────
@@ -7478,9 +7575,11 @@ def _webapp_sparklines(cids):
 
 
 def _webapp_prices():
+    # Use cached prices primarily, fetch fresh only if needed
     real_cids = [c for c in CRYPTO_LIST if c != 'telegram-stars']
     batch = _fetch_prices_batch(','.join(real_cids)) or {}
     spark = _webapp_sparklines(real_cids)
+    usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
     coins = []
     for cid in CRYPTO_LIST:
         icon, name, sym = _webapp_coin_meta(cid)
@@ -7496,7 +7595,7 @@ def _webapp_prices():
             'price': price, 'change': change,
             'sparkline': (spark.get(cid) or [])[-32:],
         })
-    return {'ok': True, 'usd_to_irr': get_usd_to_irr(), 'coins': coins}
+    return {'ok': True, 'usd_to_irr': usd_to_irr, 'coins': coins}
 
 
 def _webapp_portfolio(uid):
@@ -7653,7 +7752,9 @@ def _webapp_static(rel):
         body = full_path.read_bytes()
     except Exception:
         return 404, [('Content-Type', 'text/plain; charset=utf-8')], b'not found'
-    return 200, [('Content-Type', ctype), ('Cache-Control', 'no-cache')], body
+    # Cache static assets for 1 hour, no-cache for HTML
+    cache_control = 'public, max-age=3600' if full_path.suffix != '.html' else 'no-cache'
+    return 200, [('Content-Type', ctype), ('Cache-Control', cache_control)], body
 
 
 def _webapp_json(obj, status=200):
@@ -7739,7 +7840,26 @@ def _webapp_wsgi(environ, start_response):
             uid = int(qs['dev_uid'])
         except (TypeError, ValueError):
             uid = None
-    status, headers, body = _webapp_route(environ.get('REQUEST_METHOD', 'GET'), path, uid, qs)
+    
+    # Add CORS headers for development
+    method = environ.get('REQUEST_METHOD', 'GET')
+    if method == 'OPTIONS':
+        start_response("204 No Content", [
+            ('Access-Control-Allow-Origin', '*'),
+            ('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'),
+            ('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data'),
+            ('Access-Control-Max-Age', '86400'),
+        ])
+        return [b'']
+    
+    status, headers, body = _webapp_route(method, path, uid, qs)
+    
+    # Add CORS headers
+    headers = list(headers)
+    headers.append(('Access-Control-Allow-Origin', '*'))
+    headers.append(('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'))
+    headers.append(('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data'))
+    
     start_response(f"{status} {HTTPStatus(status).phrase}", headers)
     return [body]
 
