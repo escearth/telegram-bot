@@ -1725,6 +1725,7 @@ STRINGS = {
         'tx_header':           "ℹ️ TRON Transaction Details\n\n",
         'tx_status':           "{emoji} Status: {status}\n\n",
         'tx_confirmed':        "Confirmed",
+        'tx_failed':           "Failed",
         'tx_pending':          "Pending",
         'tx_block':            "🔗 Block: #{block}\n\n",
         'tx_time':             "🕐 Time: {time}\n\n",
@@ -2114,10 +2115,11 @@ STRINGS = {
         'btn_portfolio':       "💼 پرتفو",
         'btn_alerts':          "🔔 هشدارها",
 
-        # ── TRON transaction ──────────────────────────────────
+# ── TRON transaction ──────────────────────────────────
         'tx_header':           "ℹ️ جزئیات تراکنش ترون\n\n",
         'tx_status':           "{emoji} وضعیت: {status}\n\n",
         'tx_confirmed':        "تأیید شده",
+        'tx_failed':           "ناموفق",
         'tx_pending':          "در انتظار",
         'tx_block':            "🔗 بلوک: #{block}\n\n",
         'tx_time':             "🕐 زمان: {time}\n\n",
@@ -2312,6 +2314,63 @@ def is_valid_ton_address(address: str) -> bool:
     return False
 
 
+def _raw_ton_to_user_friendly(raw_address: str) -> str:
+    """
+    Convert raw TON address (workchain:hex) to user-friendly format (EQ/UQ...).
+    Raw format: '0:38f5db3c0c772023befbd23ea0a8e62d26995c003078d146f57a7e7f41b3edc6'
+    User-friendly: 'UQA49ds8DHcgI7770j6gqOYtJplcADB40Ub1en5_QbPtxoFU'
+    """
+    if not raw_address or ':' not in raw_address:
+        return raw_address
+    
+    try:
+        parts = raw_address.split(':')
+        if len(parts) != 2:
+            return raw_address
+        
+        workchain = int(parts[0])
+        hex_addr = parts[1].lower()
+        
+        # Ensure hex_addr is 64 chars (32 bytes)
+        if len(hex_addr) != 64:
+            return raw_address
+        
+        # Convert hex to bytes
+        addr_bytes = bytes.fromhex(hex_addr)
+        
+        # Tag: 0x51 for non-bounceable (UQ...), 0x11 for bounceable (EQ...)
+        # TON Center API typically returns non-bounceable addresses for mainnet
+        tag = 0x51
+        
+        # Workchain as signed byte (but encoded as unsigned for the payload)
+        wc_byte = workchain & 0xFF
+        
+        # Create the 34-byte payload: tag + workchain + address
+        payload = bytes([tag, wc_byte]) + addr_bytes
+        
+        # Compute CRC16-XModem with initial value 0x0000 (TON uses this)
+        crc = 0x0000
+        for byte in payload:
+            crc ^= byte << 8
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = (crc << 1) ^ 0x1021
+                else:
+                    crc = crc << 1
+                crc &= 0xFFFF
+        
+        # Append checksum (2 bytes, big-endian)
+        full_bytes = payload + crc.to_bytes(2, 'big')
+        
+        # Base64url encode
+        import base64
+        b64 = base64.urlsafe_b64encode(full_bytes).decode().rstrip('=')
+        
+        return b64
+    except Exception:
+        return raw_address
+
+
 def detect_wallet_chain(address: str) -> str | None:
     """Detect blockchain from wallet address format.
     Returns 'tron', 'ton', or None if unrecognised."""
@@ -2422,6 +2481,12 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
         destination = in_msg.get('destination', {})
         dest_address = destination.get('address', 'N/A') if destination else 'N/A'
         
+        # Convert raw TON addresses to user-friendly format
+        if source_address != 'N/A' and ':' in source_address:
+            source_address = _raw_ton_to_user_friendly(source_address)
+        if dest_address != 'N/A' and ':' in dest_address:
+            dest_address = _raw_ton_to_user_friendly(dest_address)
+        
         # Get value
         value_nano = int(in_msg.get('value', 0))
         value_ton = value_nano / 1_000_000_000
@@ -2450,6 +2515,11 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
                 if dest_address == 'N/A':
                     dst = first_out.get('destination', {})
                     dest_address = dst.get('address', 'N/A') if dst else 'N/A'
+                # Convert raw TON addresses from out_msgs too
+                if source_address != 'N/A' and ':' in source_address:
+                    source_address = _raw_ton_to_user_friendly(source_address)
+                if dest_address != 'N/A' and ':' in dest_address:
+                    dest_address = _raw_ton_to_user_friendly(dest_address)
                 if value_ton == 0:
                     value_nano = int(first_out.get('value', 0))
                     value_ton = value_nano / 1_000_000_000
@@ -2555,6 +2625,12 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
         destination = in_msg.get('destination', 'N/A')
         value_nano = int(in_msg.get('value', 0))
         value_ton = value_nano / 1_000_000_000
+        
+        # Convert raw TON addresses to user-friendly format
+        if source != 'N/A' and ':' in source:
+            source = _raw_ton_to_user_friendly(source)
+        if destination != 'N/A' and ':' in destination:
+            destination = _raw_ton_to_user_friendly(destination)
         
         # Check status from TonScan
         # TonScan might have a status field
@@ -4571,6 +4647,7 @@ def handle_callback(call):
                     )
             except Exception as e:
                 logger.error(f"Chart callback failed: {e}")
+                bot.answer_callback_query(call.id, T(user_id, 'chart_fail'), show_alert=True)
         return
 
     # ── Exchange selector ─────────────────────────────────────
