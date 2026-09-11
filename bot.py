@@ -272,7 +272,8 @@ GROUP_QUERY_CACHE_TTL = 30  # seconds - short TTL for deduplication
 # ─────────────────────────────────────────────
 # SQLite persistence (replaces JSON files)
 # ─────────────────────────────────────────────
-DB_FILE = "bot_data.db"
+BASE_DIR = Path(__file__).resolve().parent
+DB_FILE = str(BASE_DIR / "bot_data.db")
 db_lock = threading.Lock()
 
 
@@ -295,18 +296,28 @@ def get_db_conn():
         with db_lock:
             if not _db_initialized:
                 init_db()
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE)
-        try:
-            yield conn
-        finally:
-            conn.close()
+    # Use connection with WAL mode and busy timeout
+    conn = sqlite3.connect(DB_FILE, timeout=30.0)
+    try:
+        # Enable WAL mode for better concurrency
+        conn.execute("PRAGMA journal_mode=WAL")
+        # Set busy timeout to 30 seconds
+        conn.execute("PRAGMA busy_timeout=30000")
+        # Enable foreign keys
+        conn.execute("PRAGMA foreign_keys=ON")
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db():
     global _db_initialized
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=30.0)
     try:
+        # Enable WAL mode for better concurrency
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA foreign_keys=ON")
         c = conn.cursor()
         c.execute("""
             CREATE TABLE IF NOT EXISTS holdings (
@@ -856,8 +867,8 @@ def _fetch_fear_greed() -> dict | None:
         if resp.status_code == 200:
             data = resp.json().get('data', [{}])[0]
             return data
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to fetch Fear & Greed: {e}")
     return None
 
 
@@ -1047,7 +1058,8 @@ def record_group_user_request(chat_id: int, user_id: int):
 
 
 def get_group_cached_query(chat_id: int, query_key: str):
-    """Get cached query result for a group (for deduplication)."""
+    """Get cached raw data for a group query (for deduplication).
+    Returns raw data dict, not rendered HTML. Returns None if missing/expired."""
     with group_query_cache_lock:
         entry = group_query_cache[chat_id].get(query_key)
         if entry is None:
@@ -1060,7 +1072,8 @@ def get_group_cached_query(chat_id: int, query_key: str):
 
 
 def set_group_cached_query(chat_id: int, query_key: str, value):
-    """Cache a query result for a group (for deduplication)."""
+    """Cache raw data for a group query (for deduplication).
+    Stores raw data dict, not rendered HTML."""
     with group_query_cache_lock:
         group_query_cache[chat_id][query_key] = (value, time.time())
 
@@ -1089,6 +1102,37 @@ def _cleanup_group_rate_limit_dicts():
                 stale_chats.append(chat_id)
         for cid in stale_chats:
             del group_query_cache[cid]
+
+
+def _format_cached_group_result(query_type: str, raw_data, user_id: int, text_lower: str, text_original: str) -> str:
+    """Format cached raw data for a specific user's language."""
+    if query_type == 'crypto_price':
+        # raw_data is the price dict from API
+        if isinstance(raw_data, dict) and 'price' in raw_data:
+            price_usd = raw_data['price']
+            change = raw_data.get('change')
+            name = raw_data.get('name', '')
+            sym = raw_data.get('sym', '')
+            usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
+            toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
+            return add_timestamp(
+                f"📊 <b>{name}</b>\n\n"
+                f"💵 <b>{fmt_price(price_usd)}</b>" + (f"\n{toman_line}" if toman_line else "")
+            )
+    elif query_type == 'wallet_check':
+        # raw_data is the wallet balance string
+        return add_timestamp(raw_data)
+    elif query_type == 'tx_check':
+        # raw_data is the transaction details string
+        return add_timestamp(raw_data)
+    # Fallback - return raw data as-is
+    return add_timestamp(str(raw_data))
+
+
+def _cache_group_query_result(query_type: str, query_key: str, chat_id: int, raw_data):
+    """Cache raw data for a group query."""
+    if query_type and raw_data:
+        set_group_cached_query(chat_id, query_key, raw_data)
 
 
 # ─────────────────────────────────────────────
@@ -1190,6 +1234,61 @@ def _get_me():
     return _me_cache
 
 
+def _classify_group_query(text_lower: str) -> str:
+    """Classify a group plain-text query to determine rate limiting policy.
+    Returns query type: 'crypto_price', 'fiat_conversion', 'math', 'wallet_check',
+    'tx_check', 'gold_price', 'market_overview', 'command', 'wallet_add', 'alert_mgmt',
+    'holdings_mgmt', 'unknown'.
+    """
+    if not text_lower:
+        return 'unknown'
+    
+    # Commands
+    if text_lower.startswith('/'):
+        return 'command'
+    
+    # Crypto price queries (btc, eth, 10 trx, etc.)
+    if re.match(r'^([A-Za-z]{3,10}|\d+(?:\.\d+)?\s+[A-Za-z]{3,10})$', text_lower):
+        # Single symbol or amount + symbol
+        parts = text_lower.split()
+        if len(parts) == 1 and parts[0] in CRYPTO_ALIASES:
+            return 'crypto_price'
+        elif len(parts) == 2 and parts[1] in CRYPTO_ALIASES:
+            return 'crypto_price'
+    
+    # Fiat conversion (100 usd to toman, etc.)
+    if re.match(r'^([\d.,۰-۹٬٫]+)?\s*(\$|usd|dollar|دلار|lira|tl|try|₺|eur|euro|€|gbp|pound|£|aed|dirham|درهم|cny|yuan|یوآن)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال|usd|\$)?$', text_lower):
+        return 'fiat_conversion'
+    
+    # Math expressions
+    if re.match(r'^[\d+\-*/().%\s^]+$', text_lower) and any(c in text_lower for c in '+-*/%^'):
+        return 'math'
+    
+    # Wallet address check (TRON 34 chars, TON 48 chars EQ/UQ)
+    if re.match(r'^[A-Za-z0-9]{34}$', text_lower) or (len(text_lower) == 48 and text_lower[:2] in ('eq', 'uq')):
+        return 'wallet_check'
+    
+    # Transaction hash (64 hex chars) or transaction URLs
+    if re.match(r'^[A-Fa-f0-9]{64}$', text_lower):
+        return 'tx_check'
+    if re.match(r'https?://(tronscan\.org/#/transaction|tonscan\.org/tx|tonviewer\.com/transaction)/', text_lower):
+        return 'tx_check'
+    
+    # Gold price
+    if text_lower in ('gold', 'gold price', 'طلا', 'قیمت طلا', 'xau'):
+        return 'gold_price'
+    
+    # Market overview
+    if text_lower in ('market', 'fear', 'greed', 'fear and greed', 'fear & greed', 'بازار', 'ترس و طمع'):
+        return 'market_overview'
+    
+    # Standalone fiat rates
+    if text_lower in ('usd', 'try', 'lira', 'tl', '₺', 'eur', 'euro', '€', 'gbp', 'pound', '£', 'aed', 'dirham', 'درهم', 'cny', 'yuan', 'یوآن'):
+        return 'fiat_conversion'
+    
+    return 'unknown'
+
+
 def _looks_like_bot_query(message):
     """Cheap pre-filter mirroring handle_text's matching rules. Used in groups
     so a reply to the bot only counts as bot-directed when it's a real query
@@ -1271,7 +1370,8 @@ def _is_bot_directed_group_message(message):
     try:
         me = _get_me()
         username = getattr(me, 'username', None)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to get bot username: {e}")
         return True  # fail-open: if we can't verify, don't block the bot
 
     if text.startswith('/'):
@@ -1359,10 +1459,21 @@ def rate_limit_check(func):
                     pass
                 return
         elif is_group:
-            # Group plain-text queries: apply group-specific rate limit
-            if is_group_user_rate_limited(chat_id, user_id):
-                logger.warning(f"User {user_id} in group {chat_id} rate-limited (group query) - request dropped")
-                return  # Silently drop to avoid spam in groups
+            # Group plain-text queries: classify query type first
+            # Informational queries (crypto price, fiat conversion, math, wallet check, tx check)
+            # should NOT be rate-limited per-user. Use provider-level caching and
+            # request coalescing instead. Only stateful/command-like operations
+            # (wallet add, alert set, holdings edit) need per-user limits.
+            query_type = _classify_group_query(text_lower)
+            if query_type in ('crypto_price', 'fiat_conversion', 'math', 'wallet_check', 'tx_check', 'gold_price', 'market_overview'):
+                # These are read-only informational queries - no per-user rate limit
+                # Provider-level caching + request deduplication handles load
+                pass
+            else:
+                # Commands, wallet additions, alert management, etc. - apply rate limit
+                if is_group_user_rate_limited(chat_id, user_id):
+                    logger.warning(f"User {user_id} in group {chat_id} rate-limited (group query: {query_type}) - request dropped")
+                    return  # Silently drop to avoid spam in groups
 
         # Force-join check for all bot commands (not regular chat messages)
         if is_command and REQUIRED_CHANNEL and _is_joined_channel(user_id) is False:
@@ -1404,16 +1515,16 @@ def loading_indicator(func=None, *, keep=False):
                 lang = db_get_lang(message.from_user.id)
                 text = "⏳ <i>در حال دریافت...</i>" if lang == 'fa' else "⏳ <i>Fetching...</i>"
                 loading = bot.reply_to(message, text, parse_mode='HTML')
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to send loading indicator: {e}")
             try:
                 return f(message, *args, **kwargs)
             finally:
                 if loading is not None and not keep:
                     try:
                         bot.delete_message(loading.chat.id, loading.message_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to delete loading message: {e}")
         return wrapper
     return deco(func) if func is not None else deco
 
@@ -2747,8 +2858,8 @@ def get_crypto_price(crypto_id, cache_only=False):
                     return price
             elif resp.status_code == 429:
                 cache_set('cg_rate_limited', True, ttl=60)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"CoinGecko price fetch failed: {e}")
     
     # 2) Binance
     try:
@@ -2764,8 +2875,8 @@ def get_crypto_price(crypto_id, cache_only=False):
                 if price:
                     cache_set(crypto_id, price)
                     return price
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Binance price fetch failed: {e}")
     
     # 3) CryptoCompare
     try:
@@ -2781,8 +2892,8 @@ def get_crypto_price(crypto_id, cache_only=False):
                 price = float(resp.json()['USD'])
                 cache_set(crypto_id, price)
                 return price
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"CryptoCompare price fetch failed: {e}")
     
     return None
 
@@ -2922,6 +3033,11 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
     cached = cache_get(cache_key)
     if cached is not None:
         return cached, crypto_id.upper()
+    
+    # Validate crypto_id
+    if crypto_id not in CRYPTO_LIST and crypto_id != 'telegram-stars':
+        raise ValueError(f"Unsupported crypto_id for chart: {crypto_id}")
+    
     try:
         raw_prices = _fetch_chart_data(crypto_id, days)
         if not raw_prices:
@@ -2967,8 +3083,26 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
             }
         }
         
-        qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config, separators=(',', ':')))}&w=700&h=420&bkg=0e1117&f=png"
-        resp = session.get(qc_url, timeout=25)
+        # Try GET first (for shorter URLs)
+        config_json = json.dumps(chart_config, separators=(',', ':'))
+        qc_url = f"https://quickchart.io/chart?c={quote(config_json)}&w=700&h=420&bkg=0e1117&f=png"
+        
+        # If URL is too long, use POST
+        if len(qc_url) > 2000:
+            resp = session.post(
+                "https://quickchart.io/chart",
+                json={
+                    "chart": chart_config,
+                    "width": 700,
+                    "height": 420,
+                    "backgroundColor": "0e1117",
+                    "format": "png"
+                },
+                timeout=30
+            )
+        else:
+            resp = session.get(qc_url, timeout=25)
+        
         if resp.status_code != 200:
             logger.error(f"QuickChart API failed: {resp.status_code}, response: {resp.text[:500]}")
             # Try with simpler config as last resort
@@ -2984,8 +3118,22 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
                 },
                 "options": {"plugins": {"legend": {"display": False}}, "elements": {"point": {"radius": 0}}}
             }
-            qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(simple_config, separators=(',', ':')))}&w=700&h=420&bkg=0e1117&f=png"
-            resp = session.get(qc_url, timeout=25)
+            simple_json = json.dumps(simple_config, separators=(',', ':'))
+            qc_url = f"https://quickchart.io/chart?c={quote(simple_json)}&w=700&h=420&bkg=0e1117&f=png"
+            if len(qc_url) > 2000:
+                resp = session.post(
+                    "https://quickchart.io/chart",
+                    json={
+                        "chart": simple_config,
+                        "width": 700,
+                        "height": 420,
+                        "backgroundColor": "0e1117",
+                        "format": "png"
+                    },
+                    timeout=30
+                )
+            else:
+                resp = session.get(qc_url, timeout=25)
             if resp.status_code != 200:
                 raise ValueError(f"QuickChart API failed: {resp.status_code}")
         
@@ -2997,7 +3145,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         return result, crypto_id.upper()
     except Exception as e:
         logger.error(f"Chart generation failed for {crypto_id}: {e}")
-        # Return a simple text-based fallback or raise
+        # Re-raise to let caller handle
         raise
 
 
@@ -3142,8 +3290,8 @@ def get_usd_to_irr():
                 f"<i>{datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M UTC')}</i>",
                 parse_mode='HTML'
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to notify owner about USD/IRR failure: {e}")
     return None
 
 
@@ -3836,8 +3984,8 @@ def handle_callback(call):
     if call.message is None:
         try:
             bot.answer_callback_query(call.id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to answer callback query: {e}")
         return
     user_id = call.from_user.id
     data = call.data
@@ -3854,8 +4002,8 @@ def handle_callback(call):
         if joined is True:
             try:
                 bot.delete_message(call.message.chat.id, call.message.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to delete message: {e}")
             bot.answer_callback_query(call.id, "✅ Welcome! You're verified.")
             # Re-send welcome
             name = call.from_user.first_name or "there"
@@ -4297,8 +4445,8 @@ def handle_callback(call):
                 parse_mode='HTML',
                 reply_markup=build_wallets_keyboard(wallets)
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to edit message: {e}")
         bot.answer_callback_query(call.id, T(user_id, 'wallet_removed_toast'))
         return
 
@@ -4312,8 +4460,8 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to delete message: {e}")
         return
 
     if data == "market_refresh":
@@ -4663,8 +4811,8 @@ def handle_callback(call):
                     chat_id=call.message.chat.id, message_id=call.message.message_id,
                     parse_mode='HTML'
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to edit message: {e}")
         return
 
     bot.answer_callback_query(call.id)
@@ -4763,93 +4911,75 @@ def price(message):
     logger.info(f"User {message.from_user.id} requested prices")
 
 
+# Unified fiat currency command handler
+FIAT_COMMANDS = {
+    'usd': ('usd_rate', '💵', get_usd_to_irr, 'USD'),
+    'try': ('try_rate', '🇹🇷', get_try_to_irr, 'TRY'),
+    'eur': ('eur_rate', '🇪🇺', get_eur_to_irr, 'EUR'),
+    'gbp': ('gbp_rate', '🇬🇧', get_gbp_to_irr, 'GBP'),
+    'aed': ('aed_rate', '🇦🇪', get_aed_to_irr, 'AED'),
+    'cny': ('cny_rate', '🇨🇳', get_cny_to_irr, 'CNY'),
+}
+
+
+def _handle_fiat_command(message, cmd_key):
+    """Unified handler for fiat currency rate commands."""
+    uid = message.from_user.id
+    bot.send_chat_action(message.chat.id, 'typing')
+    rate_key, emoji, getter, code = FIAT_COMMANDS[cmd_key]
+    rate = getter()
+    if rate is None:
+        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
+        return
+    rate_str = f"{rate:,.0f}"
+    bot.reply_to(
+        message,
+        add_timestamp(T(uid, rate_key, rate=rate_str)),
+        parse_mode='HTML'
+    )
+    logger.info(f"User {uid} requested {code} → Toman")
+
+
 @bot.message_handler(commands=['usd'])
 @rate_limit_check
 @loading_indicator
 def usd_command(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    uid_u = message.from_user.id
-    usd_iran = get_usd_to_irr()
-    if usd_iran is None:
-        bot.reply_to(message, add_timestamp(T(uid_u, 'rate_unavailable')), parse_mode='HTML')
-        return
-    rate_str = f"{usd_iran:,.0f}"
-    bot.reply_to(
-        message,
-        add_timestamp(T(uid_u, 'usd_rate', rate=rate_str)),
-        parse_mode='HTML'
-    )
-    logger.info(f"User {message.from_user.id} requested USD → Toman")
+    _handle_fiat_command(message, 'usd')
 
 
 @bot.message_handler(commands=['try'])
 @rate_limit_check
 @loading_indicator
 def try_command(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    uid = message.from_user.id
-    try_rate = get_try_to_irr()
-    if try_rate is None:
-        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
-    else:
-        bot.reply_to(message, add_timestamp(T(uid, 'try_rate', rate=f"{try_rate:,.0f}")), parse_mode='HTML')
-    logger.info(f"User {uid} requested TRY → Toman")
+    _handle_fiat_command(message, 'try')
 
 
 @bot.message_handler(commands=['eur'])
 @rate_limit_check
 @loading_indicator
 def eur_command(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    uid = message.from_user.id
-    eur_rate = get_eur_to_irr()
-    if eur_rate is None:
-        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
-    else:
-        bot.reply_to(message, add_timestamp(T(uid, 'eur_rate', rate=f"{eur_rate:,.0f}")), parse_mode='HTML')
-    logger.info(f"User {uid} requested EUR → Toman")
+    _handle_fiat_command(message, 'eur')
 
 
 @bot.message_handler(commands=['gbp'])
 @rate_limit_check
 @loading_indicator
 def gbp_command(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    uid = message.from_user.id
-    gbp_rate = get_gbp_to_irr()
-    if gbp_rate is None:
-        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
-    else:
-        bot.reply_to(message, add_timestamp(T(uid, 'gbp_rate', rate=f"{gbp_rate:,.0f}")), parse_mode='HTML')
-    logger.info(f"User {uid} requested GBP → Toman")
+    _handle_fiat_command(message, 'gbp')
 
 
 @bot.message_handler(commands=['aed'])
 @rate_limit_check
 @loading_indicator
 def aed_command(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    uid = message.from_user.id
-    aed_rate = get_aed_to_irr()
-    if aed_rate is None:
-        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
-    else:
-        bot.reply_to(message, add_timestamp(T(uid, 'aed_rate', rate=f"{aed_rate:,.0f}")), parse_mode='HTML')
-    logger.info(f"User {uid} requested AED → Toman")
+    _handle_fiat_command(message, 'aed')
 
 
 @bot.message_handler(commands=['cny'])
 @rate_limit_check
 @loading_indicator
 def cny_command(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    uid = message.from_user.id
-    cny_rate = get_cny_to_irr()
-    if cny_rate is None:
-        bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
-    else:
-        bot.reply_to(message, add_timestamp(T(uid, 'cny_rate', rate=f"{cny_rate:,.0f}")), parse_mode='HTML')
-    logger.info(f"User {uid} requested CNY → Toman")
+    _handle_fiat_command(message, 'cny')
 
 
 def _build_gold_message(uid):
@@ -6727,6 +6857,8 @@ def _handle_text_math(message, user_id, text, text_lower, text_original):
     return False
 
 def _handle_text_fiat(message, user_id, text_lower):
+    is_group = message.chat.type in ('group', 'supergroup')
+    chat_id = message.chat.id
     # USD → Toman (support flexible number formats)
     usd_pattern = r'^([\d.,۰-۹٬٫]+)?\s*(\$|usd|dollar|دلار)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$'
     m = re.match(usd_pattern, text_lower)
@@ -6763,6 +6895,10 @@ def _handle_text_fiat(message, user_id, text_lower):
             add_timestamp(f"💵 <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
+        if is_group:
+            query_key = f"fiat:usd_to_toman:{text_lower}"
+            raw_data = {'rate': usd_to_irr, 'amount': str(amount)}
+            set_group_cached_query(chat_id, query_key, raw_data)
         return True
 
     # TRY → Toman (support flexible number formats)
@@ -6798,6 +6934,10 @@ def _handle_text_fiat(message, user_id, text_lower):
             add_timestamp(f"💱 <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
+        if is_group:
+            query_key = f"fiat:try_to_toman:{text_lower}"
+            raw_data = {'rate': try_to_irr, 'amount': str(amount)}
+            set_group_cached_query(chat_id, query_key, raw_data)
         return True
 
     # EUR / GBP / AED / CNY → Toman (support flexible number formats)
@@ -6840,11 +6980,17 @@ def _handle_text_fiat(message, user_id, text_lower):
             add_timestamp(f"{fx_emoji} <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
+        if is_group:
+            query_key = f"fiat:{fx_code.lower()}_to_toman:{text_lower}"
+            raw_data = {'rate': fx_to_irr, 'amount': str(amount)}
+            set_group_cached_query(chat_id, query_key, raw_data)
         return True
 
     return False
 
 def _handle_text_gold(message, user_id, text_lower):
+    is_group = message.chat.type in ('group', 'supergroup')
+    chat_id = message.chat.id
     # Gold → USD (gram to dollar conversion)
     gold_pattern = r'^([\d.,۰-۹٬٫]+)\s*(gold|طل|طلا)\s*(?:to|به)?\s*(\$|usd|dollar|دلار)?$'
     m = re.match(gold_pattern, text_lower)
@@ -6871,17 +7017,27 @@ def _handle_text_gold(message, user_id, text_lower):
             add_timestamp(f"🥇 <b>{reply_text}</b>"),
             parse_mode='HTML'
         )
+        if is_group:
+            query_key = f"gold:gram_to_usd:{text_lower}"
+            raw_data = {'xau_price': xau_price, 'amount': str(amount)}
+            set_group_cached_query(chat_id, query_key, raw_data)
         return True
 
     return False
 
 def _handle_text_wallet_and_tx(message, user_id, text):
+    is_group = message.chat.type in ('group', 'supergroup')
+    chat_id = message.chat.id
+    
     # TRON wallet address
     if re.match(r'^[A-Za-z0-9]{34}$', text):
         if is_valid_tron_address(text):
             bot.send_chat_action(message.chat.id, 'typing')
             result = get_tron_wallet_trx(text, user_id)
             bot.reply_to(message, add_timestamp(result), parse_mode='HTML')
+            if is_group:
+                query_key = f"wallet:{text}"
+                set_group_cached_query(chat_id, query_key, result)
         else:
             bot.reply_to(message, T(user_id, 'invalid_tron_addr'))
         return True
@@ -6892,6 +7048,9 @@ def _handle_text_wallet_and_tx(message, user_id, text):
             bot.send_chat_action(message.chat.id, 'typing')
             result = get_ton_wallet_balance(text, user_id)
             bot.reply_to(message, add_timestamp(result), parse_mode='HTML')
+            if is_group:
+                query_key = f"wallet:{text}"
+                set_group_cached_query(chat_id, query_key, result)
             return True
         else:
             bot.reply_to(message, T(user_id, 'invalid_address'))
@@ -6926,11 +7085,17 @@ def _handle_text_wallet_and_tx(message, user_id, text):
             # TRON-specific URL - only try TRON
             tron_result = get_tron_transaction_details(tx_hash, user_id)
             bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
+            if is_group:
+                query_key = f"txhash:{tx_hash}"
+                set_group_cached_query(chat_id, query_key, tron_result)
             return True
         elif detected_chain == 'ton':
             # TON-specific URL - only try TON
             ton_result = get_ton_transaction_details(tx_hash, user_id)
             bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
+            if is_group:
+                query_key = f"txhash:{tx_hash}"
+                set_group_cached_query(chat_id, query_key, ton_result)
             return True
         else:
             # Bare hash - try both chains, but label results clearly
@@ -6944,9 +7109,15 @@ def _handle_text_wallet_and_tx(message, user_id, text):
             
             if tron_success and not ton_success:
                 bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
+                if is_group:
+                    query_key = f"txhash:{tx_hash}"
+                    set_group_cached_query(chat_id, query_key, tron_result)
                 return True
             elif ton_success and not tron_success:
                 bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
+                if is_group:
+                    query_key = f"txhash:{tx_hash}"
+                    set_group_cached_query(chat_id, query_key, ton_result)
                 return True
             elif tron_success and ton_success:
                 # Both succeeded - this shouldn't happen but show both with clear labels
@@ -7032,6 +7203,18 @@ def _handle_text_crypto(message, user_id, text, text_lower):
                 return True
             toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
 
+            # Cache raw data for group deduplication
+            is_group = message.chat.type in ('group', 'supergroup')
+            if is_group:
+                query_key = f"crypto:{text_lower}"
+                raw_data = {
+                    'price': price_usd,
+                    'change': None,  # Could fetch 24h change if needed
+                    'name': crypto_name,
+                    'sym': sym,
+                }
+                set_group_cached_query(message.chat.id, query_key, raw_data)
+
             kb = None
             if crypto != 'telegram-stars':
                 kb = types.InlineKeyboardMarkup()
@@ -7060,6 +7243,19 @@ def _handle_text_crypto(message, user_id, text, text_lower):
                 value_usd  = amount * price_usd
                 sym = _sym(crypto)
                 toman_line = f"🏦 {value_usd * usd_to_irr:,.0f} {T(user_id, 'toman_label')}" if usd_to_irr else ""
+                
+                # Cache raw data for group deduplication
+                is_group = message.chat.type in ('group', 'supergroup')
+                if is_group:
+                    query_key = f"amount_crypto:{text_lower}"
+                    raw_data = {
+                        'price': value_usd,
+                        'change': None,
+                        'name': CRYPTO_LIST.get(crypto, crypto),
+                        'sym': sym,
+                    }
+                    set_group_cached_query(message.chat.id, query_key, raw_data)
+                
                 bot.reply_to(
                     message,
                     add_timestamp(
@@ -7134,28 +7330,36 @@ def handle_text(message):
     if state and _handle_text_state(message, user_id, text, text_lower, text_original, state):
         return
 
-    # For group plain-text queries, use deduplication cache for common queries
+# For group plain-text queries, use deduplication cache for common queries
     query_key = None
+    query_type = None
     if is_group and not state:
         # Create a cache key for common query types
         if re.match(r'^[A-Za-z0-9]{3,10}$', text_lower) and text_lower in CRYPTO_ALIASES:
             query_key = f"crypto:{text_lower}"
+            query_type = 'crypto_price'
         elif re.match(r'^\d+(?:\.\d+)?\s+\w+$', text_lower):
             query_key = f"amount_crypto:{text_lower}"
+            query_type = 'crypto_price'
         elif re.match(r'^[A-Za-z0-9]{34}$', text) or (len(text) == 48 and text[:2] in ('EQ', 'UQ')):
             query_key = f"wallet:{text}"
+            query_type = 'wallet_check'
         elif re.match(r'^[A-Fa-f0-9]{64}$', text):
             query_key = f"txhash:{text}"
-        
-        if query_key:
-            cached_result = get_group_cached_query(chat_id, query_key)
-            if cached_result is not None:
-                # Send cached result
-                try:
-                    bot.reply_to(message, cached_result, parse_mode='HTML')
-                except Exception:
-                    pass
-                return
+            query_type = 'tx_check'
+    
+    # Try to get cached raw data
+    cached_raw = None
+    if query_key:
+        cached_raw = get_group_cached_query(chat_id, query_key)
+        if cached_raw is not None:
+            # Format cached raw data for this user's language
+            formatted = _format_cached_group_result(query_type, cached_raw, user_id, text_lower, text_original)
+            try:
+                bot.reply_to(message, formatted, parse_mode='HTML')
+            except Exception:
+                pass
+            return
 
     if _handle_text_math(message, user_id, text, text_lower, text_original):
         return
@@ -7563,7 +7767,8 @@ bot.process_new_updates = _safe_process_new_updates
 # ═══════════════════════════════════════════════════════════════
 WEBAPP_HOST = os.getenv('WEBAPP_HOST', '127.0.0.1')
 WEBAPP_PORT = int(os.getenv('WEBAPP_PORT', '8080'))
-WEBAPP_ALLOW_DEV = os.getenv('WEBAPP_ALLOW_DEV', '') in ('1', 'true', 'yes')
+# WEBAPP_ALLOW_DEV defaults to False for security - must be explicitly enabled
+WEBAPP_ALLOW_DEV = os.getenv('WEBAPP_ALLOW_DEV', '').lower() in ('1', 'true', 'yes')
 if WEBAPP_ALLOW_DEV:
     logger.warning(
         "⚠️  WEBAPP_ALLOW_DEV is ENABLED — anyone passing ?dev_uid=<id> can "
@@ -7581,6 +7786,17 @@ WEBAPP_MIME = {
     '.ico':   'image/x-icon',
     '.woff2': 'font/woff2',
 }
+
+# Content Security Policy for WebApp
+WEBAPP_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://telegram.org; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: https:; "
+    "font-src 'self' data:; "
+    "connect-src 'self' https://api.telegram.org; "
+    "frame-ancestors https://web.telegram.org https://telegram.org;"
+)
 
 
 def _webapp_validate_init_data(init_data):
@@ -7936,6 +8152,9 @@ def _webapp_wsgi(environ, start_response):
     headers.append(('Access-Control-Allow-Origin', '*'))
     headers.append(('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'))
     headers.append(('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data'))
+    
+    # Add CSP header for security
+    headers.append(('Content-Security-Policy', WEBAPP_CSP))
     
     start_response(f"{status} {HTTPStatus(status).phrase}", headers)
     return [body]

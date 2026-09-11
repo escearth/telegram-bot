@@ -150,9 +150,9 @@
     let url = path;
     if (DEV_UID && !INIT_DATA) {
       url += `${url.includes("?") ? "&" : "?"}dev_uid=${encodeURIComponent(DEV_UID)}`;
-    } else if (INIT_DATA) {
-      url += `${url.includes("?") ? "&" : "?"}initData=${encodeURIComponent(INIT_DATA)}`;
     }
+    // Do NOT include initData in URL - use X-Telegram-Init-Data header only
+    // to prevent leaking auth material in URLs, logs, referrers, etc.
     const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
     let res;
