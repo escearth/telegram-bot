@@ -47,11 +47,23 @@ def _acquire_bot_process_lock():
         return False
 
 
-if not getattr(bot, '_passenger_bot_started', False):
-    bot._passenger_bot_started = True
-    if _acquire_bot_process_lock():
+# Module-level lock to prevent race condition between checking flag and acquiring lock
+_passenger_start_lock = threading.Lock()
+
+def _start_bot_once():
+    """Atomically check flag and acquire lock to start bot only once."""
+    with _passenger_start_lock:
+        if getattr(bot, '_passenger_bot_started', False):
+            return False
+        if not _acquire_bot_process_lock():
+            return False
+        bot._passenger_bot_started = True
         threading.Thread(
             target=bot.start_bot, kwargs={'start_web': False},
             daemon=True, name='BotMain').start()
+        return True
+
+if not getattr(bot, '_passenger_bot_started', False):
+    _start_bot_once()
 
 application = bot._webapp_wsgi

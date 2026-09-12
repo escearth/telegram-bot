@@ -8287,19 +8287,37 @@ def _webapp_wsgi(environ, start_response):
 
 
 def start_webapp_server():
-    threading.Thread(
-        target=lambda: waitress.serve(
-            _webapp_wsgi,
-            host=WEBAPP_HOST,
-            port=WEBAPP_PORT,
-            clear_untrusted_proxy_headers=True,
-            threads=4,
-            _quiet=True
-        ),
-        daemon=True,
-        name='WebAppServer'
-    ).start()
-    logger.info(f"WebApp server listening on http://{WEBAPP_HOST}:{WEBAPP_PORT} (Waitress WSGI)")
+    """Start WebApp server with automatic port fallback."""
+    max_retries = 3
+    base_port = WEBAPP_PORT
+    
+    for attempt in range(max_retries):
+        port = base_port + attempt
+        try:
+            logger.info(f"Starting WebApp server on port {port} (attempt {attempt + 1}/{max_retries})")
+            threading.Thread(
+                target=lambda p=port: waitress.serve(
+                    _webapp_wsgi,
+                    host=WEBAPP_HOST,
+                    port=p,
+                    clear_untrusted_proxy_headers=True,
+                    threads=4,
+                    _quiet=True
+                ),
+                daemon=True,
+                name='WebAppServer'
+            ).start()
+            logger.info(f"WebApp server listening on http://{WEBAPP_HOST}:{port} (Waitress WSGI)")
+            return None
+        except OSError as e:
+            if e.errno == 98:  # Address already in use
+                logger.warning(f"Port {port} already in use, trying next port...")
+                if attempt < max_retries - 1:
+                    time.sleep(0.5)  # Brief pause before retry
+                    continue
+            logger.error(f"WebApp server failed to start: {e}")
+            raise
+    logger.error(f"Failed to start WebApp server after {max_retries} attempts")
     return None
 
 
