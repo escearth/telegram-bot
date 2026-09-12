@@ -1120,10 +1120,28 @@ def _format_cached_group_result(query_type: str, raw_data, user_id: int, text_lo
                 f"💵 <b>{fmt_price(price_usd)}</b>" + (f"\n{toman_line}" if toman_line else "")
             )
     elif query_type == 'wallet_check':
-        # raw_data is the wallet balance string
+        # raw_data can be string (old format) or dict with chain-specific data
+        if isinstance(raw_data, dict):
+            # New format: {'tron': '...', 'ton': '...'}
+            parts = []
+            if 'tron' in raw_data:
+                parts.append(f"🔗 <b>TRON</b>\n{raw_data['tron']}")
+            if 'ton' in raw_data:
+                parts.append(f"💎 <b>TON</b>\n{raw_data['ton']}")
+            return add_timestamp("\n\n".join(parts))
+        # Old format: string
         return add_timestamp(raw_data)
     elif query_type == 'tx_check':
-        # raw_data is the transaction details string
+        # raw_data can be string (old format) or dict with chain-specific data
+        if isinstance(raw_data, dict):
+            # New format: {'tron': '...', 'ton': '...'}
+            parts = []
+            if 'tron' in raw_data:
+                parts.append(f"🔗 <b>TRON</b>\n{raw_data['tron']}")
+            if 'ton' in raw_data:
+                parts.append(f"💎 <b>TON</b>\n{raw_data['ton']}")
+            return add_timestamp("\n\n".join(parts))
+        # Old format: string
         return add_timestamp(raw_data)
     # Fallback - return raw data as-is
     return add_timestamp(str(raw_data))
@@ -4770,6 +4788,16 @@ def handle_callback(call):
             _, crypto, days_label = parts
             days = CHART_DAYS.get(days_label, 30)
             bot.answer_callback_query(call.id, T(user_id, 'generating_chart'))
+            # Show loading state immediately
+            loading_msg = None
+            try:
+                loading_msg = bot.send_message(
+                    call.message.chat.id,
+                    add_timestamp(f"📊 <b>Generating {CHART_DAYS.get(days_label, days_label)} chart...</b>"),
+                    parse_mode='HTML'
+                )
+            except Exception:
+                pass
             try:
                 img_bytes, symbol = get_crypto_chart_image(crypto, days, user_id)
                 price = get_crypto_price(crypto)
@@ -4789,13 +4817,28 @@ def handle_callback(call):
                         bot.delete_message(call.message.chat.id, call.message.message_id)
                     except Exception:
                         pass
+                    if loading_msg:
+                        try:
+                            bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+                        except Exception:
+                            pass
                     bot.send_photo(
                         call.message.chat.id, photo=BytesIO(img_bytes),
                         caption=add_timestamp(caption), parse_mode='HTML', reply_markup=kb
                     )
             except Exception as e:
                 logger.error(f"Chart callback failed: {e}")
-                bot.answer_callback_query(call.id, T(user_id, 'chart_fail'), show_alert=True)
+                if loading_msg:
+                    try:
+                        bot.edit_message_text(
+                            add_timestamp(T(user_id, 'chart_fail')),
+                            chat_id=call.message.chat.id, message_id=loading_msg.message_id,
+                            parse_mode='HTML'
+                        )
+                    except Exception:
+                        pass
+                else:
+                    bot.answer_callback_query(call.id, T(user_id, 'chart_fail'), show_alert=True)
         return
 
     # ── Exchange selector ─────────────────────────────────────
@@ -5208,6 +5251,16 @@ def chart_cmd(message):
 def _send_chart(message, crypto, days, uid):
     """Generate a chart photo and post it with time-range buttons."""
     bot.send_chat_action(message.chat.id, 'upload_photo')
+    # Show initial loading message
+    loading_msg = None
+    try:
+        loading_msg = bot.send_message(
+            message.chat.id,
+            add_timestamp(f"📊 <b>Generating {CHART_DAYS.get(list(CHART_DAYS.keys())[list(CHART_DAYS.values()).index(days)] if days in CHART_DAYS.values() else f'{days}d')} chart...</b>"),
+            parse_mode='HTML'
+        )
+    except Exception:
+        pass
     try:
         img_bytes, symbol = get_crypto_chart_image(crypto, days, uid)
         price = get_crypto_price(crypto)
@@ -5216,13 +5269,28 @@ def _send_chart(message, crypto, days, uid):
         caption = f"📊 <b>{symbol}</b> - {days}d"
         if price:
             caption += f"\n💵 <b>{fmt_price(price)}</b>"
+        if loading_msg:
+            try:
+                bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+            except Exception:
+                pass
         bot.send_photo(
             message.chat.id, photo=BytesIO(img_bytes), caption=add_timestamp(caption),
             parse_mode='HTML', reply_markup=kb
         )
     except Exception as e:
         logger.error(f"Chart failed: {e}")
-        bot.reply_to(message, "❌ Chart generation failed. Try again later.")
+        if loading_msg:
+            try:
+                bot.edit_message_text(
+                    add_timestamp(T(uid, 'chart_fail')),
+                    chat_id=loading_msg.chat.id, message_id=loading_msg.message_id,
+                    parse_mode='HTML'
+                )
+            except Exception:
+                pass
+        else:
+            bot.reply_to(message, add_timestamp("❌ Chart generation failed. Try again later."))
 
 
 
@@ -5409,11 +5477,15 @@ def inline_query_handler(inline_query):
                     "txhash_tron", "TRON Transaction", "Tap to share TX details",
                     tron_result, html=True
                 ))
+                # Cache raw data for group deduplication
+                set_group_cached_query(uid, f"txhash:{tx_hash}", {'tron': tron_result})
             if ton_ok:
                 results.append(article(
                     "txhash_ton", "TON Transaction", "Tap to share TX details",
                     ton_result, html=True
                 ))
+                # Cache raw data for group deduplication
+                set_group_cached_query(uid, f"txhash:{tx_hash}", {'ton': ton_result})
             if not tron_ok and not ton_ok:
                 # Neither found - show a helpful message
                 results.append(article(
@@ -5428,6 +5500,8 @@ def inline_query_handler(inline_query):
         try:
             bal = get_tron_wallet_trx(q, uid)
             short = f"{q[:8]}...{q[-6:]}"
+            # Cache raw data for group deduplication
+            set_group_cached_query(uid, f"wallet:{q}", {'tron': bal})
             results.append(article(
                 "wallet_addr", f"TRON Wallet {short}", bal,
                 f"{EMOJIS['wallet']} <b>TRON Wallet</b>\n\n"
@@ -5444,6 +5518,8 @@ def inline_query_handler(inline_query):
         try:
             bal = get_ton_wallet_balance(q, uid)
             short = f"{q[:8]}...{q[-6:]}"
+            # Cache raw data for group deduplication
+            set_group_cached_query(uid, f"wallet:{q}", {'ton': bal})
             results.append(article(
                 "ton_wallet", f"TON Wallet {short}", bal,
                 f"{EMOJIS['wallet']} <b>TON Wallet</b>\n\n"
@@ -5645,12 +5721,23 @@ def inline_query_handler(inline_query):
             if p:
                 irr_v = _irr()
                 name  = CRYPTO_LIST[crypto]
+                sym = _sym(crypto)
                 toman_lbl = T(uid, 'toman_label')
                 irr_line = f"\n💰 {p * irr_v:,.0f} {toman_lbl}" if irr_v else ""
+                
+                # Cache raw data for group deduplication
+                raw_data = {
+                    'price': p,
+                    'change': None,
+                    'name': name,
+                    'sym': sym,
+                }
+                set_group_cached_query(uid, f"crypto:{ql}", raw_data)
+                
                 results.append(article(
                     "crypto_price", f"{name} Price",
                     f"{fmt_price(p)} | {p * irr_v:,.0f} {toman_lbl}" if irr_v else f"{fmt_price(p)}",
-                    f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}{irr_line}",
+                    f"📊 <b>{name}</b>\n\n💵 <b>{fmt_price(p)}</b>{irr_line}",
                     html=True
                 ))
 
@@ -6086,6 +6173,17 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
     Uses get_crypto_price() (cached) to avoid CoinGecko 429 errors.
     """
     chat_id = message.chat.id
+    # Show loading message for compare operation
+    loading_msg = None
+    try:
+        loading_msg = bot.send_message(
+            chat_id,
+            add_timestamp("⚖️ <b>Fetching comparison data...</b>"),
+            parse_mode='HTML'
+        )
+    except Exception:
+        pass
+    
     bot.send_chat_action(chat_id, 'typing')
 
     ids, names = [], []
@@ -6178,6 +6276,13 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
     else:
         msg = bot.send_message(chat_id, text, parse_mode='HTML', reply_markup=kb)
         register_panel_owner(msg.message_id, cmp_uid)
+    
+    # Clean up loading message
+    if loading_msg:
+        try:
+            bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+        except Exception:
+            pass
 
 
 @bot.message_handler(commands=['market'])
@@ -6185,8 +6290,18 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
 @loading_indicator
 def market_cmd(message, user_id=None, edit_msg_id=None):
     uid_m = user_id or message.from_user.id
-    bot.send_chat_action(message.chat.id, 'typing')
+    # Show loading message for market data
+    loading_msg = None
+    try:
+        loading_msg = bot.send_message(
+            message.chat.id,
+            add_timestamp("🌍 <b>Fetching market data...</b>"),
+            parse_mode='HTML'
+        )
+    except Exception:
+        pass
     
+    bot.send_chat_action(message.chat.id, 'typing')
     # Try fresh data first, fall back to any cached (up to 1h stale)
     g = cache_get('market_global_data')
     if not g:
@@ -6266,6 +6381,13 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
                 bot.send_message(message.chat.id, text, parse_mode='HTML', reply_markup=kb)
     else:
         bot.send_message(message.chat.id, text, parse_mode='HTML', reply_markup=kb)
+    
+    # Clean up loading message
+    if loading_msg:
+        try:
+            bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+        except Exception:
+            pass
 
 
 def _build_digest_keyboard(enabled, hour, user_id=0):
@@ -7086,16 +7208,16 @@ def _handle_text_wallet_and_tx(message, user_id, text):
             tron_result = get_tron_transaction_details(tx_hash, user_id)
             bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
             if is_group:
-                query_key = f"txhash:{tx_hash}"
-                set_group_cached_query(chat_id, query_key, tron_result)
+                query_key = f"txhash:tron:{tx_hash}"
+                set_group_cached_query(chat_id, query_key, {'tron': tron_result})
             return True
         elif detected_chain == 'ton':
             # TON-specific URL - only try TON
             ton_result = get_ton_transaction_details(tx_hash, user_id)
             bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
             if is_group:
-                query_key = f"txhash:{tx_hash}"
-                set_group_cached_query(chat_id, query_key, ton_result)
+                query_key = f"txhash:ton:{tx_hash}"
+                set_group_cached_query(chat_id, query_key, {'ton': ton_result})
             return True
         else:
             # Bare hash - try both chains, but label results clearly
@@ -7110,14 +7232,14 @@ def _handle_text_wallet_and_tx(message, user_id, text):
             if tron_success and not ton_success:
                 bot.reply_to(message, add_timestamp(tron_result), parse_mode='HTML')
                 if is_group:
-                    query_key = f"txhash:{tx_hash}"
-                    set_group_cached_query(chat_id, query_key, tron_result)
+                    query_key = f"txhash:tron:{tx_hash}"
+                    set_group_cached_query(chat_id, query_key, {'tron': tron_result})
                 return True
             elif ton_success and not tron_success:
                 bot.reply_to(message, add_timestamp(ton_result), parse_mode='HTML')
                 if is_group:
-                    query_key = f"txhash:{tx_hash}"
-                    set_group_cached_query(chat_id, query_key, ton_result)
+                    query_key = f"txhash:ton:{tx_hash}"
+                    set_group_cached_query(chat_id, query_key, {'ton': ton_result})
                 return True
             elif tron_success and ton_success:
                 # Both succeeded - this shouldn't happen but show both with clear labels
@@ -7127,6 +7249,9 @@ def _handle_text_wallet_and_tx(message, user_id, text):
                     f"━━━ <b>TON</b> ━━━\n{ton_result}"
                 )
                 bot.reply_to(message, add_timestamp(combined), parse_mode='HTML')
+                if is_group:
+                    query_key = f"txhash:both:{tx_hash}"
+                    set_group_cached_query(chat_id, query_key, {'tron': tron_result, 'ton': ton_result})
                 return True
             else:
                 # Neither succeeded - show both error messages
@@ -8126,7 +8251,8 @@ def _webapp_wsgi(environ, start_response):
     """WSGI entry point for cPanel/Passenger (or any WSGI server)."""
     path = unquote(environ.get('PATH_INFO', '/') or '/')
     qs = dict(parse_qsl(environ.get('QUERY_STRING', '')))
-    init_data = environ.get('HTTP_X_TELEGRAM_INIT_DATA', '') or qs.get('initData', '')
+    # Security: Only accept initData from header, not query string
+    init_data = environ.get('HTTP_X_TELEGRAM_INIT_DATA', '')
     uid = _webapp_validate_init_data(init_data)
     if uid is None and WEBAPP_ALLOW_DEV and qs.get('dev_uid'):
         try:
