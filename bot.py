@@ -2633,9 +2633,29 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
             status_emoji = '✅'
             status_text = 'Success'
         
-        # If in_msg doesn't have clear source/dest, try out_msgs
+        # Determine if incoming or outgoing from account perspective
+        # For the account in data['account']:
+        # - Incoming: in_msg.value > 0 and in_msg.destination == account_address
+        # - Outgoing: out_msgs[0].value > 0 and out_msgs[0].source == account_address
+        is_incoming = value_ton > 0 and dest_address == account_address
+        is_outgoing = False
+        out_value_ton = 0
+        out_dest_address = 'N/A'
+        out_source_address = 'N/A'
+        
+        out_msgs = data.get('out_msgs', [])
+        if out_msgs:
+            first_out = out_msgs[0]
+            out_value_nano = int(first_out.get('value', 0))
+            out_value_ton = out_value_nano / 1_000_000_000
+            out_source = first_out.get('source', {})
+            out_source_address = out_source.get('address', 'N/A') if out_source else 'N/A'
+            out_dest = first_out.get('destination', {})
+            out_dest_address = out_dest.get('address', 'N/A') if out_dest else 'N/A'
+            is_outgoing = out_value_ton > 0 and out_source_address == account_address
+        
+        # If in_msg doesn't have clear source/dest, try out_msgs for missing info
         if source_address == 'N/A' or dest_address == 'N/A':
-            out_msgs = data.get('out_msgs', [])
             if out_msgs:
                 first_out = out_msgs[0]
                 if source_address == 'N/A':
@@ -2653,10 +2673,42 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
                     value_nano = int(first_out.get('value', 0))
                     value_ton = value_nano / 1_000_000_000
         
+        # For display: determine the counterpart address (the other party)
+        # For incoming: From = source_address (sender), To = account_address (this wallet)
+        # For outgoing: From = account_address (this wallet), To = out_dest_address (recipient)
+        if is_incoming and not is_outgoing:
+            # Pure incoming
+            display_from = source_address
+            display_to = account_address
+            display_value = value_ton
+        elif is_outgoing and not is_incoming:
+            # Pure outgoing
+            display_from = account_address
+            display_to = out_dest_address
+            display_value = out_value_ton
+        elif is_incoming and is_outgoing:
+            # Both - this is a swap or complex tx, show both
+            display_from = source_address
+            display_to = out_dest_address
+            display_value = value_ton  # or could show both values
+        else:
+            # Fallback
+            display_from = source_address
+            display_to = dest_address
+            display_value = value_ton
+        
+        # For backward compatibility with display logic below
+        # We'll use display_from and display_to for the From/To fields
+        final_from = display_from
+        final_to = display_to
+        
         # Build result - escape all dynamic content for safety
-        source_escaped = html.escape(str(source_address)) if source_address != 'N/A' else 'N/A'
-        dest_escaped = html.escape(str(dest_address)) if dest_address != 'N/A' else 'N/A'
+        from_escaped = html.escape(str(final_from)) if final_from != 'N/A' else 'N/A'
+        to_escaped = html.escape(str(final_to)) if final_to != 'N/A' else 'N/A'
         hash_escaped = html.escape(str(hash_value))
+        
+        # Use display_value for amount
+        final_value = display_value if 'display_value' in locals() else value_ton
         
         if inline:
             # Match regular message format exactly - use the same structure with proper spacing
@@ -2667,17 +2719,17 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
                 f"",
                 f"🕐 Time: {time_str}",
             ]
-            if source_address != 'N/A':
+            if final_from != 'N/A':
                 lines.append(f"")
                 lines.append(f"📤 From:")
-                lines.append(f"<code>{source_escaped}</code>")
-            if dest_address != 'N/A':
+                lines.append(f"<code>{from_escaped}</code>")
+            if final_to != 'N/A':
                 lines.append(f"")
                 lines.append(f"📥 To:")
-                lines.append(f"<code>{dest_escaped}</code>")
-            if value_ton > 0:
+                lines.append(f"<code>{to_escaped}</code>")
+            if final_value > 0:
                 lines.append(f"")
-                lines.append(f"💰 Amount: {value_ton:.4f} TON")
+                lines.append(f"💰 Amount: {final_value:.4f} TON")
             lines.append(f"")
             lines.append(f"📝 TX Hash:")
             lines.append(f"<code>{hash_escaped}</code>")
@@ -2692,14 +2744,14 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
                 f"🕐 Time: {time_str}\n\n"
             )
             
-            if source_address != 'N/A':
-                result += f"📤 From:\n<code>{source_escaped}</code>\n\n"
+            if final_from != 'N/A':
+                result += f"📤 From:\n<code>{from_escaped}</code>\n\n"
             
-            if dest_address != 'N/A':
-                result += f"📥 To:\n<code>{dest_escaped}</code>\n\n"
+            if final_to != 'N/A':
+                result += f"📥 To:\n<code>{to_escaped}</code>\n\n"
             
-            if value_ton > 0:
-                result += f"💰 Amount: {value_ton:.4f} TON\n\n"
+            if final_value > 0:
+                result += f"💰 Amount: {final_value:.4f} TON\n\n"
             
             result += f"📝 TX Hash:\n<code>{hash_escaped}</code>\n\n"
             result += (
@@ -5723,7 +5775,6 @@ def inline_query_handler(inline_query):
                 name  = CRYPTO_LIST[crypto]
                 sym = _sym(crypto)
                 toman_lbl = T(uid, 'toman_label')
-                irr_line = f"\n💰 {p * irr_v:,.0f} {toman_lbl}" if irr_v else ""
                 
                 # Cache raw data for group deduplication
                 raw_data = {
@@ -5734,10 +5785,18 @@ def inline_query_handler(inline_query):
                 }
                 set_group_cached_query(uid, f"crypto:{ql}", raw_data)
                 
+                if irr_v:
+                    toman_price = p * irr_v
+                    irr_line = f"\n💰 {toman_price:,.0f} {toman_lbl}"
+                    desc_text = f"{fmt_price(p)} | {toman_price:,.0f} {toman_lbl}"
+                    msg_text = f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}{irr_line}"
+                else:
+                    desc_text = f"{fmt_price(p)}"
+                    msg_text = f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}"
                 results.append(article(
                     "crypto_price", f"{name} Price",
-                    f"{fmt_price(p)} | {p * irr_v:,.0f} {toman_lbl}" if irr_v else f"{fmt_price(p)}",
-                    f"📊 <b>{name}</b>\n\n💵 <b>{fmt_price(p)}</b>{irr_line}",
+                    desc_text,
+                    msg_text,
                     html=True
                 ))
 
