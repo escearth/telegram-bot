@@ -6465,7 +6465,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         # Format IRR price in user's locale (may be Persian)
         irr_formatted = _fmt_number(f"{price * usd_to_irr:,.0f}", cmp_uid) if usd_to_irr else None
         
-blocks.append(
+        blocks.append(
             f"🪙 <b>{name}</b>\n"
             f"💵 <b>{fmt_price(price)}</b>  {chg}\n"
             + (T(cmp_uid, 'price_toman_line', irr=irr_formatted) if irr_formatted else "")
