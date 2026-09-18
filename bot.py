@@ -5752,7 +5752,7 @@ def inline_query_handler(inline_query):
                 if p:
                     v_usd = amt * Decimal(str(p))
                     v_usd_f = float(v_usd)
-                    irr_v = _irr()
+                    irr_v = _irr() or get_usd_to_irr()
                     v_irr_f = float(v_usd * Decimal(str(irr_v))) if irr_v else 0
                     amt_f = float(amt)
                     name  = _sym(cur)
@@ -5771,7 +5771,7 @@ def inline_query_handler(inline_query):
         if crypto and crypto in CRYPTO_LIST:
             p = get_crypto_price(crypto)
             if p:
-                irr_v = _irr()
+                irr_v = _irr() or get_usd_to_irr()
                 name  = CRYPTO_LIST[crypto]
                 sym = _sym(crypto)
                 toman_lbl = T(uid, 'toman_label')
@@ -5789,7 +5789,7 @@ def inline_query_handler(inline_query):
                     toman_price = p * irr_v
                     irr_line = f"\n💰 {toman_price:,.0f} {toman_lbl}"
                     desc_text = f"{fmt_price(p)} | {toman_price:,.0f} {toman_lbl}"
-                    msg_text = f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}{irr_line}"
+                    msg_text = f"📊 <b>{name}</b>\n\n💵 <b>{fmt_price(p)}</b>{irr_line}"
                 else:
                     desc_text = f"{fmt_price(p)}"
                     msg_text = f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}"
@@ -5810,7 +5810,7 @@ def inline_query_handler(inline_query):
                     for code, cname in CRYPTO_LIST.items():
                         pr = prices.get(code, {}).get('usd')
                         if pr:
-                            irr_v = _irr()
+                            irr_v = _irr() or get_usd_to_irr()
                             irr_part = f" | 💰 {pr*irr_v:,.0f} T" if irr_v else ""
                             lines.append(f"{cname}\n💵 {fmt_price(pr)}{irr_part}\n")
                     txt = "\n".join(lines)
@@ -5827,7 +5827,7 @@ def inline_query_handler(inline_query):
             if gold and 'xau' in gold:
                 xau = gold['xau']
                 lines = [T(uid, 'gold_global', xau=f"{xau:,.2f}")]
-                irr_v = _irr()
+                irr_v = _irr() or get_usd_to_irr()
                 if irr_v:
                     xau_irr = xau * irr_v
                     lines.append(f"\n💰 {xau_irr:,.0f} {T(uid, 'toman_label')}/oz")
