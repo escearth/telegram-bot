@@ -5460,7 +5460,7 @@ def inline_query_handler(inline_query):
         return types.InlineQueryResultArticle(
             id=id_, title=title, description=desc,
             input_message_content=types.InputTextMessageContent(
-                text, parse_mode='HTML' if html else None
+                add_timestamp(text), parse_mode='HTML' if html else None
             )
         )
 
