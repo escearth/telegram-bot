@@ -5902,12 +5902,13 @@ def inline_query_handler(inline_query):
                 txt = f"🇹🇷 <b>1 TRY = {try_rate} {toman_lbl}</b>"
                 results.append(article("try_rate", f"1 TRY = {try_rate} {toman_lbl}", f"TRY → {toman_lbl}", txt, html=True))
 
-        # ── 13b. EUR / GBP / AED / CNY to Toman ────────────────────────
+        # ── 13b. EUR / GBP / AED / CNY / TRY to Toman ────────────────────────
         fx_inline = [
             (('eur', 'euro', '€'), 'EUR', '🇪🇺', get_eur_to_irr),
             (('gbp', 'pound', '£'), 'GBP', '🇬🇧', get_gbp_to_irr),
             (('aed', 'dirham', 'درهم'), 'AED', '🇦🇪', get_aed_to_irr),
             (('cny', 'yuan', 'یوآن'), 'CNY', '🇨🇳', get_cny_to_irr),
+            (('try', 'tl', 'lira', '₺'), 'TRY', '🇹🇷', get_try_to_irr),
         ]
         for fx_keys, fx_code, fx_emoji, fx_getter in fx_inline:
             if ql in fx_keys:
