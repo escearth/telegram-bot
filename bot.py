@@ -2392,7 +2392,8 @@ CRYPTO_ALIASES = {
 
 FIAT_ALIASES = {
     'usd': 'usd', 'دلار': 'usd', 'dollar': 'usd', 'dollars': 'usd', '$': 'usd',
-    'toman': 'toman', 'تومان': 'toman', 'تومن': 'toman', 'irr': 'toman', 'ریال': 'toman'
+    'toman': 'toman', 'تومان': 'toman', 'تومن': 'toman', 'irr': 'toman', 'ریال': 'toman',
+    'try': 'try', 'tl': 'try', 'lira': 'try', '₺': 'try',
 }
 
 
