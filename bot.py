@@ -5701,6 +5701,45 @@ def inline_query_handler(inline_query):
                     p_src = get_crypto_price(src, cache_only=True)
                     if p_src:
                         result_val = amt * Decimal(str(p_src)) * Decimal(str(_irr()))
+                # Fiat-to-fiat conversions (e.g., TRY -> Toman, EUR -> TRY, USD -> EUR, etc.)
+                elif src in FIAT_ALIASES.values() and dst in FIAT_ALIASES.values():
+                    # Get source rate (to Toman as base)
+                    src_to_toman = None
+                    if src == 'toman':
+                        src_to_toman = Decimal('1')
+                    elif src == 'usd':
+                        src_to_toman = get_usd_to_irr()
+                    elif src == 'try':
+                        src_to_toman = get_try_to_irr()
+                    elif src == 'eur':
+                        src_to_toman = get_eur_to_irr()
+                    elif src == 'gbp':
+                        src_to_toman = get_gbp_to_irr()
+                    elif src == 'aed':
+                        src_to_toman = get_aed_to_irr()
+                    elif src == 'cny':
+                        src_to_toman = get_cny_to_irr()
+                    
+                    # Get destination rate (from Toman)
+                    dst_from_toman = None
+                    if dst == 'toman':
+                        dst_from_toman = Decimal('1')
+                    elif dst == 'usd':
+                        dst_from_toman = get_usd_to_irr()
+                    elif dst == 'try':
+                        dst_from_toman = get_try_to_irr()
+                    elif dst == 'eur':
+                        dst_from_toman = get_eur_to_irr()
+                    elif dst == 'gbp':
+                        dst_from_toman = get_gbp_to_irr()
+                    elif dst == 'aed':
+                        dst_from_toman = get_aed_to_irr()
+                    elif dst == 'cny':
+                        dst_from_toman = get_cny_to_irr()
+                    
+                    if src_to_toman and dst_from_toman:
+                        # Convert: amt * (src_to_toman / dst_from_toman)
+                        result_val = amt * (Decimal(str(src_to_toman)) / Decimal(str(dst_from_toman)))
                 
                 if result_val is not None:
                     toman_lbl = T(uid, 'toman_label')
