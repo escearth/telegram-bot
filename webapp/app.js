@@ -23,7 +23,7 @@
     en: {
       sub: "Prices · Portfolio · Market",
       prices: "Prices", portfolio: "Portfolio", market: "Market",
-      alerts: "Alerts", wallets: "Wallets",
+      alerts: "Alerts", wallets: "Wallets", currency: "Currency",
       search: "Search coins…",
       price: "Price", change24: "24h",
       pv_total: "Portfolio value",
@@ -47,8 +47,8 @@
       del: "Delete",
       wallets_title: "Wallets",
       no_wallets: "No wallets yet",
-      no_wallets_sub: "Add TRON addresses with /wallets in the bot.",
-      total_trx: "Total TRX",
+      no_wallets_sub: "Add TON/TRON addresses with /wallets in the bot.",
+      total_value: "Total Value",
       refresh: "Refreshed",
       err: "Something went wrong. Pull the bot back up and retry.",
       err_unauthorized: "Not authorized — open this app from Telegram.",
@@ -57,11 +57,13 @@
       err_badjson: "Unexpected server reply. Pull the bot back up and retry.",
       lang_btn: "EN",
       back: "Back",
+      currency_rates: "Exchange Rates",
+      currency_updated: "Updated",
     },
     fa: {
       sub: "قیمت · پرتفو · بازار",
       prices: "قیمت‌ها", portfolio: "پرتفو", market: "بازار",
-      alerts: "هشدارها", wallets: "کیف پول",
+      alerts: "هشدارها", wallets: "کیف پول", currency: "ارز",
       search: "جستجوی ارزها…",
       price: "قیمت", change24: "۲۴ ساعت",
       pv_total: "ارزش پرتفو",
@@ -85,8 +87,8 @@
       del: "حذف",
       wallets_title: "کیف پول‌ها",
       no_wallets: "هنوز کیف پولی ندارید",
-      no_wallets_sub: "با /wallets در ربات آدرس ترون اضافه کنید.",
-      total_trx: "مجموع TRX",
+      no_wallets_sub: "با /wallets در ربات آدرس TON/TRON اضافه کنید.",
+      total_value: "ارزش کل",
       refresh: "به‌روزرسانی شد",
       err: "مشکلی پیش آمد. دوباره تلاش کنید.",
       err_unauthorized: "دسترسی غیرمجاز — این برنامه را از تلگرام باز کنید.",
@@ -95,6 +97,8 @@
       err_badjson: "پاسخ سرور نامعتبر بود. ربات را دوباره بالا بیاورید و تلاش کنید.",
       lang_btn: "فا",
       back: "بازگشت",
+      currency_rates: "نرخ ارزها",
+      currency_updated: "به‌روزرسانی",
     }
   };
 
@@ -218,7 +222,7 @@
       b.setAttribute("aria-selected", isActive ? "true" : "false");
     });
     document.querySelectorAll("#main .tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
-    const loaders = { prices: loadPrices, portfolio: loadPortfolio, market: loadMarket, alerts: loadAlerts, wallets: loadWallets };
+    const loaders = { prices: loadPrices, portfolio: loadPortfolio, market: loadMarket, alerts: loadAlerts, wallets: loadWallets, currency: loadCurrency };
     loaders[name] && loaders[name]();
   }
 
@@ -274,6 +278,8 @@
   }
 
   function coinRow(c) {
+    // Skip USDT and Telegram Stars in prices tab
+    if (c.cid === 'tether' || c.cid === 'telegram-stars') return '';
     const icons = { "🪙": "🪙", "⭐": "⭐" };
     return `
       <div class="coin-row">
@@ -497,24 +503,27 @@
     if (items.length === 0) { el.innerHTML = emptyState("👛", T("no_wallets"), T("no_wallets_sub")); return; }
     el.innerHTML = `
       <div class="hero-card">
-        <div class="hero-label">${T("total_trx")}</div>
-        <div class="hero-value">${fmtCoin(d.total_trx)} TRX</div>
-        <div class="hero-sub">${fmtUsd(d.total_usd)}</div>
+        <div class="hero-label">${T("total_value")}</div>
+        <div class="hero-value">${fmtUsd(d.total_usd)}</div>
       </div>
       <div class="section-title" style="margin-top:0">${T("wallets_title")}</div>
-      ${items.map((w) => `
+      ${items.map((w) => {
+        const isTon = w.chain === 'ton' || w.symbol === 'TON';
+        const icon = isTon ? '💎' : '🔗';
+        const balanceDisplay = w.balance != null ? fmtCoin(w.balance) : '—';
+        return `
         <div class="wallet-row">
-          <div class="wallet-ic">👛</div>
+          <div class="wallet-ic">${icon}</div>
           <div class="wallet-info">
             <div class="wallet-addr" dir="ltr">${esc(w.address)}</div>
             <div class="wallet-meta">${T("current")}: ${fmtUsd(w.balance_usd)}</div>
           </div>
           <div class="wallet-val">
-            <div class="wallet-trx">${fmtCoin(w.balance_trx)} TRX</div>
-            <div class="wallet-usd">${w.balance_trx == null ? "—" : fmtUsd(w.balance_trx * (d.trx_price || 0))}</div>
+            <div class="wallet-amount">${balanceDisplay} ${esc(w.symbol)}</div>
+            <div class="wallet-usd">${w.balance_usd != null ? fmtUsd(w.balance_usd) : "—"}</div>
           </div>
           <button class="alert-del" data-del-wallet="${esc(w.address)}" title="${T("del")}" aria-label="${T("del")}">✕</button>
-        </div>`).join("")}`;
+        </div>`}).join("")}`;
     el.querySelectorAll("[data-del-wallet]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         try {
@@ -533,6 +542,40 @@
     } catch (e) {
       const msg = e.message === "unauthorized" ? T("err_unauthorized") : T("err");
       el.innerHTML = emptyState("👛", msg, "");
+    }
+  }
+
+  /* ── rendering: currency ─────────────────────────────────────────── */
+  function renderCurrency(d) {
+    const el = $("#tab-currency");
+    const rates = d.rates || {};
+    const updated = d.updated || Date.now();
+    const date = new Date(updated).toLocaleString();
+    const html = `
+      <div class="hero-card">
+        <div class="hero-label">${T("currency_updated")}</div>
+        <div class="hero-value">${date}</div>
+      </div>
+      <div class="section-title">${T("currency_rates")}</div>
+      <div class="currency-grid">
+        ${Object.entries(rates).map(([code, rate]) => `
+          <div class="currency-card">
+            <div class="currency-code">${esc(code)}</div>
+            <div class="currency-rate">${fmtNum(rate, 4)}</div>
+            <div class="currency-desc">${esc(d.names?.[code] || code)}</div>
+          </div>
+        `).join("")}
+      </div>`;
+    el.innerHTML = html;
+  }
+
+  async function loadCurrency(force) {
+    const el = $("#tab-currency");
+    try {
+      renderCurrency(await request("/api/currency"));
+    } catch (e) {
+      const msg = e.message === "unauthorized" ? T("err_unauthorized") : T("err");
+      el.innerHTML = emptyState("💱", msg, "");
     }
   }
 

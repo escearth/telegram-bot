@@ -1757,7 +1757,7 @@ STRINGS = {
         'gold_fetch_fail':     "❌ Could not fetch gold prices. Try again.",
 
         # ── /market ───────────────────────────────────────────
-        'market_header':       "🌍 <b>Crypto Market</b>\n",
+        'market_header':       "🌍 <b>Crypto Market </b>\n",
         'market_mcap':         "💹 Market Cap: <b>{mcap}</b>  {arrow} {chg}% (24h)\n",
         'market_vol':          "📊 24h Volume: <b>{vol}</b>\n",
         'market_dom':          "🟠 BTC Dom: <b>{btc}%</b>  🔵 ETH Dom: <b>{eth}%</b>\n",
@@ -1843,7 +1843,7 @@ STRINGS = {
             "🕐 What time should I send your daily digest?\n\n"
             "<i>Enter hour (0-23) in <b>Iran time</b></i>\n"
             "<i>Example: <code>9</code> for 9 AM, <code>20</code> for 8 PM</i>\n\n"
-            "To cancel, send /cancel",
+            "Use the Cancel button below to abort.",
         'digest_time_confirm': "✅ Digest time set to <b>{hour}:00</b>.",
         'digest_morning':      "☀️ <b>Good morning! Here\'s your portfolio</b>\n",
         'digest_total':        "\n💰 <b>Total: {usd}</b> · {irr} Toman",
@@ -1869,11 +1869,11 @@ STRINGS = {
 
         # ── inline / misc ─────────────────────────────────────
         'inline_tips_title':   "Crypto Bot - Inline Guide",
-        'inline_tips_desc':    "btc · 10trx · usd100 to eth · wallets · hash · gold",
+        'inline_tips_desc':    "btc · 10trx · usd100 to eth · wallets · hash · gold · currency",
         'inline_tips_body':
             "<b>🪙 Prices & Values</b>\n"
-            "• <code>btc</code> - price of any crypto\n"
-            "• <code>10trx</code> or <code>10 trx</code> - value in USD/IRR\n"
+            "• <code>btc</code> - price of any crypto (with USD, Toman, TRY, EUR, GBP, AED, CNY)\n"
+            "• <code>10trx</code> or <code>10 trx</code> - value in USD/IRR/TRY/EUR/GBP/AED/CNY\n"
             "• <code>u</code> or <code>10u</code> - USDT alias\n"
             "• <code>100usd to eth</code> or <code>0.5btc to usd</code> - convert\n"
             "• <code>1000toman to usd</code> or <code>10usd to toman</code> - fiat convert\n\n"
@@ -1882,7 +1882,8 @@ STRINGS = {
             "• <code>gold</code> or <code>gold price</code> - XAU/USD\n"
             "• <code>market</code> or <code>fear</code> - market overview & Fear & Greed\n"
             "• <code>star</code> or <code>stars</code> - Telegram Stars price\n"
-            "• <code>try</code> or <code>tl</code> - TRY to Toman rate\n\n"
+            "• <code>try</code> or <code>tl</code> - TRY to Toman rate\n"
+            "• <code>currency</code> - all fiat rates (USD, EUR, GBP, TRY, AED, CNY, RUB, INR, JPY, KRW)\n\n"
             "<b>💰 Portfolio & Alerts</b>\n"
             "• <code>holdings</code> or <code>portfolio</code> - your portfolio\n"
             "• <code>alerts</code> or <code>my alerts</code> - active price alerts\n"
@@ -2151,7 +2152,7 @@ STRINGS = {
         'gold_fetch_fail':     "❌ قیمت طلا دریافت نشد. دوباره تلاش کنید.",
 
         # ── /market ───────────────────────────────────────────
-        'market_header':       "🌍 <b>بازار کریپتو</b>\n",
+        'market_header':       "🌍 <b>بازار کریپتو </b>\n",
         'market_mcap':         "💹 ارزش بازار: <b>{mcap}</b>  {arrow} {chg}% (۲۴ ساعت)\n",
         'market_vol':          "📊 حجم ۲۴ ساعته: <b>{vol}</b>\n",
         'market_dom':          "🟠 سهم BTC: <b>{btc}%</b>  🔵 سهم ETH: <b>{eth}%</b>\n",
@@ -2237,7 +2238,7 @@ STRINGS = {
         "🕐 <b>زمان دلخواه</b>\n\n"
         "ساعت مورد نظر خود را بفرستید (۰ تا ۲۳، وقت ایران):\n"
         "<i>مثال: <code>9</code> برای ۹ صبح، <code>20</code> برای ۸ شب</i>\n\n"
-        "برای لغو /cancel بزنید.",
+        "از دکمه لغو زیر برای انصراف استفاده کنید.",
         'digest_time_confirm': "✅ زمان خلاصه روی <b>{hour}:00</b> تنظیم شد.",
         'digest_morning':      "☀️ <b>صبح بخیر! پرتفوی شما</b>\n",
         'digest_total':        "\n💰 <b>جمع: {usd}</b> · {irr} تومان",
@@ -2263,11 +2264,11 @@ STRINGS = {
 
         # ── inline / misc ─────────────────────────────────────
         'inline_tips_title':   "ربات کریپتو - راهنمای اینلاین",
-        'inline_tips_desc':    "btc · 10trx · usd100 to eth · ولت · hash · طلا",
+        'inline_tips_desc':    "btc · 10trx · usd100 to eth · ولت · hash · طلا · ارز",
         'inline_tips_body':
             "<b>🪙 قیمت‌ها و ارزش</b>\n"
-            "• <code>btc</code> - قیمت هر ارز\n"
-            "• <code>10trx</code> یا <code>10 trx</code> - ارزش به دلار/تومان\n"
+            "• <code>btc</code> - قیمت هر ارز (دلار، تومان، لیر، یورو، پوند، درهم، یوان)\n"
+            "• <code>10trx</code> یا <code>10 trx</code> - ارزش به دلار/تومان/لیر/یورو/پوند/درهم/یوان\n"
             "• <code>u</code> یا <code>10u</code> - USDT\n"
             "• <code>100usd to eth</code> یا <code>0.5btc to usd</code> - تبدیل\n"
             "• <code>1000تومان to usd</code> یا <code>10usd to تومان</code> - تبدیل ارز\n\n"
@@ -2276,7 +2277,8 @@ STRINGS = {
             "• <code>gold</code> یا <code>طلا</code> - قیمت طلا (XAU/USD)\n"
             "• <code>market</code> یا <code>بازار</code> - نمای کلی بازار و ترس و طمع\n"
             "• <code>star</code> یا <code>استارز</code> - قیمت Telegram Stars\n"
-            "• <code>try</code> یا <code>لیر</code> - نرخ لیر ترکیه به تومان\n\n"
+            "• <code>try</code> یا <code>لیر</code> - نرخ لیر ترکیه به تومان\n"
+            "• <code>currency</code> یا <code>ارز</code> - همه نرخ‌های ارز (دلار، یورو، پوند، لیر، درهم، یوان، روپیه، یوان، ین، وون)\n\n"
             "<b>💰 پرتفو و هشدارها</b>\n"
             "• <code>holdings</code> یا <code>دارایی</code> - پرتفوی شما\n"
             "• <code>alerts</code> یا <code>هشدارها</code> - هشدارهای قیمتی فعال\n"
@@ -3815,19 +3817,8 @@ def start(message):
     logger.info(f"User {user_id} started the bot")
 
 
-@bot.message_handler(commands=['cancel'])
-@rate_limit_check
-@loading_indicator
-def cancel(message):
-    user_id = message.from_user.id
-    if user_id in user_state:
-        del_user_state(user_id)
-        bot.reply_to(message, T(user_id, 'cancelled'), parse_mode='HTML')
-    else:
-        bot.reply_to(message, T(user_id, 'nothing_to_cancel'))
-
-
-def _send_language_picker(chat_id):
+# /cancel command removed - use inline Cancel buttons instead
+# See cancel handlers in callback query handlers
     """Send the language selection message (used on first /start and /language)."""
     kb = types.InlineKeyboardMarkup([[
         types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang_en"),
@@ -3894,7 +3885,7 @@ def donate_cmd(message):
     if DONATION_LINK:
         parts.append(f"🌐 <b>Link:</b>\n{DONATION_LINK}")
     if DONATION_WALLETS:
-        chains_list = "\n".join(
+        chains_list = "\n\n".join(
             f"• <b>{chain}</b>\n  <code>{addr}</code>"
             for chain, addr in DONATION_WALLETS.items()
         )
@@ -4002,9 +3993,9 @@ def wallets_message_text(wallets: list[str], user_id: int = 0) -> str:
     rows = []
     for i, addr in enumerate(wallets, 1):
         chain = detect_wallet_chain(addr)
-        chain_tag = 'TON' if chain == 'ton' else 'TRC'
-        rows.append(f"{i}. [{chain_tag}] <code>{html.escape(addr)}</code>")
-    return header + quote("\n".join(rows))
+        chain_tag = '💎 TON' if chain == 'ton' else '🔗 TRON'
+        rows.append(f"{i}. {chain_tag}\n   <code>{html.escape(addr)}</code>")
+    return header + quote("\n\n".join(rows))
 
 
 def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, user_id: int = 0) -> str:
@@ -4296,6 +4287,15 @@ def handle_callback(call):
         return
 
     if data == "stars_cancel":
+        bot.answer_callback_query(call.id)
+        del_user_state(user_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return
+
+    if data == "digest_cancel":
         bot.answer_callback_query(call.id)
         del_user_state(user_id)
         try:
@@ -4717,18 +4717,38 @@ def handle_callback(call):
                 p = get_crypto_price(cid)
                 if p:
                     prices[cid] = p
+        # Show loading message that will be replaced
+        loading_msg = None
+        try:
+            loading_msg = bot.send_message(
+                call.message.chat.id,
+                add_timestamp(f"📊 <b>Generating portfolio chart...</b> 🕐"),
+                parse_mode='HTML'
+            )
+        except Exception:
+            pass
         try:
             img = get_portfolio_chart_image(holdings, prices, user_id)
+            if loading_msg:
+                try:
+                    bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+                except Exception:
+                    pass
+            # Apply blockquote formatting to chart caption
             bot.send_photo(
                 call.message.chat.id,
                 photo=BytesIO(img),
-                caption=T(user_id, 'chart_caption'),
+                caption=add_timestamp(quote(T(user_id, 'chart_caption'))),
                 parse_mode='HTML'
             )
         except Exception as e:
             logger.error(f"Portfolio chart failed: {e}")
-            bot.send_message(call.message.chat.id, T(user_id, 'chart_fail'))
-        return
+            if loading_msg:
+                try:
+                    bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+                except Exception:
+                    pass
+            bot.send_message(call.message.chat.id, add_timestamp(T(user_id, 'chart_fail')))
 
     if data == "hpick_cancel":
         bot.answer_callback_query(call.id)
@@ -4841,12 +4861,12 @@ def handle_callback(call):
             _, crypto, days_label = parts
             days = CHART_DAYS.get(days_label, 30)
             bot.answer_callback_query(call.id, T(user_id, 'generating_chart'))
-            # Show loading state immediately
+            # Show loading message that will be replaced
             loading_msg = None
             try:
                 loading_msg = bot.send_message(
                     call.message.chat.id,
-                    add_timestamp(f"📊 <b>Generating {CHART_DAYS.get(days_label, days_label)} chart...</b>"),
+                    add_timestamp(f"📊 <b>Generating {CHART_DAYS.get(days_label, days_label)} chart...</b> 🕐"),
                     parse_mode='HTML'
                 )
             except Exception:
@@ -4858,7 +4878,7 @@ def handle_callback(call):
                 kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{crypto}_{d}") for d in CHART_DAYS])
                 caption = f"📊 <b>{symbol}</b> - {days}d"
                 if price:
-                    caption += f"\n💵 <b>{fmt_price(price)}</b>"
+                    caption += f"\n💵 <b>{fmt_price(price)}</b> 🕐"
                 if call.message.photo:
                     bot.edit_message_media(
                         types.InputMediaPhoto(BytesIO(img_bytes), caption=add_timestamp(caption), parse_mode='HTML'),
@@ -4866,19 +4886,20 @@ def handle_callback(call):
                         reply_markup=kb
                     )
                 else:
+                    # Not a photo message - replace entirely
                     try:
                         bot.delete_message(call.message.chat.id, call.message.message_id)
                     except Exception:
                         pass
-                    if loading_msg:
-                        try:
-                            bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
-                        except Exception:
-                            pass
-                    bot.send_photo(
-                        call.message.chat.id, photo=BytesIO(img_bytes),
-                        caption=add_timestamp(caption), parse_mode='HTML', reply_markup=kb
-                    )
+                if loading_msg:
+                    try:
+                        bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+                    except Exception:
+                        pass
+                bot.send_photo(
+                    call.message.chat.id, photo=BytesIO(img_bytes),
+                    caption=add_timestamp(caption), parse_mode='HTML', reply_markup=kb
+                )
             except Exception as e:
                 logger.error(f"Chart callback failed: {e}")
                 if loading_msg:
@@ -4914,18 +4935,6 @@ def handle_callback(call):
     bot.answer_callback_query(call.id)
 
 
-@bot.message_handler(commands=['clearwallets'])
-@rate_limit_check
-@loading_indicator
-def clear_wallets(message):
-    user_id = message.from_user.id
-    if db_clear_wallets(user_id):
-        bot.reply_to(message, T(user_id, 'all_wallets_removed'))
-        logger.info(f"User {user_id} cleared wallets")
-    else:
-        bot.reply_to(message, T(user_id, 'no_wallets_to_remove'))
-
-
 @bot.message_handler(commands=['wallets'])
 @rate_limit_check
 @loading_indicator
@@ -4950,15 +4959,17 @@ def show_wallets_with_balance(message):
         bot.reply_to(message, T(user_id, 'no_wallets_yet'))
         return
     bot.send_chat_action(message.chat.id, 'typing')
-    reply = T(user_id, 'wallets_balances_hdr')
-    # Fetch all wallet balances in parallel (auto-detect chain)
+    lines = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
         fut_map = {ex.submit(get_wallet_balance, addr, user_id): addr for addr in wallets}
         for fut in concurrent.futures.as_completed(fut_map):
             addr = fut_map[fut]
             balance_msg = fut.result()
             icon = _wallet_chain_icon(addr)
-            reply += f"{icon} <code>{html.escape(addr)}</code>\n {balance_msg}\n\n"
+            # Add space between address and balance for better readability
+            lines.append(f"{icon} <code>{html.escape(addr)}</code>\n\n {balance_msg}")
+    # Apply blockquote formatting
+    reply = T(user_id, 'wallets_balances_hdr') + quote("\n\n".join(lines))
     bot.reply_to(message, reply, parse_mode='HTML')
     logger.info(f"User {user_id} viewed wallets with balances")
 
@@ -4979,6 +4990,7 @@ def _build_price_list_message(uid, prices):
         sym = _sym(code)
         arrow = ('📈' if change >= 0 else '📉') if change is not None else '  '
         chg   = f"{change:+.1f}%" if change is not None else ""
+        # Add space after price, separate percentage change visually
         body.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}  <i>{chg}</i>")
     if not body:
         return header
@@ -4987,8 +4999,18 @@ def _build_price_list_message(uid, prices):
 
 @bot.message_handler(commands=['price'])
 @rate_limit_check
-@loading_indicator
 def price(message):
+    # Send temporary fetching message
+    loading_msg = None
+    try:
+        loading_msg = bot.send_message(
+            message.chat.id,
+            add_timestamp("📊 <b>Fetching prices...</b>"),
+            parse_mode='HTML'
+        )
+    except Exception:
+        pass
+    
     bot.send_chat_action(message.chat.id, 'typing')
     ids = ','.join(CRYPTO_LIST.keys())
     prices = _fetch_prices_batch(ids)
@@ -5002,8 +5024,19 @@ def price(message):
     kb = types.InlineKeyboardMarkup([[
         types.InlineKeyboardButton(T(uid_p, 'btn_refresh'), callback_data="refresh_all_prices")
     ]])
-    msg = bot.reply_to(message, add_timestamp(text), parse_mode='HTML', reply_markup=kb)
-    register_panel_owner(msg.message_id, message.from_user.id)
+    # Edit the loading message with results
+    if loading_msg:
+        try:
+            bot.edit_message_text(
+                add_timestamp(text),
+                chat_id=loading_msg.chat.id,
+                message_id=loading_msg.message_id,
+                parse_mode='HTML'
+            )
+        except Exception:
+            pass
+    else:
+        bot.reply_to(message, add_timestamp(text), parse_mode='HTML')
     logger.info(f"User {message.from_user.id} requested prices")
 
 
@@ -5145,7 +5178,8 @@ def stars_command(message):
     kb = types.InlineKeyboardMarkup([[
         types.InlineKeyboardButton(T(uid, 'stars_calc_btn'), callback_data="stars_calc")
     ]])
-    bot.reply_to(message, add_timestamp(msg), parse_mode='HTML', reply_markup=kb)
+    # Apply blockquote formatting
+    bot.reply_to(message, add_timestamp(quote(msg)), parse_mode='HTML', reply_markup=kb)
     logger.info(f"User {uid} requested Stars price")
 
 
@@ -5159,6 +5193,22 @@ def _stars_price_lines(uid, stars_price, count=1, header=None):
     usd_to_irr = get_usd_to_irr()
     if usd_to_irr:
         lines.append(f"💰 {format_fiat(Decimal(str(usd * usd_to_irr)), decimals=0)} {toman_label}")
+    # Add more fiat currencies
+    try_rate = get_try_to_irr()
+    if try_rate:
+        lines.append(f"🇹🇷 {format_fiat(Decimal(str(usd * try_rate)), decimals=0)} TRY")
+    eur_rate = get_eur_to_irr()
+    if eur_rate:
+        lines.append(f"🇪🇺 {format_fiat(Decimal(str(usd * eur_rate)), decimals=2)} EUR")
+    gbp_rate = get_gbp_to_irr()
+    if gbp_rate:
+        lines.append(f"🇬🇧 {format_fiat(Decimal(str(usd * gbp_rate)), decimals=2)} GBP")
+    aed_rate = get_aed_to_irr()
+    if aed_rate:
+        lines.append(f"🇦🇪 {format_fiat(Decimal(str(usd * aed_rate)), decimals=2)} AED")
+    cny_rate = get_cny_to_irr()
+    if cny_rate:
+        lines.append(f"🇨🇳 {format_fiat(Decimal(str(usd * cny_rate)), decimals=2)} CNY")
     ton_price = get_crypto_price('the-open-network')
     if ton_price:
         lines.append(f"🪙 {format_crypto(Decimal(str(usd / ton_price)))} TON")
@@ -5304,12 +5354,12 @@ def chart_cmd(message):
 def _send_chart(message, crypto, days, uid):
     """Generate a chart photo and post it with time-range buttons."""
     bot.send_chat_action(message.chat.id, 'upload_photo')
-    # Show initial loading message
+    # Show initial loading message with clock emoji
     loading_msg = None
     try:
         loading_msg = bot.send_message(
             message.chat.id,
-            add_timestamp(f"📊 <b>Generating {CHART_DAYS.get(list(CHART_DAYS.keys())[list(CHART_DAYS.values()).index(days)] if days in CHART_DAYS.values() else f'{days}d')} chart...</b>"),
+            add_timestamp("📊 <b>Generating chart...</b> 🕐"),
             parse_mode='HTML'
         )
     except Exception:
@@ -5319,16 +5369,18 @@ def _send_chart(message, crypto, days, uid):
         price = get_crypto_price(crypto)
         kb = types.InlineKeyboardMarkup(row_width=4)
         kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{crypto}_{d}") for d in CHART_DAYS])
+        # Add space between coin name and price, and include clock emoji
+        # Apply blockquote formatting to chart caption
         caption = f"📊 <b>{symbol}</b> - {days}d"
         if price:
-            caption += f"\n💵 <b>{fmt_price(price)}</b>"
+            caption += f"\n💵 <b>{fmt_price(price)}</b> 🕐"
         if loading_msg:
             try:
                 bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
             except Exception:
                 pass
         bot.send_photo(
-            message.chat.id, photo=BytesIO(img_bytes), caption=add_timestamp(caption),
+            message.chat.id, photo=BytesIO(img_bytes), caption=add_timestamp(quote(caption)),
             parse_mode='HTML', reply_markup=kb
         )
     except Exception as e:
@@ -5336,7 +5388,7 @@ def _send_chart(message, crypto, days, uid):
         if loading_msg:
             try:
                 bot.edit_message_text(
-                    add_timestamp(T(uid, 'chart_fail')),
+                    add_timestamp("❌ Chart generation failed. Try again later."),
                     chat_id=loading_msg.chat.id, message_id=loading_msg.message_id,
                     parse_mode='HTML'
                 )
@@ -5416,12 +5468,14 @@ def trending_cmd(message):
     if not data:
         bot.reply_to(message, "❌ Could not fetch trending data. Try again later.")
         return
-    lines = ["🔥 <b>Trending on CoinGecko</b>\n"]
+    lines = []
     for i, coin in enumerate(data, 1):
         rank = coin.get('market_cap_rank')
         rank_str = f"#{rank}" if rank else "-"
         lines.append(f"{i}. <b>{coin['name']}</b> ({coin['symbol']})  ─  Rank {rank_str}")
-    bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
+    # Apply blockquote formatting
+    text = add_timestamp("🔥 <b>Trending on CoinGecko</b>\n" + quote("\n".join(lines)))
+    bot.reply_to(message, text, parse_mode='HTML')
 
 
 @bot.message_handler(commands=['gainers', 'losers'])
@@ -5440,14 +5494,16 @@ def gainers_losers_cmd(message):
     coins = data['gainers'] if show_gainers else data['losers']
     emoji = '📈' if show_gainers else '📉'
     title = "Top Gainers (24h)" if show_gainers else "Top Losers (24h)"
-    lines = [f"{emoji} <b>{title}</b>\n"]
+    lines = []
     for c in coins:
         chg = c['price_change_percentage_24h']
         arrow = '📈' if chg >= 0 else '📉'
         price = c.get('current_price')
         price_str = fmt_price(price) if price else '-'
         lines.append(f"{arrow} <b>{c['symbol'].upper()}</b>  {price_str}  <i>{chg:+.2f}%</i>")
-    bot.reply_to(message, add_timestamp("\n".join(lines)), parse_mode='HTML')
+    # Apply blockquote formatting
+    text = add_timestamp(f"{emoji} <b>{title}</b>\n" + quote("\n".join(lines)))
+    bot.reply_to(message, text, parse_mode='HTML')
 
 
 @bot.inline_handler(lambda query: len(query.query.strip()) > 0)
@@ -5774,7 +5830,23 @@ def inline_query_handler(inline_query):
                     amt_formatted = format_for_locale(amt_formatted, user_lang)
                     result_formatted = format_for_locale(result_formatted, user_lang)
                     
-                    desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}"
+                    # Add enter space and visually separate USD and Toman prices
+                    if dst in ('usd', 'toman'):
+                        # For fiat destinations, show both USD and Toman
+                        usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
+                        if usd_to_irr and dst == 'usd':
+                            # Show both USD and Toman
+                            toman_val = result_val * Decimal(str(get_usd_to_irr()))
+                            desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}\n\n💰 <b>{result_val:,.2f} USD = {result_val * Decimal(str(get_usd_to_irr())):,.0f} {T(uid, 'toman_label')}</b>"
+                        elif usd_to_irr and dst == 'toman':
+                            usd_val = result_val / Decimal(str(get_usd_to_irr()))
+                            desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}\n\n💰 <b>{usd_val:,.2f} USD = {result_val:,.0f} {T(uid, 'toman_label')}</b>"
+                        else:
+                            desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}"
+                    else:
+                        # For crypto destinations
+                        desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}"
+                    
                     results.append(article(
                         "convert", f"{src_sym} → {dst_sym}", desc,
                         f"{T(uid, 'inline_conv_header')}\n\n{desc}", html=True
@@ -5799,11 +5871,33 @@ def inline_query_handler(inline_query):
                     toman_lbl = T(uid, 'toman_label')
                     desc  = f"${v_usd_f:,.2f} | {v_irr_f:,.0f} {toman_lbl}" if irr_v else f"${v_usd_f:,.2f}"
                     irr_line = f"\n💰 {v_irr_f:,.0f} {toman_lbl}" if irr_v else ""
+                    # Build message with blockquote formatting
+                    # Add more fiat currencies
+                    extra_lines = []
+                    try_rate = get_try_to_irr()
+                    if try_rate:
+                        extra_lines.append(f"🇹🇷 {v_usd_f * try_rate:,.0f} TRY")
+                    eur_rate = get_eur_to_irr()
+                    if eur_rate:
+                        extra_lines.append(f"🇪🇺 {v_usd_f * eur_rate:,.2f} EUR")
+                    gbp_rate = get_gbp_to_irr()
+                    if gbp_rate:
+                        extra_lines.append(f"🇬🇧 {v_usd_f * gbp_rate:,.2f} GBP")
+                    aed_rate = get_aed_to_irr()
+                    if aed_rate:
+                        extra_lines.append(f"🇦🇪 {v_usd_f * aed_rate:,.2f} AED")
+                    cny_rate = get_cny_to_irr()
+                    if cny_rate:
+                        extra_lines.append(f"🇨🇳 {v_usd_f * cny_rate:,.2f} CNY")
+                    
+                    msg_text = f"{EMOJIS['money']} <b>{amt_f:,.6g} {name}</b>\n\n💵 ${v_usd_f:,.2f}{irr_line}"
+                    if extra_lines:
+                        msg_text += "\n" + "\n".join(extra_lines)
+                    msg_text = quote(msg_text)
                     results.append(article(
                         "amt_coin", f"{amt_f:,.6g} {name}",
                         desc,
-                        f"{EMOJIS['money']} <b>{amt_f:,.6g} {name}</b>\n\n"
-                        f"💵 ${v_usd_f:,.2f}{irr_line}", html=True
+                        msg_text, html=True
                     ))
 
         # ── 8. Single crypto name (btc / eth / trx / u …) ────────────
@@ -5825,14 +5919,41 @@ def inline_query_handler(inline_query):
                 }
                 set_group_cached_query(uid, f"crypto:{ql}", raw_data)
                 
+                # Build message with blockquote formatting
+                # Calculate amounts for common fiat currencies
                 if irr_v:
                     toman_price = p * irr_v
                     irr_line = f"\n💰 {toman_price:,.0f} {toman_lbl}"
                     desc_text = f"{fmt_price(p)} | {toman_price:,.0f} {toman_lbl}"
-                    msg_text = f"📊 <b>{name}</b>\n\n💵 <b>{fmt_price(p)}</b>{irr_line}"
                 else:
                     desc_text = f"{fmt_price(p)}"
-                    msg_text = f"📊 <b>{name}</b>\n\n💵 {fmt_price(p)}"
+                    irr_line = ""
+                
+                # Add more fiat currencies
+                extra_lines = []
+                try_rate = get_try_to_irr()
+                if try_rate:
+                    extra_lines.append(f"🇹🇷 {p * try_rate:,.0f} TRY")
+                eur_rate = get_eur_to_irr()
+                if eur_rate:
+                    extra_lines.append(f"🇪🇺 {p * eur_rate:,.2f} EUR")
+                gbp_rate = get_gbp_to_irr()
+                if gbp_rate:
+                    extra_lines.append(f"🇬🇧 {p * gbp_rate:,.2f} GBP")
+                aed_rate = get_aed_to_irr()
+                if aed_rate:
+                    extra_lines.append(f"🇦🇪 {p * aed_rate:,.2f} AED")
+                cny_rate = get_cny_to_irr()
+                if cny_rate:
+                    extra_lines.append(f"🇨🇳 {p * cny_rate:,.2f} CNY")
+                
+                msg_text = f"📊 <b>{name}</b>\n\n💵 <b>{fmt_price(p)}</b>{irr_line}"
+                if extra_lines:
+                    msg_text += "\n" + "\n".join(extra_lines)
+                
+                # Apply blockquote formatting
+                msg_text = quote(msg_text)
+                
                 results.append(article(
                     "crypto_price", f"{name} Price",
                     desc_text,
@@ -6344,8 +6465,7 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         # Format IRR price in user's locale (may be Persian)
         irr_formatted = _fmt_number(f"{price * usd_to_irr:,.0f}", cmp_uid) if usd_to_irr else None
         
-        blocks.append(
-            f"{'━'*20}\n"
+blocks.append(
             f"🪙 <b>{name}</b>\n"
             f"💵 <b>{fmt_price(price)}</b>  {chg}\n"
             + (T(cmp_uid, 'price_toman_line', irr=irr_formatted) if irr_formatted else "")
@@ -6363,9 +6483,10 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         types.InlineKeyboardButton(
             T(cmp_uid, 'btn_refresh'), 
             callback_data=f"cmpref_{ids[0]}_{ids[1]}"
-    )
+        )
     ]])
-    text = add_timestamp(T(cmp_uid, 'compare_header') + "\n".join(blocks) + f"\n{'━'*20}{verdict}")
+    # Apply blockquote formatting to comparison blocks
+    text = add_timestamp(T(cmp_uid, 'compare_header') + quote("\n\n".join(blocks)) + f"\n\n{verdict}")
 
     if edit_msg_id:
         try:
@@ -6387,7 +6508,6 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
 
 @bot.message_handler(commands=['market'])
 @rate_limit_check
-@loading_indicator
 def market_cmd(message, user_id=None, edit_msg_id=None):
     uid_m = user_id or message.from_user.id
     # Show loading message for market data
@@ -6939,12 +7059,12 @@ def _handle_text_state(message, user_id, text, text_lower, text_original, state)
                 display_to_sym_w = to_sym
                 usd_val = result_val * (get_crypto_price(to_cid) or 0)
                 toman_note = T(user_id, 'convert_toman_approx', usd=fmt_price(usd_val), irr=f"{usd_val * usd_to_irr:,.0f}") if usd_to_irr and usd_val else ""
+            # Apply blockquote formatting
+            msg = T(user_id, 'convert_result', amount=f"{amount:,g}", from_sym=from_sym,
+                    result=result_str_w, to_sym=display_to_sym_w) + toman_note
             bot.reply_to(
                 message,
-                add_timestamp(
-                    T(user_id, 'convert_result', amount=f"{amount:,g}", from_sym=from_sym,
-                    result=result_str_w, to_sym=display_to_sym_w) + toman_note
-                ),
+                add_timestamp(quote(msg)),
                 parse_mode='HTML'
             )
         return True
@@ -6992,20 +7112,20 @@ def _handle_text_state(message, user_id, text, text_lower, text_original, state)
             return  # keep state so user can retry
         del_user_state(user_id)
         saved = db_get_holdings(user_id) or {}
-        old_amt = saved.get(sym, 0)
-        saved[sym] = old_amt + amount
+        # FIX: Overwrite instead of add for /set command
+        saved[sym] = amount
         db_set_holdings(user_id, saved)
         usd_to_irr = get_usd_to_irr()
         buy_prices = db_get_buy_prices(user_id)
         inner_kb = build_holdings_keyboard(saved, user_id)
         bot.reply_to(
             message,
-            T(user_id, 'holding_added', sym=sym, amount=f"{amount:,g}", total=f"{saved[sym]:,g}") +
+            T(user_id, 'holding_set', sym=sym, amount=f"{amount:,g}", total=f"{amount:,g}") +
             holdings_message_text(saved, usd_to_irr, buy_prices, user_id),
             parse_mode='HTML',
             reply_markup=inner_kb
         )
-        logger.info(f"User {user_id} updated holding: {sym}")
+        logger.info(f"User {user_id} set holding: {sym} = {amount}")
         return True
 
     # Setting buy price for P&L
@@ -7444,12 +7564,11 @@ def _handle_text_crypto(message, user_id, text, text_lower):
             if crypto != 'telegram-stars':
                 kb = types.InlineKeyboardMarkup()
                 kb.add(types.InlineKeyboardButton("📊 Chart", callback_data=f"chart_{crypto}_30d"))
+            # Apply blockquote formatting
+            msg = f"📊 <b>{crypto_name}</b>\n\n💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>" + (f"\n{toman_line}" if toman_line else "")
             bot.reply_to(
                 message,
-                add_timestamp(
-                    f"📊 <b>{crypto_name}</b>\n\n"
-                    f"💵 <b>{_fmt_price_with_exchange(price_usd, exch)}</b>" + (f"\n{toman_line}" if toman_line else "")
-                ),
+                add_timestamp(quote(msg)),
                 parse_mode='HTML',
                 reply_markup=kb
             )
@@ -7484,8 +7603,10 @@ def _handle_text_crypto(message, user_id, text, text_lower):
                 bot.reply_to(
                     message,
                     add_timestamp(
-                        f"💰 <b>{amount:,g} {sym}</b>\n\n"
-                        f"💵 {fmt_price(value_usd)}" + (f"\n{toman_line}" if toman_line else "")
+                        quote(
+                            f"💰 <b>{amount:,g} {sym}</b>\n\n"
+                            f"💵 {fmt_price(value_usd)}" + (f"\n{toman_line}" if toman_line else "")
+                        )
                     ),
                     parse_mode='HTML'
                 )
@@ -7697,10 +7818,14 @@ def _handle_alert_callbacks(call, data, user_id):
         elif action == "custom":
             bot.answer_callback_query(call.id)
             set_user_state(user_id, 'digest_custom_hour')
+            kb = types.InlineKeyboardMarkup([[
+                types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="digest_cancel")
+            ]])
             bot.send_message(
                 call.message.chat.id,
                 T(user_id, 'digest_time_prompt'),
-                parse_mode='HTML'
+                parse_mode='HTML',
+                reply_markup=kb
             )
             return True
         elif action.startswith("h"):
@@ -8094,26 +8219,71 @@ def _webapp_sparklines(cids):
 
 def _webapp_prices():
     # Use cached prices primarily, fetch fresh only if needed
-    real_cids = [c for c in CRYPTO_LIST if c != 'telegram-stars']
+    # Remove USDT (tether) and Telegram Stars
+    excluded_cids = {'telegram-stars', 'tether'}
+    real_cids = [c for c in CRYPTO_LIST if c not in excluded_cids]
     batch = _fetch_prices_batch(','.join(real_cids)) or {}
     spark = _webapp_sparklines(real_cids)
     usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
     coins = []
     for cid in CRYPTO_LIST:
+        if cid in excluded_cids:
+            continue
         icon, name, sym = _webapp_coin_meta(cid)
-        if cid == 'telegram-stars':
-            price = get_crypto_price(cid)
-            change = None
-        else:
-            info = batch.get(cid, {})
-            price = info.get('usd') or get_crypto_price(cid)
-            change = info.get('usd_24h_change')
+        info = batch.get(cid, {})
+        price = info.get('usd') or get_crypto_price(cid)
+        change = info.get('usd_24h_change')
         coins.append({
             'cid': cid, 'sym': sym, 'name': name, 'icon': icon,
             'price': price, 'change': change,
             'sparkline': (spark.get(cid) or [])[-32:],
         })
     return {'ok': True, 'usd_to_irr': usd_to_irr, 'coins': coins}
+
+
+def _webapp_currency():
+    usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
+    try:
+        resp = session.get('https://api.exchangerate.host/latest?base=USD', timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            rates = data.get('rates', {})
+            # Select major currencies
+            selected = {
+                'IRR': usd_to_irr or rates.get('IRR'),
+                'EUR': rates.get('EUR'),
+                'GBP': rates.get('GBP'),
+                'TRY': rates.get('TRY'),
+                'AED': rates.get('AED'),
+                'CNY': rates.get('CNY'),
+                'RUB': rates.get('RUB'),
+                'INR': rates.get('INR'),
+                'JPY': rates.get('JPY'),
+                'KRW': rates.get('KRW'),
+            }
+            # Filter out None values
+            selected = {k: v for k, v in selected.items() if v is not None}
+            names = {
+                'IRR': 'Iranian Rial',
+                'EUR': 'Euro',
+                'GBP': 'British Pound',
+                'TRY': 'Turkish Lira',
+                'AED': 'UAE Dirham',
+                'CNY': 'Chinese Yuan',
+                'RUB': 'Russian Ruble',
+                'INR': 'Indian Rupee',
+                'JPY': 'Japanese Yen',
+                'KRW': 'South Korean Won',
+            }
+            return {
+                'ok': True,
+                'rates': selected,
+                'names': names,
+                'updated': data.get('timestamp', int(time.time())) * 1000,
+            }
+    except Exception as e:
+        logger.error(f"Currency fetch failed: {e}")
+    return {'ok': True, 'rates': {'IRR': usd_to_irr} if usd_to_irr else {}, 'names': {'IRR': 'Iranian Rial'}, 'updated': int(time.time() * 1000)}
 
 
 def _webapp_portfolio(uid):
@@ -8284,6 +8454,8 @@ def _webapp_api(path, uid, qs):
     try:
         if path == '/api/prices':
             return _webapp_json(_webapp_prices())
+        if path == '/api/currency':
+            return _webapp_json(_webapp_currency())
         if path == '/api/portfolio':
             return _webapp_json(_webapp_portfolio(uid))
         if path == '/api/market':
@@ -8332,7 +8504,7 @@ def _webapp_route(method, path, uid, qs):
     Returns (status, headers, body_bytes)."""
     if path in ('/api/ping', '/api/ping/'):
         return _webapp_json({'ok': True, 'service': 'earth-crypto-webapp'})
-    if path in ('/api/prices', '/api/market'):
+    if path in ('/api/prices', '/api/market', '/api/currency'):
         if uid is not None and _webapp_rate_limited(uid):
             return _webapp_json({'ok': False, 'error': 'rate limited'}, 429)
         return _webapp_api(path, uid, qs)
