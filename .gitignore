@@ -45,3 +45,6 @@ htmlcov/
 
 # ─── Passenger / bot process lock ────────────────────────────
 .bot.lock
+
+# ─── WebApp PHP response cache ────────────────────────────────
+.webapp_cache/

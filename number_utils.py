@@ -92,6 +92,17 @@ def parse_number(text: str) -> Optional[Decimal]:
         if comma_count == 0 and dot_count == 0:
             return Decimal(text)
         
+        # Single separator followed by exactly 3 digits is a thousands group,
+        # not a decimal: 1,000 / 1.000 / 123,456 -> 1000 / 1000 / 123456.
+        # A leading zero ("0,001") stays a decimal, i.e. 0.001.
+        if comma_count + dot_count == 1:
+            sep = ',' if comma_count else '.'
+            pos = text.rfind(sep)
+            head, tail = text[:pos], text[pos + 1:]
+            if len(tail) == 3 and head.isdigit() and 1 <= len(head) <= 3 \
+                    and not head.startswith('0'):
+                return Decimal(text.replace(sep, ''))
+        
         # Multiple separators of one type with none of the other = thousands separator
         if comma_count > 1 and dot_count == 0:
             # US: 1,000,000 → remove all commas

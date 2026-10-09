@@ -1,4 +1,22 @@
+Options -Indexes
+
 RewriteEngine On
 RewriteCond %{HTTPS} !=on
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Route /api/* to the PHP proxy, but never re-route a real file
+# (without this, /api/index.php rewrites to itself -> 500 loop).
+RewriteCond %{REQUEST_FILENAME} !-f
 RewriteRule ^api/(.*)$ /api/index.php [L,QSA]
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "no-referrer"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains"
+</IfModule>
+
+<IfModule mod_php.c>
+    php_flag display_errors off
+    php_flag log_errors on
+</IfModule>

@@ -13,9 +13,12 @@
     } catch (e) { /* non-fatal */ }
   }
 
-  const hashParams = new URLSearchParams(location.hash.startsWith("#") ? location.hash.slice(1) : location.hash);
   const searchParams = new URLSearchParams(location.search);
-  const INIT_DATA = (tg && tg.initData) || hashParams.get("tgWebAppData") || searchParams.get("initData") || "";
+  // initData is only accepted from the Telegram client object: the backend
+  // (bot.py _webapp_wsgi) reads it exclusively from the X-Telegram-Init-Data
+  // header, and reading it from the URL would leak this bearer credential
+  // into history, referrers and access logs.
+  const INIT_DATA = (tg && tg.initData) || "";
   const DEV_UID = searchParams.get("dev_uid");
 
   /* ── i18n ──────────────────────────────────────────────────────── */
@@ -389,6 +392,9 @@
     const fng = d.fear_greed || {};
     const mcap = g.total_market_cap_usd, vol = g.total_volume_usd;
     const btcDom = g.market_cap_percentage_btc, ethDom = g.market_cap_percentage_eth;
+    // Upstream values are untrusted: force a numeric string before they are
+    // interpolated into a style attribute.
+    const pct = (v) => (typeof v === "number" && isFinite(v) ? Math.max(0, Math.min(100, v)) : 0);
     const chg = g.market_cap_change_percentage_24h_usd;
     const fngVal = fng.value;
     const fngPct = fngVal != null ? Math.max(0, Math.min(100, fngVal)) : 50;
@@ -419,12 +425,12 @@
         <div class="stat">
           <div class="stat-label">${T("mkt_btc_dom")}</div>
           <div class="stat-value">${btcDom != null ? fmtNum(btcDom, 1) + "%" : "—"}</div>
-          ${btcDom != null ? `<div class="bar-track"><div class="bar-fill" style="width:${btcDom}%;background:var(--gold)"></div></div>` : ""}
+          ${btcDom != null ? `<div class="bar-track"><div class="bar-fill" style="width:${pct(btcDom)}%;background:var(--gold)"></div></div>` : ""}
         </div>
         <div class="stat">
           <div class="stat-label">${T("mkt_eth_dom")}</div>
           <div class="stat-value">${ethDom != null ? fmtNum(ethDom, 1) + "%" : "—"}</div>
-          ${ethDom != null ? `<div class="bar-track"><div class="bar-fill" style="width:${ethDom}%;background:var(--accent-2)"></div></div>` : ""}
+          ${ethDom != null ? `<div class="bar-track"><div class="bar-fill" style="width:${pct(ethDom)}%;background:var(--accent-2)"></div></div>` : ""}
         </div>
       </div>
       ${fngBlock}
@@ -468,12 +474,12 @@
           <div class="alert-info">
             <div class="alert-head">
               <span class="alert-sym">${esc(a.sym)}</span>
-              <span class="alert-tag ${esc(a.direction)}">${T(a.direction)}</span>
+              <span class="alert-tag ${esc(a.direction)}">${esc(T(a.direction))}</span>
               ${a.triggered ? `<span class="alert-tag" style="color:var(--gold);background:rgba(227,179,65,.15)">${T("triggered")}</span>` : ""}
             </div>
             <div class="alert-meta">${T("target")}: ${fmtUsd(a.target)} · ${T("current")}: ${fmtUsd(a.price)}</div>
           </div>
-          <button class="alert-del" data-del-alert="${a.id}" title="${T("del")}" aria-label="${T("del")}">✕</button>
+          <button class="alert-del" data-del-alert="${esc(a.id)}" title="${T("del")}" aria-label="${T("del")}">✕</button>
         </div>`).join("");
     el.querySelectorAll("[data-del-alert]").forEach((btn) => {
       btn.addEventListener("click", async () => {

@@ -205,13 +205,15 @@ class TestWebAppSecurity:
         import hmac
         import hashlib
         import json
+        import time
         import urllib.parse
         
         token = bot.TELEGRAM_BOT_TOKEN
         user = {'id': 123456, 'first_name': 'Test'}
         user_json = json.dumps(user, separators=(',', ':'))
         params = {
-            'auth_date': str(int(1234567890)),
+            # Must be fresh: the bot rejects initData older than 24h
+            'auth_date': str(int(time.time())),
             'user': user_json,
         }
         data_check = "\n".join(f"{k}={params[k]}" for k in sorted(params))
@@ -276,28 +278,28 @@ class TestNumberUtils:
     """Test number parsing and formatting utilities."""
 
     def test_parse_number_european(self):
-        from bot.number_utils import parse_number
+        from number_utils import parse_number
         from decimal import Decimal
         
         assert parse_number("1.000.000") == Decimal('1000000')
         assert parse_number("1.234,56") == Decimal('1234.56')
 
     def test_parse_number_us(self):
-        from bot.number_utils import parse_number
+        from number_utils import parse_number
         from decimal import Decimal
         
         assert parse_number("1,000,000") == Decimal('1000000')
         assert parse_number("1,234.56") == Decimal('1234.56')
 
     def test_parse_number_persian(self):
-        from bot.number_utils import parse_number
+        from number_utils import parse_number
         from decimal import Decimal
         
         assert parse_number("۱۲۳٬۴۵۶") == Decimal('123456')
         assert parse_number("۱۲٫۳۴") == Decimal('12.34')
 
     def test_format_crypto(self):
-        from bot.number_utils import format_crypto
+        from number_utils import format_crypto
         from decimal import Decimal
         
         assert format_crypto(Decimal('0.00012300')) == '0.000123'
@@ -305,7 +307,7 @@ class TestNumberUtils:
         assert format_crypto(Decimal('1000000')) == '1,000,000'
 
     def test_format_fiat(self):
-        from bot.number_utils import format_fiat
+        from number_utils import format_fiat
         from decimal import Decimal
         
         assert format_fiat(Decimal('1234.56')) == '1,234.56'

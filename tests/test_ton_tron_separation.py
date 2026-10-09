@@ -43,8 +43,14 @@ class TestTONTRONSeparation:
 
     def test_transaction_chain_detection_explicit(self):
         """Test that transaction chain detection is explicit."""
-        # TRON-specific URLs
-        assert 'tron' in bot._handle_text_wallet_and_tx.__code__.co_names
+        code = bot._handle_text_wallet_and_tx.__code__
+        # TRON handling is referenced by name; the 'tron'/'ton' chain labels
+        # themselves are string constants.
+        assert 'is_valid_tron_address' in code.co_names
+        assert 'get_tron_transaction_details' in code.co_names
+        assert 'get_ton_transaction_details' in code.co_names
+        assert 'tron' in code.co_consts
+        assert 'ton' in code.co_consts
         
         # The function should handle both chains explicitly
         # TRON transaction URLs
