@@ -98,3 +98,80 @@ def test_startup_guards_exist():
     assert bot._webapp_started is False
     assert bot._polling_started is False
     assert bot._start_scheduler_once is not None
+
+
+# ── Inline mode fixes ────────────────────────────────────────────────────
+
+def _mk_inline(query, n=0):
+    return bot.types.InlineQuery(
+        id=f"q{n}",
+        from_user=bot.types.User(id=123, is_bot=False, first_name="T"),
+        query=query,
+        offset="",
+    )
+
+
+def _capture_answer(monkeypatch):
+    captured = []
+
+    def fake_answer(qid, results, **kw):
+        captured.append((qid, results, kw))
+
+    monkeypatch.setattr(bot.bot, 'answer_inline_query', fake_answer)
+    return captured
+
+
+def test_inline_empty_query_answers_guide(monkeypatch):
+    """First-open (empty) inline queries must still get an answer, not be dropped."""
+    captured = _capture_answer(monkeypatch)
+    bot.inline_query_handler(_mk_inline(""))
+    assert len(captured) == 1
+    qid, results, kw = captured[0]
+    assert qid == "q0"
+    titles = [r.title for r in results]
+    assert any('Guide' in t for t in titles)
+    assert kw.get('switch_pm_parameter') == 'inline_help'
+
+
+def test_inline_try_lira_not_duplicated(monkeypatch):
+    """TRY/TL/Lira previously produced two identical results (sections 13+13b)."""
+    bot.cache_set('try_irr', 9000.0, ttl=60)
+    for i, q in enumerate(('try', 'tl', 'lira')):
+        captured = _capture_answer(monkeypatch)
+        bot.inline_query_handler(_mk_inline(q, i))
+        assert len(captured) == 1, q
+        results = captured[0][1]
+        assert len(results) == 1, (q, [r.title for r in results])
+        ids = [r.id for r in results]
+        assert len(ids) == len(set(ids))
+
+
+def test_inline_crashed_handler_still_answers(monkeypatch):
+    """If a provider call throws mid-query, we still answer with the help guide."""
+    captured = _capture_answer(monkeypatch)
+
+    def boom(inline_query):
+        raise RuntimeError("provider exploded")
+
+    bot._safe_inline(boom)(_mk_inline("btc"))
+    assert len(captured) == 1
+    assert captured[0][0] == "q0"
+    titles = [r.title for r in captured[0][1]]
+    assert any('Guide' in t for t in titles)
+
+
+def test_inline_market_uses_cache_first(monkeypatch):
+    """Inline 'market' must serve from cache, never hitting the rate-limited helpers."""
+    bot.cache_set('cg_global', {
+        'total_market_cap': {'usd': 2.2e12},
+        'total_volume': {'usd': 1.1e11},
+        'market_cap_percentage': {'btc': 55.0, 'eth': 15.0},
+        'active_cryptocurrencies': 12345,
+        'market_cap_change_percentage_24h_usd': 3.5,
+    }, ttl=120)
+    bot.cache_set('fng', {'value': 60, 'value_classification': 'Greed'}, ttl=300)
+    captured = _capture_answer(monkeypatch)
+    bot.inline_query_handler(_mk_inline("market"))
+    assert len(captured) == 1
+    titles = [r.title for r in captured[0][1]]
+    assert any('Market' in t for t in titles)

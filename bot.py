@@ -964,10 +964,16 @@ def _fetch_prices_coingecko(ids) -> dict:
 @rate_limited_api_call
 def _fetch_coingecko_global() -> dict:
     """Fetch global market data from CoinGecko (rate-limited)."""
+    cached = cache_get('cg_global')
+    if cached:
+        return cached
     try:
         resp = session.get("https://api.coingecko.com/api/v3/global", timeout=8)
         if resp.status_code == 200:
-            return resp.json().get('data', {})
+            data = resp.json().get('data', {})
+            if data:
+                cache_set('cg_global', data, ttl=120)
+            return data
     except Exception as e:
         logger.error(f"CoinGecko global error: {e}")
     return {}
@@ -976,10 +982,15 @@ def _fetch_coingecko_global() -> dict:
 @rate_limited_api_call
 def _fetch_fear_greed() -> dict | None:
     """Fetch Fear & Greed index (rate-limited)."""
+    cached = cache_get('fng')
+    if cached:
+        return cached
     try:
         resp = session.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         if resp.status_code == 200:
             data = resp.json().get('data', [{}])[0]
+            if data:
+                cache_set('fng', data, ttl=300)
             return data
     except Exception as e:
         logger.debug(f"Failed to fetch Fear & Greed: {e}")
@@ -5731,7 +5742,41 @@ def gainers_losers_cmd(message):
     bot.reply_to(message, text, parse_mode='HTML')
 
 
-@bot.inline_handler(lambda query: len(query.query.strip()) > 0)
+def _safe_inline(handler):
+    """Guarantee an inline query always gets an answer, even if a provider
+    call raises mid-query. Telegram silently drops un-answered inline queries,
+    which makes inline mode look broken."""
+    @functools.wraps(handler)
+    def wrapper(inline_query: types.InlineQuery):
+        try:
+            return handler(inline_query)
+        except Exception as e:
+            logger.error(f"Inline query handler crashed: {e}", exc_info=True)
+            try:
+                _uid = inline_query.from_user.id
+                bot.answer_inline_query(
+                    inline_query.id,
+                    [types.InlineQueryResultArticle(
+                        id="inline_error",
+                        title=T(_uid, 'inline_tips_title'),
+                        description=T(_uid, 'inline_tips_desc'),
+                        input_message_content=types.InputTextMessageContent(
+                            add_timestamp(T(_uid, 'inline_tips_body')),
+                            parse_mode='HTML'
+                        )
+                    )],
+                    cache_time=5,
+                    is_personal=True,
+                    switch_pm_text=T(_uid, 'inline_help_button'),
+                    switch_pm_parameter='inline_help'
+                )
+            except Exception:
+                pass
+    return wrapper
+
+
+@bot.inline_handler(lambda query: True)
+@_safe_inline
 def inline_query_handler(inline_query):
     q     = inline_query.query.strip()
     ql    = q.lower().strip()
@@ -6079,11 +6124,11 @@ def inline_query_handler(inline_query):
             amt = Decimal(amt_m.group(1))
             cur = detect_currency(amt_m.group(2), check_u_alias=True)
             if cur and cur in CRYPTO_LIST:
-                p = get_crypto_price(cur)
+                p = get_crypto_price(cur, cache_only=True)
                 if p:
                     v_usd = amt * Decimal(str(p))
                     v_usd_f = float(v_usd)
-                    irr_v = _irr() or get_usd_to_irr()
+                    irr_v = _irr()
                     v_irr_f = float(v_usd * Decimal(str(irr_v))) if irr_v else 0
                     amt_f = float(amt)
                     name  = _sym(cur)
@@ -6093,19 +6138,19 @@ def inline_query_handler(inline_query):
                     # Build message with blockquote formatting
                     # Add more fiat currencies
                     extra_lines = []
-                    try_val = usd_to_fiat(v_usd_f, get_try_to_irr(), decimals=2)
+                    try_val = usd_to_fiat(v_usd_f, cache_get('try_irr') or get_try_to_irr(), decimals=2)
                     if try_val is not None:
                         extra_lines.append(f"🇹🇷 {try_val:,.0f} TRY")
-                    eur_val = usd_to_fiat(v_usd_f, get_eur_to_irr())
+                    eur_val = usd_to_fiat(v_usd_f, cache_get('eur_irr') or get_eur_to_irr())
                     if eur_val is not None:
                         extra_lines.append(f"🇪🇺 {eur_val:,.2f} EUR")
-                    gbp_val = usd_to_fiat(v_usd_f, get_gbp_to_irr())
+                    gbp_val = usd_to_fiat(v_usd_f, cache_get('gbp_irr') or get_gbp_to_irr())
                     if gbp_val is not None:
                         extra_lines.append(f"🇬🇧 {gbp_val:,.2f} GBP")
-                    aed_val = usd_to_fiat(v_usd_f, get_aed_to_irr())
+                    aed_val = usd_to_fiat(v_usd_f, cache_get('aed_irr') or get_aed_to_irr())
                     if aed_val is not None:
                         extra_lines.append(f"🇦🇪 {aed_val:,.2f} AED")
-                    cny_rate = get_cny_to_irr()
+                    cny_rate = cache_get('cny_irr') or get_cny_to_irr()
                     if cny_rate:
                         extra_lines.append(f"🇨🇳 {v_usd_f * cny_rate:,.2f} CNY")
                     
@@ -6122,9 +6167,9 @@ def inline_query_handler(inline_query):
         # ── 8. Single crypto name (btc / eth / trx / u …) ────────────
         crypto = detect_currency(ql, check_u_alias=True)
         if crypto and crypto in CRYPTO_LIST:
-            p = get_crypto_price(crypto)
+            p = get_crypto_price(crypto, cache_only=True)
             if p:
-                irr_v = _irr() or get_usd_to_irr()
+                irr_v = _irr()
                 name  = CRYPTO_LIST[crypto]
                 sym = _sym(crypto)
                 toman_lbl = T(uid, 'toman_label')
@@ -6142,19 +6187,19 @@ def inline_query_handler(inline_query):
                 
                 # Add more fiat currencies
                 extra_lines = []
-                try_val = usd_to_fiat(p, get_try_to_irr(), decimals=2)
+                try_val = usd_to_fiat(p, cache_get('try_irr') or get_try_to_irr(), decimals=2)
                 if try_val is not None:
                     extra_lines.append(f"🇹🇷 {try_val:,.0f} TRY")
-                eur_val = usd_to_fiat(p, get_eur_to_irr())
+                eur_val = usd_to_fiat(p, cache_get('eur_irr') or get_eur_to_irr())
                 if eur_val is not None:
                     extra_lines.append(f"🇪🇺 {eur_val:,.2f} EUR")
-                gbp_val = usd_to_fiat(p, get_gbp_to_irr())
+                gbp_val = usd_to_fiat(p, cache_get('gbp_irr') or get_gbp_to_irr())
                 if gbp_val is not None:
                     extra_lines.append(f"🇬🇧 {gbp_val:,.2f} GBP")
-                aed_val = usd_to_fiat(p, get_aed_to_irr())
+                aed_val = usd_to_fiat(p, cache_get('aed_irr') or get_aed_to_irr())
                 if aed_val is not None:
                     extra_lines.append(f"🇦🇪 {aed_val:,.2f} AED")
-                cny_val = usd_to_fiat(p, get_cny_to_irr())
+                cny_val = usd_to_fiat(p, cache_get('cny_irr') or get_cny_to_irr())
                 if cny_val is not None:
                     extra_lines.append(f"🇨🇳 {cny_val:,.2f} CNY")
                 
@@ -6175,14 +6220,21 @@ def inline_query_handler(inline_query):
         # ── 9. "price" keyword → full price list ─────────────────────
         if ql in ('price', 'prices', 'قیمت', 'قیمت‌ها'):
             try:
-                ids_str = ','.join(CRYPTO_LIST.keys())
-                prices = _fetch_prices_coingecko(ids_str)
+                # Serve from warm cache first so inline answers stay fast;
+                # only hit the network when nothing is cached yet.
+                prices = {}
+                for _code in CRYPTO_LIST:
+                    _p = cache_get(_code)
+                    if _p is not None:
+                        prices[_code] = {'usd': _p}
+                if not prices:
+                    prices = _fetch_prices_coingecko(','.join(CRYPTO_LIST.keys()))
                 if prices:
                     lines = [f"{EMOJIS['chart']} <b>Crypto Prices</b>\n"]
                     for code, cname in CRYPTO_LIST.items():
                         pr = prices.get(code, {}).get('usd')
                         if pr:
-                            irr_v = _irr() or get_usd_to_irr()
+                            irr_v = _irr()
                             irr_part = f" | 💰 {pr*irr_v:,.0f} T" if irr_v else ""
                             lines.append(f"{cname}\n💵 {fmt_price(pr)}{irr_part}\n")
                     txt = "\n".join(lines)
@@ -6195,11 +6247,12 @@ def inline_query_handler(inline_query):
 
         # ── 10. Gold prices ────────────────────────────────────────────
         if ql in ('gold', 'gold price', 'طلا', 'قیمت طلا'):
-            gold = get_gold_prices()
+            _xau_cached = cache_get('gold_xau')
+            gold = {'xau': _xau_cached} if _xau_cached is not None else get_gold_prices()
             if gold and 'xau' in gold:
                 xau = gold['xau']
                 lines = [T(uid, 'gold_global', xau=f"{xau:,.2f}")]
-                irr_v = _irr() or get_usd_to_irr()
+                irr_v = _irr()
                 if irr_v:
                     xau_irr = xau * irr_v
                     lines.append(f"\n💰 {xau_irr:,.0f} {T(uid, 'toman_label')}/oz")
@@ -6240,7 +6293,9 @@ def inline_query_handler(inline_query):
         # ── 12. Market (Fear & Greed) ──────────────────────────────────
         if ql in ('market', 'fear', 'greed', 'fear and greed', 'fear & greed', 'بازار', 'ترس و طمع'):
             try:
-                g = _fetch_coingecko_global()
+                # Serve from cache first so inline stays fast; the shared
+                # helpers cache their results after every successful fetch.
+                g = cache_get('cg_global') or _fetch_coingecko_global()
                 if g:
                     mcap = g.get('total_market_cap', {}).get('usd', 0)
                     vol = g.get('total_volume', {}).get('usd', 0)
@@ -6254,7 +6309,7 @@ def inline_query_handler(inline_query):
                     lines.append(f"📊 24h Volume: <b>${vol/1e12:.2f}T</b>")
                     lines.append(f"🟠 BTC Dom: <b>{btc_dom:.1f}%</b>  🔵 ETH Dom: <b>{eth_dom:.1f}%</b>")
                     lines.append(f"🪙 Active coins: <b>{coins}</b>")
-                    fg_data = _fetch_fear_greed()
+                    fg_data = cache_get('fng') or _fetch_fear_greed()
                     if fg_data:
                         fg_val = int(fg_data.get('value', 50))
                         fg_label = fg_data.get('value_classification', '?')
@@ -6268,23 +6323,22 @@ def inline_query_handler(inline_query):
 
         # ── 13. TRY to Toman rate ──────────────────────────────────────
         if ql in ('try', 'tl', 'lira', 'ترک', 'لیر'):
-            try_rate = get_try_to_irr()
+            try_rate = cache_get('try_irr') or get_try_to_irr()
             if try_rate:
                 toman_lbl = T(uid, 'toman_label')
                 txt = f"🇹🇷 <b>1 TRY = {try_rate} {toman_lbl}</b>"
                 results.append(article("try_rate", f"1 TRY = {try_rate} {toman_lbl}", f"TRY → {toman_lbl}", txt, html=True))
 
-        # ── 13b. EUR / GBP / AED / CNY / TRY to Toman ────────────────────────
+        # ── 13b. EUR / GBP / AED / CNY to Toman (TRY is handled above in ── 13)
         fx_inline = [
             (('eur', 'euro', '€'), 'EUR', '🇪🇺', get_eur_to_irr),
             (('gbp', 'pound', '£'), 'GBP', '🇬🇧', get_gbp_to_irr),
             (('aed', 'dirham', 'درهم'), 'AED', '🇦🇪', get_aed_to_irr),
             (('cny', 'yuan', 'یوآن'), 'CNY', '🇨🇳', get_cny_to_irr),
-            (('try', 'tl', 'lira', '₺'), 'TRY', '🇹🇷', get_try_to_irr),
         ]
         for fx_keys, fx_code, fx_emoji, fx_getter in fx_inline:
             if ql in fx_keys:
-                fx_rate = fx_getter()
+                fx_rate = cache_get(f"{fx_code.lower()}_irr") or fx_getter()
                 if fx_rate:
                     toman_lbl = T(uid, 'toman_label')
                     txt = f"{fx_emoji} <b>1 {fx_code} = {fx_rate} {toman_lbl}</b>"
@@ -6296,10 +6350,6 @@ def inline_query_handler(inline_query):
             if saved:
                 lines = [f"💼 <b>Portfolio</b>\n"]
                 total = 0.0
-                # Batch-fetch all prices at once
-                hold_ids = [detect_currency(s.lower()) for s in saved if detect_currency(s.lower())]
-                if hold_ids:
-                    _fetch_prices_batch(','.join(set(hold_ids)))
                 for symbol, amount in saved.items():
                     cid = detect_currency(symbol.lower())
                     if not cid:
