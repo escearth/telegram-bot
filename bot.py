@@ -4,7 +4,7 @@ import hmac
 import telebot
 from telebot import types
 from http import HTTPStatus
-from urllib.parse import parse_qsl, urlparse, unquote, quote
+from urllib.parse import parse_qsl, urlparse, unquote, quote as url_quote
 from io import BytesIO
 
 import requests
@@ -3363,7 +3363,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         
         # Try GET first (for shorter URLs)
         config_json = json.dumps(chart_config, separators=(',', ':'))
-        qc_url = f"https://quickchart.io/chart?c={quote(config_json)}&w=700&h=420&bkg=0e1117&f=png"
+        qc_url = f"https://quickchart.io/chart?c={url_quote(config_json)}&w=700&h=420&bkg=0e1117&f=png"
         
         # If URL is too long, use POST
         if len(qc_url) > 2000:
@@ -3397,7 +3397,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
                 "options": {"plugins": {"legend": {"display": False}}, "elements": {"point": {"radius": 0}}}
             }
             simple_json = json.dumps(simple_config, separators=(',', ':'))
-            qc_url = f"https://quickchart.io/chart?c={quote(simple_json)}&w=700&h=420&bkg=0e1117&f=png"
+            qc_url = f"https://quickchart.io/chart?c={url_quote(simple_json)}&w=700&h=420&bkg=0e1117&f=png"
             if len(qc_url) > 2000:
                 resp = session.post(
                     "https://quickchart.io/chart",
@@ -3516,7 +3516,7 @@ def get_portfolio_chart_image(holdings: dict, prices: dict, user_id: int = 0) ->
         }
     }
     
-    qc_url = f"https://quickchart.io/chart?c={quote(json.dumps(chart_config, separators=(',', ':')))}&w=700&h=700&bkg=0e1117&f=png"
+    qc_url = f"https://quickchart.io/chart?c={url_quote(json.dumps(chart_config, separators=(',', ':')))}&w=700&h=700&bkg=0e1117&f=png"
     resp = session.get(qc_url, timeout=20)
     if resp.status_code != 200:
         logger.error(f"QuickChart API failed for portfolio: {resp.status_code}, response: {resp.text[:500]}")
@@ -3565,7 +3565,7 @@ def get_usd_to_irr():
                 OWNER_USER_ID,
                 f"⚠️ <b>USD/IRR API failed</b>\n\nBoth Nobitex sources failed. "
                 f"Rate is unavailable.\n\n"
-                f"<i>{datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M UTC')}</i>",
+                f"<i>{datetime.now(pytz.utc).strftime('%Y-%m-%d %H:%M UTC')}</i>",
                 parse_mode='HTML'
             )
         except Exception as e:
@@ -8207,7 +8207,7 @@ def _send_digest_to_user(user_id: int):
             lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
         else:
             lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr="N/A"))
-        lines.append(f"\n<i>📅 {datetime.now(datetime.UTC).strftime('%b %d, %Y  %H:%M UTC')}</i>")
+        lines.append(f"\n<i>📅 {datetime.now(pytz.utc).strftime('%b %d, %Y  %H:%M UTC')}</i>")
         kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(_T_cached(user_id, 'btn_portfolio'), callback_data="show_holdings"),
             types.InlineKeyboardButton(_T_cached(user_id, 'btn_alerts'),    callback_data="show_alerts"),
@@ -8220,68 +8220,73 @@ def _send_digest_to_user(user_id: int):
 # ─────────────────────────────────────────────
 # Background: alert checker (runs every 60s)
 # ─────────────────────────────────────────────
+def _check_alerts_once():
+    """Fetch prices for all alerts, fire + delete the ones whose condition is met."""
+    alerts = db_get_all_alerts()
+    if alerts:
+        # ── Batch-fetch all needed prices in one CoinGecko call ───
+        unique_ids = list({a['crypto_id'] for a in alerts})
+        price_map: dict[str, float] = {}
+        try:
+            resp = session.get(
+                f"https://api.coingecko.com/api/v3/simple/price"
+                f"?ids={','.join(unique_ids)}&vs_currencies=usd",
+                timeout=10
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for cid in unique_ids:
+                    p = data.get(cid, {}).get('usd')
+                    if p:
+                        price_map[cid] = p
+                        cache_set(cid, p)
+        except Exception as e:
+            logger.warning(f"Alert checker batch fetch failed: {e} - falling back to cache")
+            # Fall back to individually cached values
+            for cid in unique_ids:
+                cached = cache_get(cid)
+                if cached:
+                    price_map[cid] = cached
+
+        for a in alerts:
+            price = price_map.get(a['crypto_id'])
+            if price is None:
+                continue
+            triggered = (
+                (a['direction'] == 'above' and price >= a['target_price']) or
+                (a['direction'] == 'below' and price <= a['target_price'])
+            )
+            if triggered:
+                arrow = '📈' if a['direction'] == 'above' else '📉'
+                try:
+                    _uid = a['user_id']
+                    _dword = _T_cached(_uid, 'above_word') if a['direction'] == 'above' else _T_cached(_uid, 'below_word')
+                    kb = types.InlineKeyboardMarkup([[
+                        types.InlineKeyboardButton(_T_cached(_uid, 'btn_set_new_alert'), callback_data='alrt_new'),
+                        types.InlineKeyboardButton(_T_cached(_uid, 'btn_holdings'),     callback_data='show_holdings'),
+                    ]])
+                    bot.send_message(
+                        _uid,
+                        _T_cached(_uid, 'alert_triggered', arrow=arrow, sym=a['symbol'],
+                          price=fmt_price(price), direction=_dword,
+                          target=fmt_price(a['target_price'])),
+                        parse_mode='HTML',
+                        reply_markup=kb
+                    )
+                    logger.info(
+                        f"Alert {a['id']} fired for user {a['user_id']}: "
+                        f"{a['symbol']} {a['direction']} {fmt_price(a['target_price'])}"
+                    )
+                    db_delete_alert_by_id(a['id'])
+                except Exception as e:
+                    logger.error(f"Could not send alert to user {a['user_id']}: {e}")
+
+
 def _alert_checker_loop():
     logger.info("Alert checker thread started.")
     while True:
         try:
-            alerts = db_get_all_alerts()
-            if alerts:
-                # ── Batch-fetch all needed prices in one CoinGecko call ───
-                unique_ids = list({a['crypto_id'] for a in alerts})
-                price_map: dict[str, float] = {}
-                try:
-                    resp = session.get(
-                        f"https://api.coingecko.com/api/v3/simple/price"
-                        f"?ids={','.join(unique_ids)}&vs_currencies=usd",
-                        timeout=10
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        for cid in unique_ids:
-                            p = data.get(cid, {}).get('usd')
-                            if p:
-                                price_map[cid] = p
-                                cache_set(cid, p)
-                except Exception as e:
-                    logger.warning(f"Alert checker batch fetch failed: {e} - falling back to cache")
-                    # Fall back to individually cached values
-                    for cid in unique_ids:
-                        cached = cache_get(cid)
-                        if cached:
-                            price_map[cid] = cached
-
-                for a in alerts:
-                    price = price_map.get(a['crypto_id'])
-                    if price is None:
-                        continue
-                    triggered = (
-                        (a['direction'] == 'above' and price >= a['target_price']) or
-                        (a['direction'] == 'below' and price <= a['target_price'])
-                    )
-                    if triggered:
-                        arrow = '📈' if a['direction'] == 'above' else '📉'
-                        try:
-                            _uid = a['user_id']
-                            _dword = _T_cached(_uid, 'above_word') if a['direction'] == 'above' else _T_cached(_uid, 'below_word')
-                            kb = types.InlineKeyboardMarkup([[
-                                types.InlineKeyboardButton(_T_cached(_uid, 'btn_set_new_alert'), callback_data='alrt_new'),
-                                types.InlineKeyboardButton(_T_cached(_uid, 'btn_holdings'),     callback_data='show_holdings'),
-                            ]])
-                            bot.send_message(
-                                _uid,
-                                _T_cached(_uid, 'alert_triggered', arrow=arrow, sym=a['symbol'],
-                                  price=fmt_price(price), direction=_dword,
-                                  target=fmt_price(a['target_price'])),
-                                parse_mode='HTML',
-                                reply_markup=kb
-                            )
-                            logger.info(
-                                f"Alert {a['id']} fired for user {a['user_id']}: "
-                                f"{a['symbol']} {a['direction']} {fmt_price(a['target_price'])}"
-                            )
-                            db_delete_alert_by_id(a['id'])
-                        except Exception as e:
-                            logger.error(f"Could not send alert to user {a['user_id']}: {e}")
+            _check_alerts_once()
         except Exception as e:
             logger.error(f"Alert checker error: {e}", exc_info=True)
         time.sleep(60)
@@ -8290,74 +8295,32 @@ def _alert_checker_loop():
 # ─────────────────────────────────────────────
 # Background: daily digest sender
 # ─────────────────────────────────────────────
-def _send_digest(user_id):
-    try:
-        saved = db_get_holdings(user_id)
-        if not saved:
-            return
-        usd_to_irr = get_usd_to_irr()
-        buy_prices = db_get_buy_prices(user_id)
+_send_digest = _send_digest_to_user
 
-        # Batch-fetch prices + 24h change for all held coins (seeds individual caches too)
-        crypto_ids = [detect_currency(s.lower()) for s in saved if detect_currency(s.lower())]
-        change_map = {}
-        if crypto_ids:
-            batch = _fetch_prices_batch(','.join(set(crypto_ids)))
-            for cid in crypto_ids:
-                change_map[cid] = batch.get(cid, {}).get('usd_24h_change')
 
-        total_usd = 0.0
-        lines = [_T_cached(user_id, 'digest_morning')]
-        for symbol, amount in saved.items():
-            cid = detect_currency(symbol.lower())
-            if not cid:
-                continue
-            price = get_crypto_price(cid)
-            if not price:
-                continue
-            value = amount * price
-            total_usd += value
-            change = change_map.get(cid)
-            change_str = ""
-            if change is not None:
-                arrow = '📈' if change >= 0 else '📉'
-                change_str = f" {arrow} {change:+.2f}%"
-            pnl_str = ""
-            buy = buy_prices.get(symbol.upper())
-            if buy and buy > 0:
-                pnl_usd = (price - buy) * amount
-                sign = "+" if pnl_usd >= 0 else ""
-                pnl_usd_abs = abs(pnl_usd)
-                pnl_str = f" | P&L: {sign}{fmt_price(pnl_usd_abs)}"
-            lines.append(f"🪙 <b>{symbol}</b>: {fmt_price(value)}{change_str}{pnl_str}")
+_digest_last_sent: dict = {}  # user_id -> "YYYY-MM-DD HH" of last send
 
-        if usd_to_irr:
-            total_irr = total_usd * usd_to_irr
-            lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
-        else:
-            lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr="N/A"))
-        lines.append(f"\n<i>📅 {datetime.now(datetime.UTC).strftime('%b %d, %Y  %H:%M UTC')}</i>")
-        kb = types.InlineKeyboardMarkup([[
-            types.InlineKeyboardButton(_T_cached(user_id, 'btn_portfolio'), callback_data="show_holdings"),
-            types.InlineKeyboardButton(_T_cached(user_id, 'btn_alerts'),    callback_data="show_alerts"),
-        ]])
-        bot.send_message(user_id, "\n".join(lines), parse_mode='HTML', reply_markup=kb)
-    except Exception as e:
-        logger.error(f"Digest send failed for user {user_id}: {e}")
+
+def _run_digests_once():
+    """Send the digest to every opted-in user whose chosen hour (Iran time) is now.
+
+    Each user gets at most one digest per hour slot, regardless of how often
+    this is called.
+    """
+    now = datetime.now(IRAN_TZ)
+    slot = now.strftime('%Y-%m-%d %H')
+    for u in db_get_all_digest_users():
+        uid, hour = u['user_id'], u['hour']
+        if now.hour == hour and _digest_last_sent.get(uid) != slot:
+            _digest_last_sent[uid] = slot
+            threading.Thread(target=_send_digest_to_user, args=(uid,), daemon=True).start()
 
 
 def _digest_loop():
     logger.info("Daily digest thread started.")
-    last_sent: dict[int, int] = {}  # user_id → last hour sent
     while True:
         try:
-            now_hour = datetime.now(IRAN_TZ).hour
-            users = db_get_all_digest_users()
-            for u in users:
-                uid, hour = u['user_id'], u['hour']
-                if now_hour == hour and last_sent.get(uid) != now_hour:
-                    threading.Thread(target=_send_digest, args=(uid,), daemon=True).start()
-                    last_sent[uid] = now_hour
+            _run_digests_once()
         except Exception as e:
             logger.error(f"Digest loop error: {e}")
         time.sleep(60)
@@ -8963,22 +8926,7 @@ def _background_scheduler_loop():
         if now - last_alert_check >= 60:
             last_alert_check = now
             try:
-                # inline logic from _alert_checker_loop
-                alerts = db_get_all_alerts()
-                if alerts:
-                    unique_ids = list({a['crypto_id'] for a in alerts})
-                    price_map = {}
-                    try:
-                        resp = session.get(f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(unique_ids)}&vs_currencies=usd", timeout=10)
-                        if resp.status_code == 200:
-                            price_map = {k: v.get('usd') for k, v in resp.json().items()}
-                    except Exception as e:
-                        logger.error(f"Alert price fetch error: {e}")
-
-                    for a in alerts:
-                        current_p = price_map.get(a['crypto_id'])
-                        if current_p is not None:
-                            _check_alert_condition(a, current_p)
+                _check_alerts_once()
             except Exception as e:
                 logger.error(f"Alert checker loop error: {e}")
 
@@ -9015,18 +8963,9 @@ def _background_scheduler_loop():
         if now - last_digest_send >= 60:
             last_digest_send = now
             try:
-                tehran_tz = pytz.timezone("Asia/Tehran")
-                now_t = datetime.now(tehran_tz)
-                if now_t.hour == 8 and now_t.minute == 0:
-                    # Not calling send_daily_digest directly because it doesn't exist, we must use _digest_loop logic
-                    users = db_get_all_digest_users()
-                    for uid in users:
-                        try:
-                            _send_digest_to_user(uid)
-                        except Exception:
-                            pass
+                _run_digests_once()
             except Exception as e:
-                pass
+                logger.error(f"Digest scheduler error: {e}")
 
         # 6. Garbage Collection (every 900s)
         if now - last_gc >= 900:
