@@ -929,10 +929,28 @@ _last_api_call = 0.0
 API_COOLDOWN = 3.0  # CoinGecko free tier: ~20 calls/min max
 
 
-def rate_limited_api_call(func):
+def rate_limited_api_call(func=None, *, cache_key=None):
+    """Throttle outbound API calls to one per API_COOLDOWN seconds.
+
+    Pass cache_key (a string, or a callable taking the wrapped function's
+    arguments) for functions that return a cached value when one exists: a
+    cache hit makes no network call, so it must not be throttled. Previously
+    every cached get_usd_to_irr() paid a 3s sleep, and one inline query makes
+    several such calls, so inline answers blew Telegram's answer deadline.
+    """
+    if func is None:
+        return functools.partial(rate_limited_api_call, cache_key=cache_key)
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         global _last_api_call
+        if cache_key is not None:
+            try:
+                key = cache_key(*args, **kwargs) if callable(cache_key) else cache_key
+                if cache_get(key):
+                    return func(*args, **kwargs)
+            except Exception:
+                pass
         with _api_lock:
             now = time.time()
             wait = API_COOLDOWN - (now - _last_api_call)
@@ -965,7 +983,7 @@ def _fetch_prices_coingecko(ids) -> dict:
     return {}
 
 
-@rate_limited_api_call
+@rate_limited_api_call(cache_key='cg_global')
 def _fetch_coingecko_global() -> dict:
     """Fetch global market data from CoinGecko (rate-limited)."""
     cached = cache_get('cg_global')
@@ -983,7 +1001,7 @@ def _fetch_coingecko_global() -> dict:
     return {}
 
 
-@rate_limited_api_call
+@rate_limited_api_call(cache_key='fng')
 def _fetch_fear_greed() -> dict | None:
     """Fetch Fear & Greed index (rate-limited)."""
     cached = cache_get('fng')
@@ -3510,7 +3528,7 @@ def get_portfolio_chart_image(holdings: dict, prices: dict, user_id: int = 0) ->
     return resp.content
 
 
-@rate_limited_api_call
+@rate_limited_api_call(cache_key='usd_to_irr')
 def get_usd_to_irr():
     cached = cache_get('usd_to_irr')
     if cached is not None:
@@ -3527,7 +3545,7 @@ def get_usd_to_irr():
             latest_price = usdt_stats.get('latest')
             if latest_price:
                 price = int(float(latest_price) / 10)
-                cache_set('usd_to_irr', price, ttl=60)
+                cache_set('usd_to_irr', price, ttl=180)
                 logger.info(f"Fetched USD to IRR rate: {price}")
                 return price
             best_buy = usdt_stats.get('bestBuy')
@@ -3535,7 +3553,7 @@ def get_usd_to_irr():
             if best_buy and best_sell:
                 avg_price = (float(best_buy) + float(best_sell)) / 2
                 price = int(avg_price / 10)
-                cache_set('usd_to_irr', price, ttl=60)
+                cache_set('usd_to_irr', price, ttl=180)
                 return price
     except Exception as e:
         logger.error(f"Error fetching USD/IRR: {e}")
@@ -3555,7 +3573,7 @@ def get_usd_to_irr():
     return None
 
 
-@rate_limited_api_call
+@rate_limited_api_call(cache_key='gold_xau')
 def get_gold_prices():
     """Fetch gold prices from CoinGecko (XAU in USD)."""
     cached = cache_get('gold_xau')
@@ -3598,7 +3616,7 @@ TGJU_CATEGORY_IDS = {
 }
 
 
-@rate_limited_api_call
+@rate_limited_api_call(cache_key='iran_gold')
 def get_iran_gold_prices():
     """Fetch Iranian gold prices (Toman) from tgju.org."""
     cached = cache_get('iran_gold')
@@ -3631,7 +3649,7 @@ def get_iran_gold_prices():
         return {}
 
 
-@rate_limited_api_call
+@rate_limited_api_call(cache_key=lambda code, cache_key: cache_key)
 def _fx_to_irr(code: str, cache_key: str):
     """Fiat currency → Toman rate via exchangerate-api: {code} → USD → IRR."""
     cached = cache_get(cache_key)
@@ -3679,14 +3697,15 @@ def get_cny_to_irr():
     return _fx_to_irr('CNY', 'cny_irr')
 
 
-def usd_to_fiat(usd_amount, toman_per_unit, decimals: int = 2):
+def usd_to_fiat(usd_amount, toman_per_unit, decimals: int = 2, usd_to_irr=None):
     """Convert a USD amount into another fiat unit.
 
     get_*_to_irr() rates are Toman per 1 unit of that currency, so a USD
     amount converts as usd * (toman_per_usd / toman_per_unit).
     Returns None when either rate is unavailable.
     """
-    usd_to_irr = get_usd_to_irr()
+    if usd_to_irr is None:
+        usd_to_irr = get_usd_to_irr()
     if not usd_to_irr or not toman_per_unit:
         return None
     try:
@@ -5775,8 +5794,81 @@ def _safe_inline(handler):
                     switch_pm_parameter='inline_help'
                 )
             except Exception:
-                pass
+                logger.warning("Inline fallback answer failed", exc_info=True)
     return wrapper
+
+
+_INLINE_FIATS = (
+    ('try', 'TRY', '🇹🇷', 0),
+    ('eur', 'EUR', '🇪🇺', 2),
+    ('gbp', 'GBP', '🇬🇧', 2),
+    ('aed', 'AED', '🇦🇪', 2),
+    ('cny', 'CNY', '🇨🇳', 2),
+)
+
+
+def _cached_toman_rate(code: str):
+    """Toman per 1 unit of `code`, from cache only (never touches the network).
+
+    Inline queries must be answered within a few seconds, so they only read
+    values the background warmer keeps fresh.
+    """
+    code = code.lower()
+    if code == 'toman':
+        return 1
+    if code == 'usd':
+        return cache_get('usd_to_irr')
+    return cache_get(f'{code}_irr')
+
+
+def _inline_fiat_lines(usd_value, usd_to_irr) -> list[str]:
+    """Extra 'TRY/EUR/GBP/AED/CNY' lines for an inline result, cache-only."""
+    lines = []
+    if not usd_to_irr:
+        return lines
+    for code, label, flag, decimals in _INLINE_FIATS:
+        rate = _cached_toman_rate(code)
+        val = usd_to_fiat(usd_value, rate, decimals=decimals, usd_to_irr=usd_to_irr)
+        if val is not None:
+            lines.append(f"{flag} {val:,.{decimals}f} {label}")
+    return lines
+
+
+_inline_prewarm_running = threading.Event()
+
+
+def _spawn_inline_prewarm():
+    """Run _prewarm_inline_caches in its own thread (each throttled fetch can
+    sleep ~3s, which must not stall the alert/digest scheduler). One at a time."""
+    if _inline_prewarm_running.is_set():
+        return
+
+    def _run():
+        try:
+            _prewarm_inline_caches()
+        finally:
+            _inline_prewarm_running.clear()
+
+    _inline_prewarm_running.set()
+    try:
+        threading.Thread(target=_run, daemon=True, name="InlinePrewarm").start()
+    except Exception:
+        _inline_prewarm_running.clear()
+
+
+def _prewarm_inline_caches():
+    """Keep every value the inline handler reads (cache-only) populated."""
+    for fn in (get_usd_to_irr, get_try_to_irr, get_eur_to_irr, get_gbp_to_irr,
+               get_aed_to_irr, get_cny_to_irr, get_gold_prices,
+               get_iran_gold_prices, _fetch_fear_greed, _fetch_coingecko_global):
+        try:
+            fn()
+        except Exception as e:
+            logger.debug(f"Inline pre-warm {fn.__name__} failed: {e}")
+    try:
+        get_crypto_price('telegram-stars')
+    except Exception:
+        pass
 
 
 @bot.inline_handler(lambda query: True)
@@ -6026,40 +6118,9 @@ def inline_query_handler(inline_query):
                     if p_src:
                         result_val = amt * Decimal(str(p_src)) * Decimal(str(_irr()))
                 # Fiat-to-fiat conversions (e.g., TRY -> Toman, EUR -> TRY, USD -> EUR, etc.)
-                elif src in FIAT_ALIASES.values() and dst in FIAT_ALIASES.values():
-                    # Get source rate (to Toman as base)
-                    src_to_toman = None
-                    if src == 'toman':
-                        src_to_toman = Decimal('1')
-                    elif src == 'usd':
-                        src_to_toman = get_usd_to_irr()
-                    elif src == 'try':
-                        src_to_toman = get_try_to_irr()
-                    elif src == 'eur':
-                        src_to_toman = get_eur_to_irr()
-                    elif src == 'gbp':
-                        src_to_toman = get_gbp_to_irr()
-                    elif src == 'aed':
-                        src_to_toman = get_aed_to_irr()
-                    elif src == 'cny':
-                        src_to_toman = get_cny_to_irr()
-                    
-                    # Get destination rate (from Toman)
-                    dst_from_toman = None
-                    if dst == 'toman':
-                        dst_from_toman = Decimal('1')
-                    elif dst == 'usd':
-                        dst_from_toman = get_usd_to_irr()
-                    elif dst == 'try':
-                        dst_from_toman = get_try_to_irr()
-                    elif dst == 'eur':
-                        dst_from_toman = get_eur_to_irr()
-                    elif dst == 'gbp':
-                        dst_from_toman = get_gbp_to_irr()
-                    elif dst == 'aed':
-                        dst_from_toman = get_aed_to_irr()
-                    elif dst == 'cny':
-                        dst_from_toman = get_cny_to_irr()
+                elif src in FIAT_ALIASES.values() and dst in FIAT_ALIASES.values():  # cache-only rates
+                    src_to_toman = _cached_toman_rate(src)
+                    dst_from_toman = _cached_toman_rate(dst)
                     
                     if src_to_toman and dst_from_toman:
                         # Convert: amt * (src_to_toman / dst_from_toman)
@@ -6101,13 +6162,12 @@ def inline_query_handler(inline_query):
                     # Add enter space and visually separate USD and Toman prices
                     if dst in ('usd', 'toman'):
                         # For fiat destinations, show both USD and Toman
-                        usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
+                        usd_to_irr = _irr()
                         if usd_to_irr and dst == 'usd':
                             # Show both USD and Toman
-                            toman_val = result_val * Decimal(str(get_usd_to_irr()))
-                            desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}\n\n💰 <b>{result_val:,.2f} USD = {result_val * Decimal(str(get_usd_to_irr())):,.0f} {T(uid, 'toman_label')}</b>"
+                            desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}\n\n💰 <b>{result_val:,.2f} USD = {result_val * Decimal(str(usd_to_irr)):,.0f} {T(uid, 'toman_label')}</b>"
                         elif usd_to_irr and dst == 'toman':
-                            usd_val = result_val / Decimal(str(get_usd_to_irr()))
+                            usd_val = result_val / Decimal(str(usd_to_irr))
                             desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}\n\n💰 <b>{usd_val:,.2f} USD = {result_val:,.0f} {T(uid, 'toman_label')}</b>"
                         else:
                             desc = f"{amt_formatted} {src_sym} = {result_formatted} {dst_sym}"
@@ -6141,22 +6201,7 @@ def inline_query_handler(inline_query):
                     irr_line = f"\n💰 {v_irr_f:,.0f} {toman_lbl}" if irr_v else ""
                     # Build message with blockquote formatting
                     # Add more fiat currencies
-                    extra_lines = []
-                    try_val = usd_to_fiat(v_usd_f, cache_get('try_irr') or get_try_to_irr(), decimals=2)
-                    if try_val is not None:
-                        extra_lines.append(f"🇹🇷 {try_val:,.0f} TRY")
-                    eur_val = usd_to_fiat(v_usd_f, cache_get('eur_irr') or get_eur_to_irr())
-                    if eur_val is not None:
-                        extra_lines.append(f"🇪🇺 {eur_val:,.2f} EUR")
-                    gbp_val = usd_to_fiat(v_usd_f, cache_get('gbp_irr') or get_gbp_to_irr())
-                    if gbp_val is not None:
-                        extra_lines.append(f"🇬🇧 {gbp_val:,.2f} GBP")
-                    aed_val = usd_to_fiat(v_usd_f, cache_get('aed_irr') or get_aed_to_irr())
-                    if aed_val is not None:
-                        extra_lines.append(f"🇦🇪 {aed_val:,.2f} AED")
-                    cny_rate = cache_get('cny_irr') or get_cny_to_irr()
-                    if cny_rate:
-                        extra_lines.append(f"🇨🇳 {v_usd_f * cny_rate:,.2f} CNY")
+                    extra_lines = _inline_fiat_lines(v_usd_f, irr_v)
                     
                     msg_text = f"{EMOJIS['money']} <b>{amt_f:,.6g} {name}</b>\n\n💵 ${v_usd_f:,.2f}{irr_line}"
                     if extra_lines:
@@ -6190,22 +6235,7 @@ def inline_query_handler(inline_query):
                     irr_line = ""
                 
                 # Add more fiat currencies
-                extra_lines = []
-                try_val = usd_to_fiat(p, cache_get('try_irr') or get_try_to_irr(), decimals=2)
-                if try_val is not None:
-                    extra_lines.append(f"🇹🇷 {try_val:,.0f} TRY")
-                eur_val = usd_to_fiat(p, cache_get('eur_irr') or get_eur_to_irr())
-                if eur_val is not None:
-                    extra_lines.append(f"🇪🇺 {eur_val:,.2f} EUR")
-                gbp_val = usd_to_fiat(p, cache_get('gbp_irr') or get_gbp_to_irr())
-                if gbp_val is not None:
-                    extra_lines.append(f"🇬🇧 {gbp_val:,.2f} GBP")
-                aed_val = usd_to_fiat(p, cache_get('aed_irr') or get_aed_to_irr())
-                if aed_val is not None:
-                    extra_lines.append(f"🇦🇪 {aed_val:,.2f} AED")
-                cny_val = usd_to_fiat(p, cache_get('cny_irr') or get_cny_to_irr())
-                if cny_val is not None:
-                    extra_lines.append(f"🇨🇳 {cny_val:,.2f} CNY")
+                extra_lines = _inline_fiat_lines(p, irr_v)
                 
                 msg_text = f"📊 <b>{name}</b>\n\n💵 <b>{fmt_price(p)}</b>{irr_line}"
                 if extra_lines:
@@ -6390,7 +6420,7 @@ def inline_query_handler(inline_query):
 
         # ── 16. Math expression ───────────────────────────────────────
         if re.match(r'^[\d+\-*/().%\s]+$', q) and any(c in q for c in '+-*/'):
-            res = evaluate_math(q)
+            res = evaluate_math(q, uid)
             if res and not res.startswith('❌'):
                 results.append(article(
                     "math", "Calculator", res.replace('✅', '').strip(), res
@@ -6467,7 +6497,7 @@ def inline_query_handler(inline_query):
             switch_pm_parameter='inline_help'
         )
     except Exception:
-        pass  # query ID may have expired if handler was too slow
+        logger.warning("answer_inline_query failed", exc_info=True)  # e.g. query expired
 
 
 
@@ -8921,8 +8951,8 @@ def _background_scheduler_loop():
     # Immediate pre-warm
     try:
         _prewarm_prices()
+        _spawn_inline_prewarm()
         _prewarm_charts()
-        get_usd_to_irr()
     except Exception as e:
         logger.error(f"Initial pre-warm failed: {e}")
 
@@ -8953,14 +8983,15 @@ def _background_scheduler_loop():
                 logger.error(f"Alert checker loop error: {e}")
 
         # 2. WebApp Cache Warmer (every 300s)
-        if now - last_webapp_cache >= 300:
+        # Inline mode only reads cache, so refresh well inside the TTLs
+        # (prices 300s, USD/IRR 180s) instead of once per TTL.
+        if now - last_webapp_cache >= 90:
             last_webapp_cache = now
             try:
                 ids = ','.join(k for k in CRYPTO_LIST if k != 'telegram-stars')
                 _fetch_prices_batch(ids)
                 _webapp_sparklines(CRYPTO_LIST)
-                _fetch_coingecko_global()
-                get_usd_to_irr()
+                _spawn_inline_prewarm()
             except Exception as e:
                 logger.error(f"WebApp cache warmer failed: {e}")
 
