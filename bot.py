@@ -142,6 +142,8 @@ for _chain in ['TRC20', 'TON', 'BEP20', 'ERC20', 'SOLANA']:
         DONATION_WALLETS[_chain] = _val
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+# Bind module-level shortcut for inline answering
+answer_inline_query = bot.answer_inline_query
 
 # ── Telegram API request reliability ───────────────────────────────────
 # pyTelegramBotAPI ships with RETRY_ON_ERROR disabled and never retries HTTP
