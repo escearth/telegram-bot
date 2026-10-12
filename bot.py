@@ -744,9 +744,8 @@ def get_iran_time_str():
     return now.strftime('%Y-%m-%d %H:%M')  # Format: 2026-04-17 14:30
 
 def add_timestamp(text: str) -> str:
-    """Add Iran local date/time timestamp to message."""
-    time_str = get_iran_time_str()
-    return f"{text.rstrip()}\n\n🕐 {time_str} (Iran)"
+    """Return message text unchanged (timestamp suffix removed)."""
+    return text
 
 
 def quote(text: str) -> str:
@@ -4956,7 +4955,7 @@ def handle_callback(call):
         try:
             loading_msg = bot.send_message(
                 call.message.chat.id,
-                add_timestamp(f"📊 <b>Generating portfolio chart...</b> 🕐"),
+                add_timestamp(f"📊 <b>Generating portfolio chart...</b>"),
                 parse_mode='HTML'
             )
         except Exception:
@@ -5099,7 +5098,7 @@ def handle_callback(call):
             try:
                 loading_msg = bot.send_message(
                     call.message.chat.id,
-                    add_timestamp(f"📊 <b>Generating {CHART_DAYS.get(days_label, days_label)} chart...</b> 🕐"),
+                    add_timestamp(f"📊 <b>Generating {CHART_DAYS.get(days_label, days_label)} chart...</b>"),
                     parse_mode='HTML'
                 )
             except Exception:
@@ -5608,7 +5607,7 @@ def _send_chart(message, crypto, days, uid):
     try:
         loading_msg = bot.send_message(
             message.chat.id,
-            add_timestamp("📊 <b>Generating chart...</b> 🕐"),
+            add_timestamp("📊 <b>Generating chart...</b>"),
             parse_mode='HTML'
         )
     except Exception:
