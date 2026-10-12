@@ -5261,7 +5261,7 @@ def _build_price_list_message(uid, prices):
         body.append(_price_line(sym, price_usd, change))
     if not body:
         return header
-    return header + "\n\n" + quote("\n".join(body))
+    return header + quote("\n".join(body))
 
 
 @bot.message_handler(commands=['price'])
