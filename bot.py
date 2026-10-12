@@ -5233,6 +5233,15 @@ def show_wallets_with_balance(message):
     logger.info(f"User {user_id} viewed wallets with balances")
 
 
+def _price_line(name_or_sym: str, price: float, chg: float | None = None) -> str:
+    """Canonical coin row: '🪙 BTC  $95,432.12  📈 +1.24%'."""
+    chg_part = ""
+    if chg is not None:
+        arrow = '📈' if chg >= 0 else '📉'
+        chg_part = f"  {arrow} {chg:+.2f}%"
+    return f"🪙 <b>{name_or_sym}</b>  {fmt_price(price)}{chg_part}"
+
+
 def _build_price_list_message(uid, prices):
     """Build the all-prices message: header + blockquote of coin rows."""
     header = T(uid, 'prices_header')
@@ -5250,7 +5259,7 @@ def _build_price_list_message(uid, prices):
         arrow = ('📈' if change >= 0 else '📉') if change is not None else '  '
         chg   = f"{change:+.1f}%" if change is not None else ""
         # Add space after price, separate percentage change visually
-        body.append(f"{arrow} <b>{sym}</b>  {fmt_price(price_usd)}   |   <i>{chg}</i>")
+        body.append(_price_line(sym, price_usd, change))
     if not body:
         return header
     return header + "\n\n" + quote("\n".join(body))
@@ -5647,14 +5656,14 @@ def _send_chart(message, crypto, days, uid):
         if loading_msg:
             try:
                 bot.edit_message_text(
-                    add_timestamp("❌ Chart generation failed. Try again later."),
+                    add_timestamp(T(uid, 'chart_fail')),
                     chat_id=loading_msg.chat.id, message_id=loading_msg.message_id,
                     parse_mode='HTML'
                 )
             except Exception:
                 pass
         else:
-            bot.reply_to(message, add_timestamp("❌ Chart generation failed. Try again later."))
+            bot.reply_to(message, add_timestamp(T(uid, 'chart_fail')))
 
 
 
@@ -5725,7 +5734,7 @@ def trending_cmd(message):
     uid = message.from_user.id
     data = _fetch_trending()
     if not data:
-        bot.reply_to(message, "❌ Could not fetch trending data. Try again later.")
+        bot.reply_to(message, T(uid, 'trending_fail'))
         return
     lines = []
     for i, coin in enumerate(data, 1):
@@ -5745,7 +5754,7 @@ def gainers_losers_cmd(message):
     uid = message.from_user.id
     data = _fetch_gainers_losers()
     if not data:
-        bot.reply_to(message, "❌ Could not fetch market data. Try again later.")
+        bot.reply_to(message, T(uid, 'movers_fail'))
         return
     cmd = message.text.strip().lower()
     show_gainers = cmd.startswith('/gainers')
