@@ -16,6 +16,7 @@ aed - AED to Toman rate
 cny - CNY to Toman rate
 star - Telegram Stars price
 setexchange - Default price source (Coingecko/Binance/Crypto.com/Kraken)
+setcurrency - Default display currency (Toman/USD/EUR/TRY)
 holdings - Portfolio P&L snapshot
 set - Update your holdings
 digest - Daily summary settings

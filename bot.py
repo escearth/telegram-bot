@@ -510,6 +510,12 @@ def init_db():
                 exchange TEXT NOT NULL DEFAULT 'coingecko'
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS currency_prefs (
+                user_id INTEGER PRIMARY KEY,
+                currency TEXT NOT NULL DEFAULT 'toman'
+            )
+        """)
         conn.commit()
     finally:
         conn.close()
@@ -887,17 +893,19 @@ def monitor_group_activity(chat_id: int, message_time: float = None):
                 funny_messages = [
                     "😅 وای وای! گروه داره میسوزه! یه کم آروم‌تر لطفاً 🔥\n"
                     "Whoa! The chat is on fire! Slow down a bit please! 🔥",
-                    
+
                     "🚀 سرعتتون از صوت رد شد! بریک بزنید! 😄\n"
                     "You broke the sound barrier! Hit the brakes! 😄",
-                    
+
                     "🏎️ گروه تبدیل به اتوبان شده! محدودیت سرعت داریم اینجا 😂\n"
                     "The group became a highway! We have speed limits here! 😂",
-                    
+
                     "🌪️ گردباد پیام! یه نفس عمیق بکشید 😌\n"
                     "Message tornado! Take a deep breath! 😌"
                 ]
-                return random.choice(funny_messages)
+                retry_hint = ("\n\n⏱ <i>Come back and try again in a minute.</i>\n"
+                              "⏱ <i>حدود یک دقیقه دیگر دوباره امتحان کنید.</i>")
+                return random.choice(funny_messages) + retry_hint
     
     return None
 
@@ -1111,6 +1119,10 @@ EXCHANGE_SYMBOL_MAP = {
     'binancecoin': 'BNB', 'cardano': 'ADA', 'ripple': 'XRP',
     'solana': 'SOL', 'polkadot': 'DOT', 'dogecoin': 'DOGE',
     'shiba-inu': 'SHIB', 'tron': 'TRX', 'the-open-network': 'TON',
+    'avalanche-2': 'AVAX', 'chainlink': 'LINK', 'litecoin': 'LTC',
+    'uniswap': 'UNI', 'stellar': 'XLM', 'monero': 'XMR',
+    'near': 'NEAR', 'aptos': 'APT', 'sui': 'SUI',
+    'cosmos': 'ATOM', 'algorand': 'ALGO', 'pepe': 'PEPE',
 }
 
 
@@ -1242,6 +1254,21 @@ def record_user_request(user_id: int):
         _user_request_times[user_id].append(now)
 
 
+def get_user_retry_seconds(user_id: int) -> int:
+    """Seconds until the user drops below the command rate limit again.
+
+    The limiter window slides, so the wait is the time remaining until the
+    oldest still-counted request leaves the window (0 when not limited)."""
+    now = time.time()
+    with _user_rate_lock:
+        times = [t for t in _user_request_times.get(user_id, [])
+                 if now - t < USER_RATE_WINDOW]
+    if len(times) < USER_RATE_LIMIT:
+        return 0
+    wait = USER_RATE_WINDOW - (now - min(times))
+    return max(1, int(round(wait)))
+
+
 # ─────────────────────────────────────────────
 # Group-specific rate limiting
 # ─────────────────────────────────────────────
@@ -1323,7 +1350,7 @@ def _format_cached_group_result(query_type: str, raw_data, user_id: int, text_lo
             name = raw_data.get('name', '')
             sym = raw_data.get('sym', '')
             usd_to_irr = cache_get('usd_to_irr') or get_usd_to_irr()
-            toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
+            toman_line = _secondary_currency_line(user_id, price_usd, usd_to_irr)
             rows = f"💵 <b>{fmt_price(price_usd)}</b>" + (f"\n{toman_line}" if toman_line else "")
             return add_timestamp(
                 f"📊 <b>{name}</b>\n" + quote(rows)
@@ -1433,8 +1460,8 @@ KNOWN_COMMANDS = {
     'start', 'help', 'cancel', 'language', 'privacy', 'deleteaccount',
     'suggest', 'ticket', 'donate', 'donation', 'clearwallets', 'wallets',
     'mywallets', 'price', 'usd', 'try', 'eur', 'gbp', 'aed', 'cny', 'gold',
-    'stars', 'star', 'set', 'holdings', 'convert', 'setexchange', 'chart',
-    'trending', 'gainers', 'losers',
+    'stars', 'star', 'set', 'holdings', 'convert', 'setexchange', 'setcurrency',
+    'chart', 'trending', 'gainers', 'losers',
     'alert', 'alerts', 'compare', 'market', 'digest', 'test', 'admin',
 }
 
@@ -1698,10 +1725,14 @@ def rate_limit_check(func):
                     _rate_limit_notified[user_id] = current_time
                 try:
                     lang = db_get_lang(user_id)
+                    retry_s = get_user_retry_seconds(user_id)
                     if lang == 'fa':
-                        msg = "⏳ <b>آروم‌تر!</b>\n\nلطفاً یک لحظه صبر کنید."
+                        msg = ("⏳ <b>آروم‌تر!</b>\n\n"
+                               f"پیام‌ها را سریع می‌فرستی. لطفاً حدود <b>{retry_s} ثانیه</b> صبر کنید و دوباره امتحان کنید.")
                     else:
-                        msg = "⏳ <b>Slow down!</b>\n\nYou're sending messages too quickly. Please wait a moment before trying again."
+                        msg = ("⏳ <b>Slow down!</b>\n\n"
+                               "You're sending messages too quickly.\n"
+                               f"Please try again in <b>~{retry_s} seconds</b>.")
                     bot.reply_to(message, msg, parse_mode='HTML')
                 except:
                     pass
@@ -1791,7 +1822,7 @@ STRINGS = {
         'cancelled':           "✅ Cancelled.",
         'nothing_to_cancel':   "ℹ️ Nothing to cancel.",
         'something_went_wrong': "❌ Something went wrong. Please try again.",
-        'slow_down':           "⏳ Slow down a little! Try again in a moment.",
+        'slow_down':           "⏳ Slow down a little! Try again in about {secs} seconds.",
         'unknown_coin':        "❌ Unknown coin: <code>{sym}</code>\n\nTry: BTC, ETH, TRX, SOL…",
         'price_unavailable':   "⚠️ Prices unavailable right now. Try again in a moment.",
         'market_unavailable':  "❌ Market data unavailable. Try again later.",
@@ -1835,13 +1866,9 @@ STRINGS = {
             "<code>/losers</code> — top losers in 24h</blockquote>\n\n"
             "💱 <b>Currency &amp; Conversion</b>\n"
             "<blockquote><code>/usd</code> — US Dollar to Toman\n"
-            "<code>/try</code> — Turkish Lira to Toman\n"
-            "<code>/eur</code> — Euro to Toman\n"
-            "<code>/gbp</code> — British Pound to Toman\n"
-            "<code>/aed</code> — UAE Dirham to Toman\n"
-            "<code>/cny</code> — Chinese Yuan to Toman\n"
             "<code>/convert</code> — coins · USD · Toman converter\n"
             "<code>/star</code> — Telegram Stars price\n"
+            "<code>/setcurrency</code> — default display currency\n"
             "<code>/setexchange</code> — default price source</blockquote>\n\n"
             "💼 <b>Portfolio · Alerts · Wallets</b>\n"
             "<blockquote><code>/set</code> — update your holdings\n"
@@ -1887,7 +1914,8 @@ STRINGS = {
             "• <b>Wallets</b> - TRON & TON wallet addresses you add via /wallets\n"
             "• <b>Alerts</b> - price alert targets you set via /alert\n"
             "• <b>Digest preference</b> - your daily digest on/off setting and time\n"
-            "• <b>Language</b> - your chosen interface language\n\n"
+            "• <b>Language</b> - your chosen interface language\n"
+            "• <b>Display currency</b> - your chosen display currency (Toman by default)\n\n"
             "No names, messages, or personal information are stored beyond what you explicitly provide.\n\n"
             "Your data is stored on the server running this bot and is never sold or shared with third parties.\n\n"
             "To delete all your data permanently, use:\n"
@@ -1945,6 +1973,7 @@ STRINGS = {
         'price_chart_xlabel':  "Date",
         'price_chart_ylabel':  "Price (USD)",
         'portfolio_total':     "\n💰 <b>Total: {usd}</b> · {irr} Toman",
+        'portfolio_total_cur': "\n💰 <b>Total: {usd}</b> · {val} {cur}",
         'holding_set':         "✅ <b>{sym}</b> set to <b>{amount}</b>\n\n",
         'holding_added':       "✅ Added <b>{amount}</b> {sym} (total: <b>{total}</b>)\n\n",
         'btn_add_coin':        "➕ Add Coin",
@@ -2169,6 +2198,18 @@ STRINGS = {
         'convert_toman_note':  "\n💰 {irr} Toman",
         'convert_toman_approx':"\n💰 ≈ {usd} · {irr} Toman",
         'price_toman_line':    "💰 {irr} Toman",
+        'price_try_line':      "💰 {val} TRY",
+        'price_eur_line':      "💰 {val} EUR",
+
+        # ── /setcurrency ─────────────────────────────────────
+        'cur_current':         "💱 Current display currency: <b>{name}</b>\n\nPick the currency shown under every price:",
+        'cur_set':             "✅ Default display currency set to <b>{name}</b>",
+        'cur_unknown':         "❌ Unknown currency. Available: <code>{list}</code>",
+
+        # ── /clearwallets ────────────────────────────────────
+        'clearwallets_prompt': "⚠️ <b>Remove all saved wallets?</b>\n\nThis deletes every TRON &amp; TON address you saved.\nTheir balances are NOT affected — only this bot forgets them.\n\nThis cannot be undone.",
+        'clearwallets_done':   "✅ <b>All saved wallets were removed.</b>",
+        'btn_clear_wallets':   "🗑 Yes, remove all",
         'inline_usd_toman':    "USD → Toman",
         'inline_toman_usd':    "Toman → USD",
         'usd_simple':          "1 USD = {rate} Toman",
@@ -2182,6 +2223,11 @@ STRINGS = {
         'exch_current':        "💱 <b>Current price source:</b> {name}",
         'chart_usage':         "Usage:\n/chart btc\n/chart btc 7d\n/chart btc 90d\n/chart (pick from buttons)",
         'chart_pick_coin':     "📊 <b>Chart</b>\n\nPick a coin:",
+        'btn_style_line':      "📊 Line",
+        'btn_style_candles':   "🕯 Candles",
+        'chart_candle_style':  "🕯 Candles",
+        'chart_line_style':    "📊 Line",
+        'chart_ohlc':          "O {o} · H {h} · L {l} · C {c}\n🔁 Vol {v} {sym}",
         'chart_pick_days':     "📊 <b>{sym}</b>\n\nPick a time range:",
         'chart_fail':          "❌ Chart generation failed. Try again later.",
         'stars_calc_btn':      "🧮 Calculate amount",
@@ -2203,7 +2249,7 @@ STRINGS = {
         'cancelled':           "✅ لغو شد.",
         'nothing_to_cancel':   "ℹ️ چیزی برای لغو وجود ندارد.",
         'something_went_wrong':"❌ مشکلی پیش آمد. لطفاً دوباره تلاش کنید.",
-        'slow_down':           "⏳ کمی آهسته‌تر! لطفاً یک لحظه صبر کنید.",
+        'slow_down':           "⏳ کمی آهسته‌تر! لطفاً حدود {secs} ثانیه دیگر دوباره امتحان کنید.",
         'unknown_coin':        "❌ ارز ناشناخته: <code>{sym}</code>\n\nمثال: BTC, ETH, TRX, SOL…",
         'price_unavailable':   "⚠️ قیمت‌ها در حال حاضر در دسترس نیستند. لطفاً دوباره امتحان کنید.",
         'market_unavailable':  "❌ اطلاعات بازار در دسترس نیست. بعداً امتحان کنید.",
@@ -2247,13 +2293,9 @@ STRINGS = {
             "<code>/losers</code> — بیشترین افت در ۲۴ ساعت</blockquote>\n\n"
             "💱 <b>نرخ ارز و تبدیل</b>\n"
             "<blockquote><code>/usd</code> — دلار به تومان\n"
-            "<code>/try</code> — لیر به تومان\n"
-            "<code>/eur</code> — یورو به تومان\n"
-            "<code>/gbp</code> — پوند به تومان\n"
-            "<code>/aed</code> — درهم به تومان\n"
-            "<code>/cny</code> — یوان به تومان\n"
             "<code>/convert</code> — مبدل ارز · دلار · تومان\n"
             "<code>/star</code> — قیمت ستاره تلگرام\n"
+            "<code>/setcurrency</code> — ارز نمایش پیش‌فرض\n"
             "<code>/setexchange</code> — منبع قیمت پیش‌فرض</blockquote>\n\n"
             "💼 <b>پرتفو · هشدار · کیف پول</b>\n"
             "<blockquote><code>/set</code> — ثبت دارایی‌های شما\n"
@@ -2313,7 +2355,8 @@ STRINGS = {
             "• همه آدرس‌های کیف پول\n"
             "• همه هشدارهای قیمت\n"
             "• تنظیمات خلاصه روزانه\n"
-            "• تنظیمات زبان\n\n"
+            "• تنظیمات زبان\n"
+            "• ارز نمایش پیش‌فرض\n\n"
             "این عمل قابل بازگشت نیست.",
         'btn_delete_yes':      "🗑 بله، همه چیز را حذف کن",
         'btn_cancel':          "❌ لغو",
@@ -2357,6 +2400,7 @@ STRINGS = {
         'price_chart_xlabel':  "تاریخ",
         'price_chart_ylabel':  "قیمت (دلار)",
         'portfolio_total':     "\n💰 <b>جمع: {usd}</b> · {irr} تومان",
+        'portfolio_total_cur': "\n💰 <b>جمع: {usd}</b> · {val} {cur}",
         'holding_set':         "✅ <b>{sym}</b> روی <b>{amount}</b> تنظیم شد\n\n",
         'holding_added':       "✅ <b>{amount}</b> {sym} اضافه شد (جمع: <b>{total}</b>)\n\n",
         'btn_add_coin':        "➕ افزودن ارز",
@@ -2581,6 +2625,18 @@ STRINGS = {
         'convert_toman_note':  "\n💰 {irr} تومان",
         'convert_toman_approx':"\n💰 ≈ {usd} · {irr} تومان",
         'price_toman_line':    "💰 {irr} تومان",
+        'price_try_line':      "💰 {val} لیر",
+        'price_eur_line':      "💰 {val} یورو",
+
+        # ── /setcurrency ─────────────────────────────────────
+        'cur_current':         "💱 ارز نمایش فعلی: <b>{name}</b>\n\nارزی که زیر هر قیمت نمایش داده می‌شود را انتخاب کنید:",
+        'cur_set':             "✅ ارز نمایش پیش‌فرض به <b>{name}</b> تغییر یافت",
+        'cur_unknown':         "❌ ارز ناشناخته. گزینه‌های معتبر: <code>{list}</code>",
+
+        # ── /clearwallets ────────────────────────────────────
+        'clearwallets_prompt': "⚠️ <b>همه کیف پول‌های ذخیره‌شده حذف شوند؟</b>\n\nاین کار همه آدرس‌های ترون و تون ذخیره‌شده را پاک می‌کند.\nموجودی خود کیف پول‌ها تغییری نمی‌کند — فقط این ربات آن‌ها را فراموش می‌کند.\n\nاین عمل قابل بازگشت نیست.",
+        'clearwallets_done':   "✅ <b>همه کیف پول‌های ذخیره‌شده حذف شدند.</b>",
+        'btn_clear_wallets':   "🗑 بله، همه حذف شوند",
         'inline_usd_toman':    "دلار → تومان",
         'inline_toman_usd':    "تومان → دلار",
         'usd_simple':          "1 دلار = {rate} تومان",
@@ -2594,6 +2650,11 @@ STRINGS = {
         'exch_current':        "💱 <b>منبع قیمت فعلی:</b> {name}",
         'chart_usage':         "نحوه استفاده:\n/chart btc\n/chart btc 7d\n/chart btc 90d\n/chart (انتخاب با دکمه)",
         'chart_pick_coin':     "📊 <b>نمودار</b>\n\nیک ارز را انتخاب کنید:",
+        'btn_style_line':      "📊 خطی",
+        'btn_style_candles':   "🕯 کندل",
+        'chart_candle_style':  "🕯 کندل",
+        'chart_line_style':    "📊 خطی",
+        'chart_ohlc':          "باز {o} · بیشینه {h} · کمینه {l} · بسته {c}\n🔁 حجم {v} {sym}",
         'chart_pick_days':     "📊 <b>{sym}</b>\n\nبازه زمانی را انتخاب کنید:",
         'chart_fail':          "❌ تولید نمودار ناموفق بود. دوباره تلاش کنید.",
         'stars_calc_btn':      "🧮 محاسبه تعداد",
@@ -2622,14 +2683,26 @@ CRYPTO_LIST = {
     'ethereum': '🪙 Ethereum (ETH)',
     'tether': '🪙 Tether (USDT)',
     'binancecoin': '🪙 Binance Coin (BNB)',
-    'cardano': '🪙 Cardano (ADA)',
-    'ripple': '🪙 Ripple (XRP)',
     'solana': '🪙 Solana (SOL)',
-    'polkadot': '🪙 Polkadot (DOT)',
+    'ripple': '🪙 Ripple (XRP)',
+    'cardano': '🪙 Cardano (ADA)',
     'dogecoin': '🪙 Dogecoin (DOGE)',
-    'shiba-inu': '🪙 Shiba Inu (SHIB)',
     'tron': '🪙 Tron (TRX)',
     'the-open-network': '🪙 TON (TON)',
+    'avalanche-2': '🪙 Avalanche (AVAX)',
+    'chainlink': '🪙 Chainlink (LINK)',
+    'litecoin': '🪙 Litecoin (LTC)',
+    'polkadot': '🪙 Polkadot (DOT)',
+    'shiba-inu': '🪙 Shiba Inu (SHIB)',
+    'uniswap': '🪙 Uniswap (UNI)',
+    'stellar': '🪙 Stellar (XLM)',
+    'monero': '🪙 Monero (XMR)',
+    'near': '🪙 NEAR Protocol (NEAR)',
+    'aptos': '🪙 Aptos (APT)',
+    'sui': '🪙 Sui (SUI)',
+    'cosmos': '🪙 Cosmos (ATOM)',
+    'algorand': '🪙 Algorand (ALGO)',
+    'pepe': '🪙 Pepe (PEPE)',
     'telegram-stars': '⭐ Telegram Stars (STARS)'
 }
 
@@ -2640,23 +2713,35 @@ CRYPTO_ALIASES = {
     'usdt': 'tether', 'تتر': 'tether', 'tether': 'tether',
     'bnb': 'binancecoin', 'بایننس': 'binancecoin', 'binance': 'binancecoin',
     'بینانس': 'binancecoin', 'بی ان بی': 'binancecoin',
-    'ada': 'cardano', 'کاردانو': 'cardano', 'cardano': 'cardano',
-    'کاردان': 'cardano', 'آدا': 'cardano',
-    'xrp': 'ripple', 'ریپل': 'ripple', 'ripple': 'ripple',
-    'ریپ': 'ripple', 'ایکس آر پی': 'ripple',
     'sol': 'solana', 'سولانا': 'solana', 'solana': 'solana',
     'سول': 'solana',
-    'dot': 'polkadot', 'پولکادات': 'polkadot', 'polkadot': 'polkadot',
-    'پولکا': 'polkadot', 'دات': 'polkadot',
+    'xrp': 'ripple', 'ریپل': 'ripple', 'ripple': 'ripple',
+    'ریپ': 'ripple', 'ایکس آر پی': 'ripple',
+    'ada': 'cardano', 'کاردانو': 'cardano', 'cardano': 'cardano',
+    'کاردان': 'cardano', 'آدا': 'cardano',
     'doge': 'dogecoin', 'دوج': 'dogecoin', 'دوج کوین': 'dogecoin', 'dogecoin': 'dogecoin',
     'دوگ': 'dogecoin',
-    'shib': 'shiba-inu', 'شیبا': 'shiba-inu', 'shiba': 'shiba-inu',
-    'شیبا اینو': 'shiba-inu',
     'trx': 'tron', 'ترون': 'tron', 'tron': 'tron',
     'تی آر ایکس': 'tron',
     'ton': 'the-open-network', 'تون': 'the-open-network', 'toncoin': 'the-open-network', 'gram': 'the-open-network',
     'تانکوین': 'the-open-network',
-    'stars': 'telegram-stars', 'star': 'telegram-stars', 'استار': 'telegram-stars', 
+    'avax': 'avalanche-2', 'آوالانچ': 'avalanche-2', 'avalanche': 'avalanche-2',
+    'link': 'chainlink', 'لینک': 'chainlink', 'chainlink': 'chainlink', 'چین لینک': 'chainlink',
+    'ltc': 'litecoin', 'لایتکوین': 'litecoin', 'litecoin': 'litecoin', 'لایت': 'litecoin',
+    'uni': 'uniswap', 'یونی‌سواپ': 'uniswap', 'uniswap': 'uniswap', 'یونی سواپ': 'uniswap',
+    'xlm': 'stellar', 'استلار': 'stellar', 'stellar': 'stellar',
+    'xmr': 'monero', 'مونرو': 'monero', 'monero': 'monero',
+    'dot': 'polkadot', 'پولکادات': 'polkadot', 'polkadot': 'polkadot',
+    'پولکا': 'polkadot', 'دات': 'polkadot',
+    'shib': 'shiba-inu', 'شیبا': 'shiba-inu', 'shiba': 'shiba-inu',
+    'شیبا اینو': 'shiba-inu',
+    'near': 'near', 'نیر': 'near', 'nearprotocol': 'near',
+    'apt': 'aptos', 'آپتوس': 'aptos', 'aptos': 'aptos',
+    'sui': 'sui', 'سویی': 'sui', 'سوئی': 'sui',
+    'atom': 'cosmos', 'کازموس': 'cosmos', 'cosmos': 'cosmos',
+    'algo': 'algorand', 'الگورند': 'algorand', 'algorand': 'algorand',
+    'pepe': 'pepe', 'پپه': 'pepe',
+    'stars': 'telegram-stars', 'star': 'telegram-stars', 'استار': 'telegram-stars',
     'استارز': 'telegram-stars', 'ستاره': 'telegram-stars', 'telegram': 'telegram-stars',
 }
 
@@ -3253,6 +3338,84 @@ def set_user_exchange(user_id, exchange):
         conn.commit()
 
 
+# ─────────────────────────────────────────────
+# Default display currency (secondary price line)
+# Toman by default; switchable to USD / EUR / TRY via /setcurrency.
+# ─────────────────────────────────────────────
+DISPLAY_CURRENCIES = {
+    'toman': {'flag': '💰', 'label': 'Toman'},
+    'usd':   {'flag': '💵', 'label': 'USD'},
+    'eur':   {'flag': '🇪🇺', 'label': 'EUR'},
+    'try':   {'flag': '🇹🇷', 'label': 'TRY'},
+}
+
+_currency_cache: dict[int, str] = {}
+_currency_cache_lock = threading.Lock()
+
+
+def db_get_currency(user_id: int) -> str:
+    with _currency_cache_lock:
+        if user_id in _currency_cache:
+            return _currency_cache[user_id]
+    with get_db_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT currency FROM currency_prefs WHERE user_id=?", (user_id,))
+        row = c.fetchone()
+    cur = row[0] if row and row[0] in DISPLAY_CURRENCIES else 'toman'
+    with _currency_cache_lock:
+        _currency_cache[user_id] = cur
+    return cur
+
+
+def db_set_currency(user_id: int, currency: str) -> None:
+    with get_db_conn() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT OR REPLACE INTO currency_prefs (user_id, currency) VALUES (?,?)",
+            (user_id, currency)
+        )
+        conn.commit()
+    with _currency_cache_lock:
+        _currency_cache[user_id] = currency if currency in DISPLAY_CURRENCIES else 'toman'
+
+
+def _secondary_currency_line(user_id: int, price_usd, usd_to_irr) -> str:
+    """The '💰 …' line under a USD price, in the user's chosen display currency.
+
+    Toman → existing Toman line (default).
+    TRY/EUR → convert via the toman-per-unit FX rates.
+    USD → suppressed (the price itself is already in USD)."""
+    if not price_usd:
+        return ""
+    cur = db_get_currency(user_id)
+    if cur == 'toman':
+        if not usd_to_irr:
+            return ""
+        return T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}")
+    rate = get_try_to_irr() if cur == 'try' else (get_eur_to_irr() if cur == 'eur' else None)
+    if rate is None:
+        return ""
+    val = usd_to_fiat(price_usd, rate, decimals=2, usd_to_irr=usd_to_irr)
+    if val is None:
+        return ""
+    return T(user_id, f'price_{cur}_line', val=f"{val:,.2f}")
+
+
+def _portfolio_total_line(user_id: int, total_usd, usd_to_irr) -> str:
+    """Portfolio total line, honouring the user's display currency."""
+    cur = db_get_currency(user_id)
+    if cur in ('eur', 'try') and usd_to_irr:
+        rate = get_eur_to_irr() if cur == 'eur' else get_try_to_irr()
+        val = usd_to_fiat(total_usd, rate, decimals=2, usd_to_irr=usd_to_irr) if rate else None
+        if val is not None:
+            return T(user_id, 'portfolio_total_cur',
+                     usd=fmt_price(total_usd), val=f"{val:,.2f}",
+                     cur=DISPLAY_CURRENCIES[cur]['label'])
+    if usd_to_irr:
+        return T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr=f"{total_usd * usd_to_irr:,.0f}")
+    return T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr="N/A")
+
+
 def _fmt_price_with_exchange(price, exchange):
     if exchange and exchange != 'coingecko':
         name = EXCHANGE_NAMES.get(exchange, exchange.upper())
@@ -3325,6 +3488,49 @@ def _fetch_chart_data_fallback(crypto_id, days=30):
 
 
 _BINANCE_CHART_SKIP = {'telegram-stars'}
+
+
+def _fetch_klines_binance(crypto_id, days=30, max_candles=180):
+    """Binance klines with real OHLCV for the candlestick chart style.
+
+    Returns [[openTime(ms), open, high, low, close, volume], …] or [] when the
+    coin has no exchange symbol / the request fails."""
+    if crypto_id in _BINANCE_CHART_SKIP:
+        return []
+    sym = EXCHANGE_SYMBOL_MAP.get(crypto_id)
+    if not sym:
+        return []
+    # Pick a candle interval that stays within ~max_candles rows
+    if days <= 2:
+        interval = '1h'
+    elif days <= 7:
+        interval = '4h'
+    elif days <= 30:
+        interval = '4h' if days <= 28 else '1d'
+    else:
+        interval = '1d'
+    # Rough candles per day for the given interval
+    per_day = {'1h': 24, '4h': 6, '1d': 1}.get(interval, 1)
+    limit = min(min(max(days, 1), 365) * per_day, max_candles)
+    try:
+        resp = session.get(
+            "https://api.binance.com/api/v3/klines",
+            params={'symbol': f"{sym}USDT", 'interval': interval, 'limit': limit},
+            timeout=15
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Binance klines HTTP {resp.status_code} for {crypto_id}")
+            return []
+        rows = resp.json()
+        if not rows:
+            logger.warning(f"Binance returned no klines for {crypto_id}")
+            return []
+        # kline format: [openTime, open, high, low, close, volume, ...]
+        return [[int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])]
+                for r in rows if r[1] is not None]
+    except Exception as e:
+        logger.error(f"Binance klines fetch failed for {crypto_id}: {e}")
+    return []
 
 
 def _fetch_chart_data_binance(crypto_id, days=30):
@@ -3476,6 +3682,93 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         logger.error(f"Chart generation failed for {crypto_id}: {e}")
         # Re-raise to let caller handle
         raise
+
+
+def get_crypto_candle_chart_image(crypto_id, days=30, user_id=0):
+    """Candlestick (OHLC) chart style, rendered from live Binance klines.
+
+    Returns (png_bytes, symbol, is_candle); falls back to the line chart when
+    the coin has no exchange symbol or the klines request fails."""
+    cache_key = f'chart_{crypto_id}_{days}_c'
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached, crypto_id.upper(), True
+
+    if crypto_id not in CRYPTO_LIST and crypto_id != 'telegram-stars':
+        raise ValueError(f"Unsupported crypto_id for chart: {crypto_id}")
+
+    klines = _fetch_klines_binance(crypto_id, days)
+    if not klines:
+        logger.info(f"No OHLC data for {crypto_id}, falling back to line chart")
+        line = get_crypto_chart_image(crypto_id, days, user_id)
+        return line[0], line[1], False
+
+    # Details for the caption: last candle OHLC + volume (same ttl as the chart)
+    last = klines[-1]
+    cache_set(f'candlemeta_{crypto_id}_{days}',
+              {'o': last[1], 'h': last[2], 'l': last[3], 'c': last[4], 'v': last[5]},
+              ttl=21600)
+
+    try:
+        symbol = EXCHANGE_SYMBOL_MAP.get(crypto_id, crypto_id.upper())
+        candles = [{"x": k[0], "o": k[1], "h": k[2], "l": k[3], "c": k[4]} for k in klines]
+
+        chart_config = {
+            "type": "candlestick",
+            "data": {
+                "datasets": [{
+                    "label": f"{symbol}/USDT",
+                    "data": candles,
+                    "backgroundColor": {"up": "#00cc96", "down": "#f6465d", "unchanged": "#8b949e"},
+                }]
+            },
+            "options": {
+                "plugins": {
+                    "legend": {"display": False},
+                    "title": {"display": True, "text": f"{symbol} - {days}d Candles", "color": "#ccc", "font": {"size": 16}},
+                },
+                "scales": {
+                    "x": {"time": {"unit": "day" if days > 7 else "hour", "stepSize": 1, "displayFormats": {"day": "MMM d", "hour": "MMM d HH:mm"}}, "ticks": {"color": "#aaa", "autoSkip": True, "maxTicksLimit": 8}, "grid": {"color": "#333"}},
+                    "y": {"ticks": {"color": "#aaa"}, "grid": {"color": "#333"}, "position": "right"}
+                },
+                "layout": {"padding": 10}
+            }
+        }
+
+        config_json = json.dumps(chart_config, separators=(',', ':'))
+        qc_url = f"https://quickchart.io/chart?v=3&c={url_quote(config_json)}&w=700&h=460&bkg=0e1117&f=png"
+
+        if len(qc_url) > 2000:
+            resp = session.post(
+                "https://quickchart.io/chart",
+                json={
+                    "chart": chart_config,
+                    "version": "3",
+                    "width": 700,
+                    "height": 460,
+                    "backgroundColor": "0e1117",
+                    "format": "png"
+                },
+                timeout=30
+            )
+        else:
+            resp = session.get(qc_url, timeout=25)
+
+        if resp.status_code != 200 or not resp.content or len(resp.content) < 100:
+            logger.warning(f"QuickChart candlestick render failed ({resp.status_code}) for {crypto_id}, falling back to line chart")
+            line = get_crypto_chart_image(crypto_id, days, user_id)
+            return line[0], line[1], False
+
+        result = resp.content
+        cache_set(cache_key, result, ttl=21600)
+        return result, symbol, True
+    except Exception as e:
+        logger.warning(f"Candlestick chart failed for {crypto_id}: {e} — falling back to line chart")
+        try:
+            line = get_crypto_chart_image(crypto_id, days, user_id)
+            return line[0], line[1], False
+        except Exception:
+            raise
 
 
 TOP_COINS_FOR_CHART = [
@@ -4115,6 +4408,56 @@ def delete_account_cmd(message):
     bot.reply_to(message, T(user_id, 'delete_confirm_prompt'), parse_mode='HTML', reply_markup=kb)
 
 
+@bot.message_handler(commands=['clearwallets'])
+@rate_limit_check
+@loading_indicator
+def clear_wallets_cmd(message):
+    user_id = message.from_user.id
+    wallets = db_get_wallets(user_id)
+    if not wallets:
+        bot.reply_to(message, T(user_id, 'no_wallets'), parse_mode='HTML')
+        return
+    kb = types.InlineKeyboardMarkup([[
+        types.InlineKeyboardButton(T(user_id, 'btn_clear_wallets'), callback_data="cw_clear_confirm"),
+        types.InlineKeyboardButton(T(user_id, 'btn_cancel'),        callback_data="cw_clear_cancel"),
+    ]])
+    bot.reply_to(message, T(user_id, 'clearwallets_prompt'), parse_mode='HTML', reply_markup=kb)
+
+
+@bot.message_handler(commands=['setcurrency'])
+@rate_limit_check
+@loading_indicator
+def set_currency_cmd(message):
+    uid = message.from_user.id
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        current = db_get_currency(uid)
+        current_name = DISPLAY_CURRENCIES.get(current, {}).get('label', 'Toman')
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(*[types.InlineKeyboardButton(
+            f"{info['flag']} {info['label']}", callback_data=f"setcur_{code}"
+        ) for code, info in DISPLAY_CURRENCIES.items()])
+        bot.reply_to(
+            message,
+            T(uid, 'cur_current', name=current_name),
+            parse_mode='HTML', reply_markup=kb
+        )
+        return
+    cur = args[1].strip().lower()
+    if cur not in DISPLAY_CURRENCIES:
+        list_str = ', '.join(DISPLAY_CURRENCIES.keys())
+        bot.reply_to(
+            message,
+            T(uid, 'cur_unknown', list=list_str),
+            parse_mode='HTML'
+        )
+        return
+    db_set_currency(uid, cur)
+    name = DISPLAY_CURRENCIES[cur]['label']
+    bot.reply_to(message, T(uid, 'cur_set', name=name), parse_mode='HTML')
+    logger.info(f"User {uid} set display currency to {cur}")
+
+
 @bot.message_handler(commands=['suggest', 'ticket'])
 @rate_limit_check
 @loading_indicator
@@ -4286,11 +4629,7 @@ def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, u
         else:
             rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g}")
     body = quote("\n".join(rows)) if rows else ""
-    if usd_to_irr:
-        total_irr = total_usd * usd_to_irr
-        total = T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}")
-    else:
-        total = T(user_id, 'portfolio_total', usd=fmt_price(total_usd), irr="N/A")
+    total = _portfolio_total_line(user_id, total_usd, usd_to_irr)
     return header + body + total
 
 
@@ -4346,6 +4685,103 @@ def _edit_call(call, text, reply_markup=None):
         )
     except Exception as e:
         logger.debug(f"Failed to edit message: {e}")
+
+
+def _chart_render(call, user_id: int, crypto: str, days: int, days_label: str, candles: bool = False):
+    """Shared chart renderer for the range/style buttons.
+
+    Builds the photo caption (with OHLC details for the candlestick style),
+    swaps media in place when possible, and attaches range + style buttons."""
+    _answer_call(call, T(user_id, 'generating_chart'))
+    # Show loading message that will be replaced
+    loading_msg = None
+    try:
+        loading_msg = bot.send_message(
+            call.message.chat.id,
+            add_timestamp(T(user_id, 'loading_chart')),
+            parse_mode='HTML'
+        )
+    except Exception:
+        pass
+    try:
+        is_candle = candles
+        if candles:
+            img_bytes, symbol, is_candle = get_crypto_candle_chart_image(crypto, days, user_id)
+        else:
+            img_bytes, symbol = get_crypto_chart_image(crypto, days, user_id)
+        price = get_crypto_price(crypto)
+        kb = types.InlineKeyboardMarkup(row_width=4)
+        cb_prefix = "chc_" if candles else "chart_"
+        kb.add(*[types.InlineKeyboardButton(
+            (f"✓ {d}" if d == days_label else d), callback_data=f"{cb_prefix}{crypto}_{d}"
+        ) for d in CHART_DAYS])
+        # Style toggle row: current style is marked ✓
+        line_label = T(user_id, 'btn_style_line')
+        candle_label = T(user_id, 'btn_style_candles')
+        if candles:
+            kb.add(
+                types.InlineKeyboardButton(line_label, callback_data=f"chart_{crypto}_{days_label}"),
+                types.InlineKeyboardButton(f"✓ {candle_label}", callback_data=f"chc_{crypto}_{days_label}"),
+            )
+        else:
+            kb.add(
+                types.InlineKeyboardButton(f"✓ {line_label}", callback_data=f"chart_{crypto}_{days_label}"),
+                types.InlineKeyboardButton(candle_label, callback_data=f"chc_{crypto}_{days_label}"),
+            )
+        # Header + quoted live price (+ OHLC details in candle style)
+        caption = (f"🕯 <b>{symbol}</b> · {days}d"
+                   if is_candle else f"📊 <b>{symbol}</b> · {days}d")
+        if price:
+            caption += "\n" + quote(f"💵 <b>{fmt_price(price)}</b>")
+        if is_candle:
+            meta = cache_get(f'candlemeta_{crypto}_{days}')
+            if meta:
+                caption += "\n" + quote(T(
+                    user_id, 'chart_ohlc',
+                    o=fmt_price(meta.get('o')), h=fmt_price(meta.get('h')),
+                    l=fmt_price(meta.get('l')), c=fmt_price(meta.get('c')),
+                    v=f"{meta.get('v', 0):,.0f}", sym=symbol
+                ))
+        if call.message.photo:
+            bot.edit_message_media(
+                types.InputMediaPhoto(BytesIO(img_bytes), caption=add_timestamp(caption), parse_mode='HTML'),
+                chat_id=call.message.chat.id, message_id=call.message.message_id,
+                reply_markup=kb
+            )
+            if loading_msg:
+                try:
+                    bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+                except Exception:
+                    pass
+            return  # media edited in place — do NOT send a duplicate photo
+        else:
+            # Not a photo message - replace entirely
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except Exception:
+                pass
+        if loading_msg:
+            try:
+                bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+            except Exception:
+                pass
+        bot.send_photo(
+            call.message.chat.id, photo=BytesIO(img_bytes),
+            caption=add_timestamp(caption), parse_mode='HTML', reply_markup=kb
+        )
+    except Exception as e:
+        logger.error(f"Chart callback failed: {e}")
+        if loading_msg:
+            try:
+                bot.edit_message_text(
+                    add_timestamp(T(user_id, 'chart_fail')),
+                    chat_id=call.message.chat.id, message_id=loading_msg.message_id,
+                    parse_mode='HTML'
+                )
+            except Exception:
+                pass
+        else:
+            _answer_call(call, T(user_id, 'chart_fail'), show_alert=True)
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -4816,14 +5252,13 @@ def handle_callback(call):
         if not price_usd or usd_to_irr is None:
             _answer_call(call, T(user_id, 'price_fetch_fail'), show_alert=True)
             return
-        price_irr = price_usd * usd_to_irr
         crypto_name = CRYPTO_LIST.get(crypto, crypto.upper())
         refresh_kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data=f"refresh_{crypto}")
         ]])
         new_caption = (f"📊 {crypto_name}\n"
                        + quote(f"💵 <b>{fmt_price(price_usd)}</b>\n"
-                               + T(user_id, 'price_toman_line', irr=f"{price_irr:,.0f}")))
+                               + _secondary_currency_line(user_id, price_usd, usd_to_irr)))
         new_caption = add_timestamp(new_caption)
         try:
             bot.edit_message_caption(
@@ -4847,6 +5282,7 @@ def handle_callback(call):
             c.execute("DELETE FROM alerts      WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM digest_prefs WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM exchange_prefs WHERE user_id=?", (user_id,))
+            c.execute("DELETE FROM currency_prefs WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM user_languages WHERE user_id=?", (user_id,))
             conn.commit()
         del_user_state(user_id)
@@ -4864,6 +5300,34 @@ def handle_callback(call):
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
+        return
+
+    # ── Clear-wallets confirmation ─────────────────────────────
+    if data == "cw_clear_confirm":
+        _answer_call(call)
+        removed = db_clear_wallets(user_id)
+        logger.info(f"User {user_id} cleared {removed} saved wallets")
+        _edit_call(call, T(user_id, 'clearwallets_done'))
+        return
+
+    if data == "cw_clear_cancel":
+        _answer_call(call, T(user_id, 'cancelled'))
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return
+
+    # ── Display-currency picker ────────────────────────────────
+    if data.startswith("setcur_"):
+        cur = data[len("setcur_"):]
+        if cur not in DISPLAY_CURRENCIES:
+            _answer_call(call, T(user_id, 'invalid_data'))
+            return
+        db_set_currency(user_id, cur)
+        name = DISPLAY_CURRENCIES[cur]['label']
+        _answer_call(call, T(user_id, 'cur_set', name=name))
+        _edit_call(call, T(user_id, 'cur_set', name=name))
         return
 
     if data == "show_holdings":
@@ -5065,66 +5529,19 @@ def handle_callback(call):
                 _answer_call(call, T(user_id, 'invalid_data'))
                 return
             days = CHART_DAYS.get(days_label, 30)
-            _answer_call(call, T(user_id, 'generating_chart'))
-            # Show loading message that will be replaced
-            loading_msg = None
-            try:
-                loading_msg = bot.send_message(
-                    call.message.chat.id,
-                    add_timestamp(T(user_id, 'loading_chart')),
-                    parse_mode='HTML'
-                )
-            except Exception:
-                pass
-            try:
-                img_bytes, symbol = get_crypto_chart_image(crypto, days, user_id)
-                price = get_crypto_price(crypto)
-                kb = types.InlineKeyboardMarkup(row_width=4)
-                kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{crypto}_{d}") for d in CHART_DAYS])
-                # Header + one quoted line with the live price
-                caption = f"📊 <b>{symbol}</b> · {days}d"
-                if price:
-                    caption += "\n" + quote(f"💵 <b>{fmt_price(price)}</b>")
-                if call.message.photo:
-                    bot.edit_message_media(
-                        types.InputMediaPhoto(BytesIO(img_bytes), caption=add_timestamp(caption), parse_mode='HTML'),
-                        chat_id=call.message.chat.id, message_id=call.message.message_id,
-                        reply_markup=kb
-                    )
-                    if loading_msg:
-                        try:
-                            bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
-                        except Exception:
-                            pass
-                    return  # media edited in place — do NOT send a duplicate photo
-                else:
-                    # Not a photo message - replace entirely
-                    try:
-                        bot.delete_message(call.message.chat.id, call.message.message_id)
-                    except Exception:
-                        pass
-                if loading_msg:
-                    try:
-                        bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
-                    except Exception:
-                        pass
-                bot.send_photo(
-                    call.message.chat.id, photo=BytesIO(img_bytes),
-                    caption=add_timestamp(caption), parse_mode='HTML', reply_markup=kb
-                )
-            except Exception as e:
-                logger.error(f"Chart callback failed: {e}")
-                if loading_msg:
-                    try:
-                        bot.edit_message_text(
-                            add_timestamp(T(user_id, 'chart_fail')),
-                            chat_id=call.message.chat.id, message_id=loading_msg.message_id,
-                            parse_mode='HTML'
-                        )
-                    except Exception:
-                        pass
-                else:
-                    _answer_call(call, T(user_id, 'chart_fail'), show_alert=True)
+            _chart_render(call, user_id, crypto, days, days_label, candles=False)
+        return
+
+    # ── Chart range selector (candlestick style) ──────────────
+    if data.startswith("chc_"):
+        parts = data.split("_", 2)
+        if len(parts) == 3:
+            _, crypto, days_label = parts
+            if days_label not in CHART_DAYS:
+                _answer_call(call, T(user_id, 'invalid_data'))
+                return
+            days = CHART_DAYS.get(days_label, 30)
+            _chart_render(call, user_id, crypto, days, days_label, candles=True)
         return
 
     # ── Exchange selector ─────────────────────────────────────
@@ -6320,10 +6737,7 @@ def inline_query_handler(inline_query):
                         rows.append(line)
                     else:
                         rows.append(f"🪙 <b>{symbol}</b>  {amount:,.6g} · <i>{T(uid, 'price_unavail_short')}</i>")
-                if irr_v:
-                    total_line = T(uid, 'portfolio_total', usd=fmt_price(total), irr=f"{total * irr_v:,.0f}")
-                else:
-                    total_line = T(uid, 'portfolio_total', usd=fmt_price(total), irr="N/A")
+                total_line = _portfolio_total_line(uid, total, irr_v)
                 txt = T(uid, 'portfolio_header') + (quote("\n".join(rows)) if rows else "") + total_line
                 results.append(article("holdings", "Portfolio", f"Total: {fmt_price(total)}", txt, html=True))
 
@@ -7777,7 +8191,7 @@ def _handle_text_crypto(message, user_id, text, text_lower):
             if not price_usd:
                 bot.reply_to(message, T(user_id, 'price_fetch_fail'))
                 return True
-            toman_line = T(user_id, 'price_toman_line', irr=f"{price_usd * usd_to_irr:,.0f}") if usd_to_irr else ""
+            toman_line = _secondary_currency_line(user_id, price_usd, usd_to_irr)
 
             # Cache raw data for group deduplication
             is_group = message.chat.type in ('group', 'supergroup')
@@ -8509,6 +8923,15 @@ def _webapp_market():
     g = _fetch_coingecko_global() or {}
     fng = _fetch_fear_greed()
     trend = _fetch_trending() or []
+    gl = _fetch_gainers_losers() or {}
+
+    def _movers(coins):
+        return [
+            {'id': c.get('id'), 'name': c.get('name'), 'symbol': (c.get('symbol') or '').upper(),
+             'price': c.get('current_price'), 'change': c.get('price_change_percentage_24h')}
+            for c in (coins or [])
+        ]
+
     return {
         'ok': True,
         'global': {
@@ -8526,6 +8949,8 @@ def _webapp_market():
              'price_btc': t.get('price_btc'), 'thumb': t.get('thumb')}
             for t in trend
         ],
+        'gainers': _movers(gl.get('gainers')),
+        'losers': _movers(gl.get('losers')),
         'usd_to_irr': get_usd_to_irr(),
     }
 

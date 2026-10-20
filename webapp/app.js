@@ -43,6 +43,8 @@
       mkt_24h: "Market 24h Change",
       fng: "Fear & Greed",
       trending: "Trending",
+      gainers: "Top Gainers 24h",
+      losers: "Top Losers 24h",
       no_alerts: "No alerts yet",
       no_alerts_sub: "Set price alerts with /alert in the bot.",
       above: "above", below: "below",
@@ -83,6 +85,8 @@
       mkt_24h: "تغییر ۲۴ ساعت بازار",
       fng: "ترس و طمع",
       trending: "داغ‌ترین ارزها",
+      gainers: "بیشترین رشد ۲۴ ساعت",
+      losers: "بیشترین افت ۲۴ ساعت",
       no_alerts: "هنوز هشداری ندارید",
       no_alerts_sub: "با /alert در ربات هشدار قیمت تنظیم کنید.",
       above: "بالای", below: "پایین",
@@ -459,7 +463,39 @@
             <div class="trend-sym">${esc(t.symbol)}${t.market_cap_rank ? " · #" + fmtNum(t.market_cap_rank, 0) : ""}</div>
           </div>
           <div class="coin-price">${t.price_btc != null ? fmtCoin(t.price_btc) + " BTC" : ""}</div>
-        </div>`).join("") || emptyState("🌍", T("trending"), "")}`;
+        </div>`).join("") || emptyState("🌍", T("trending"), "")}
+      <div class="section-title">📈 ${T("gainers")}</div>
+      ${(d.gainers || []).map((m) => {
+        const up = m.change != null && m.change >= 0;
+        return `
+        <div class="trend-row">
+          <div class="trend-icon">🪙</div>
+          <div class="trend-info">
+            <div class="trend-name">${esc(m.name)}</div>
+            <div class="trend-sym">${esc(m.symbol)}</div>
+          </div>
+          <div class="coin-price-col">
+            <div class="coin-price">${m.price != null ? fmtUsd(m.price) : "—"}</div>
+            ${m.change != null ? `<span class="chg-badge ${up ? "up" : "down"}">${up ? "+" : "−"}${fmtNum(Math.abs(m.change), 2)}%</span>` : ""}
+          </div>
+        </div>`;
+      }).join("") || emptyState("📈", T("gainers"), "")}
+      <div class="section-title">📉 ${T("losers")}</div>
+      ${(d.losers || []).map((m) => {
+        const up = m.change != null && m.change >= 0;
+        return `
+        <div class="trend-row">
+          <div class="trend-icon">🪙</div>
+          <div class="trend-info">
+            <div class="trend-name">${esc(m.name)}</div>
+            <div class="trend-sym">${esc(m.symbol)}</div>
+          </div>
+          <div class="coin-price-col">
+            <div class="coin-price">${m.price != null ? fmtUsd(m.price) : "—"}</div>
+            ${m.change != null ? `<span class="chg-badge ${up ? "up" : "down"}">${up ? "+" : "−"}${fmtNum(Math.abs(m.change), 2)}%</span>` : ""}
+          </div>
+        </div>`;
+      }).join("") || emptyState("📉", T("losers"), "")}`;
 
     if (fngVal != null) requestAnimationFrame(() => {
       const m = $("#tab-market .fng-marker");
