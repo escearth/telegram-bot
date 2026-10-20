@@ -18,8 +18,16 @@ _NORMALIZE_TRANS = str.maketrans(
     '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٪×÷٬٫',
     '01234567890123456789%*/,.'
 )
+# Unicode dash/minus variants (iOS/macOS keyboards type U+2212 − instead of
+# the ASCII hyphen-minus) so pasted negative numbers parse correctly.
+_NORMALIZE_TRANS.update({ord(c): '-' for c in '‐‑‒–—−﹣－'})
 
 _PERSIAN_TRANS = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
+
+# Conversion-command regex, compiled once at module level (hot path).
+# \bto\b (not a bare "to") so "100 usd toman" keeps toman whole instead of
+# greedily consuming the "to" inside "toman" -> "man".
+_CONV_RE = re.compile(r'^([\d.,]+)\s*(\w+|تومان|تومن)\s*(?:\bto\b|به)?\s*(\w+|تومان|تومن)$')
 
 def normalize_digits(text: str) -> str:
     """
@@ -55,6 +63,8 @@ def parse_number(text: str) -> Optional[Decimal]:
     - If last separator is ',' → European (1.234,56 = 1234.56)
     - If last separator is '.' → US (1,234.56 = 1234.56)
     - Single separator position determines usage
+    - A lone comma + 3-digit tail = thousands group (1,000 = 1000);
+      a lone dot + 3-digit tail = decimal (1.234 = 1.234, never 1234)
     
     Args:
         text: String containing a number
@@ -92,15 +102,18 @@ def parse_number(text: str) -> Optional[Decimal]:
         if comma_count == 0 and dot_count == 0:
             return Decimal(text)
         
-        # Single separator followed by exactly 3 digits is a thousands group,
-        # not a decimal: 1,000 / 1.000 / 123,456 -> 1000 / 1000 / 123456.
-        # A leading zero ("0,001") stays a decimal, i.e. 0.001.
+        # A lone comma acting as a thousands group: "1,000" / "123,456" -> 1000
+        # / 123456.  A lone dot is treated as a DECIMAL point ("1.234" =
+        # 1.234), because crypto amounts are decimal-first in this bot and a
+        # single-dot thousands group ("1.000" for one thousand) is rare and
+        # dangerously ambiguous -- the old behaviour turned "1.234" into 1234,
+        # a 1000x error.  A leading zero ("0,001") stays a decimal, i.e. 0.001.
         if comma_count + dot_count == 1:
             sep = ',' if comma_count else '.'
             pos = text.rfind(sep)
             head, tail = text[:pos], text[pos + 1:]
-            if len(tail) == 3 and head.isdigit() and 1 <= len(head) <= 3 \
-                    and not head.startswith('0'):
+            if comma_count and len(tail) == 3 and head.isdigit() \
+                    and 1 <= len(head) <= 3 and not head.startswith('0'):
                 return Decimal(text.replace(sep, ''))
         
         # Multiple separators of one type with none of the other = thousands separator
@@ -168,9 +181,13 @@ def format_crypto(value: Decimal, max_decimals: int = 8) -> str:
     quantum = Decimal(10) ** -max_decimals
     value_rounded = value.quantize(quantum, rounding=ROUND_DOWN)
     
-    # Convert to string
+    # Track the sign separately: int("-0") is 0, so a value in (-1, 0) would
+    # silently lose its minus sign (a loss rendered as a positive number).
+    neg = value_rounded < 0
     value_str = format(value_rounded, 'f')
-    
+    if value_str.startswith('-'):
+        value_str = value_str[1:]
+
     # Split into integer and decimal parts
     if '.' in value_str:
         int_part, dec_part = value_str.split('.')
@@ -180,12 +197,14 @@ def format_crypto(value: Decimal, max_decimals: int = 8) -> str:
         int_part = f"{int(int_part):,}"
         # Combine
         if dec_part:
-            return f"{int_part}.{dec_part}"
+            result = f"{int_part}.{dec_part}"
         else:
-            return int_part
+            result = int_part
     else:
         # No decimal part
-        return f"{int(value_str):,}"
+        result = f"{int(value_str):,}"
+
+    return f"-{result}" if neg else result
 
 
 def format_fiat(value: Decimal, decimals: int = 2) -> str:
@@ -224,7 +243,12 @@ def format_fiat(value: Decimal, decimals: int = 2) -> str:
 
     # Format with fixed decimals using Decimal only (no float() round-trip,
     # which could lose precision on very large values).
+    # Track the sign separately: int("-0") is 0, so a value in (-1, 0) would
+    # silently lose its minus sign (a loss rendered as a positive number).
+    neg = value_rounded < 0
     value_str = format(value_rounded, 'f')
+    if value_str.startswith('-'):
+        value_str = value_str[1:]
     if '.' in value_str:
         int_part, dec_part = value_str.split('.')
     else:
@@ -236,6 +260,8 @@ def format_fiat(value: Decimal, decimals: int = 2) -> str:
     # Strip .00 for whole numbers (only when decimals=2)
     if decimals == 2 and result.endswith('.00'):
         result = result[:-3]
+
+    return f"-{result}" if neg else result
 
     return result
 
@@ -350,9 +376,9 @@ def parse_conversion_command(text: str) -> Optional[Tuple[Decimal, str, str]]:
     
     # Pattern: amount + currency + optional(to/به) + currency
     # Supports: "10 btc eth", "10 btc to eth", "10btc eth"
-    pattern = r'^([\d.,]+)\s*(\w+|تومان|تومن)\s*(?:to|به)?\s*(\w+|تومان|تومن)$'
+    # (see _CONV_RE at module level)
     
-    match = re.match(pattern, text)
+    match = _CONV_RE.match(text)
     if not match:
         return None
     

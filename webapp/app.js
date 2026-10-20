@@ -126,6 +126,9 @@
     if (v >= 1000) return fmtNum(v, 0);
     if (v >= 1) return fmtNum(v, 2);
     if (v >= 0.0001) return fmtNum(v, 5);
+    // Tiny values: fixed decimals would round them away to 0, so fall back
+    // to an exponential representation (0 is still shown plainly).
+    if (v !== 0 && Math.abs(v) < 0.0001) return v.toExponential(2);
     return fmtNum(v, 8);
   }
 
@@ -151,7 +154,7 @@
   }
 
   /* ── API ───────────────────────────────────────────────────────── */
-  async function api(path) {
+  async function api(path, method = "GET") {
     const headers = {};
     if (INIT_DATA) headers["X-Telegram-Init-Data"] = INIT_DATA;
     let url = path;
@@ -164,7 +167,7 @@
     const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
     let res;
     try {
-      res = await fetch(url, { headers, signal: ctrl ? ctrl.signal : undefined });
+      res = await fetch(url, { method, body: method === "POST" ? "" : undefined, headers, signal: ctrl ? ctrl.signal : undefined });
     } catch (e) {
       throw new Error(e && e.name === "AbortError" ? "timeout" : "network");
     } finally {
@@ -182,10 +185,14 @@
     return data;
   }
 
-  async function request(path) {
+  // Ref-count the global loader: it stays visible until every in-flight
+  // request has finished, so parallel tab refreshes don't flicker it off.
+  let loaderCount = 0;
+  async function request(path, method = "GET") {
+    loaderCount++;
     showLoader(true);
     try {
-      return await api(path);
+      return await api(path, method);
     } catch (e) {
       console.error("API error for", path, ":", e.message, e);
       const msg =
@@ -197,7 +204,7 @@
       setError(msg);
       throw e;
     } finally {
-      showLoader(false);
+      if (--loaderCount <= 0) { loaderCount = 0; showLoader(false); }
     }
   }
 
@@ -226,7 +233,7 @@
     });
     document.querySelectorAll("#main .tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
     const loaders = { prices: loadPrices, portfolio: loadPortfolio, market: loadMarket, alerts: loadAlerts, wallets: loadWallets, currency: loadCurrency };
-    loaders[name] && loaders[name]();
+    loaders[name] && loaders[name](force);
   }
 
   $("#tabbar").addEventListener("click", (e) => {
@@ -257,7 +264,8 @@
   }
 
   function changeBadge(chg) {
-    if (chg == null) return `<span class="chg-badge flat">—</span>`;
+    chg = chg == null ? null : Number(chg);
+    if (chg == null || isNaN(chg)) return `<span class="chg-badge flat">—</span>`;
     const cls = chg > 0 ? "up" : chg < 0 ? "down" : "flat";
     const arrow = chg > 0 ? "▲" : chg < 0 ? "▼" : "•";
     return `<span class="chg-badge ${cls}">${arrow} ${fmtNum(Math.abs(chg), 2)}%</span>`;
@@ -275,14 +283,17 @@
     const input = $("#coin-search");
     input.addEventListener("input", () => {
       const q = input.value.trim().toLowerCase();
-      const filtered = coins.filter((c) => c.name.toLowerCase().includes(q) || c.sym.toLowerCase().includes(q));
+      const filtered = coins.filter((c) => !skipCoin(c) && (c.name.toLowerCase().includes(q) || c.sym.toLowerCase().includes(q)));
       $("#coin-list").innerHTML = filtered.map(coinRow).join("") || emptyState("🔍", T("price"), "");
     });
   }
 
+  // Skip USDT and Telegram Stars in the prices tab (shared by render + search).
+  const skipCoin = (c) => c.cid === "tether" || c.cid === "telegram-stars";
+
   function coinRow(c) {
     // Skip USDT and Telegram Stars in prices tab
-    if (c.cid === 'tether' || c.cid === 'telegram-stars') return '';
+    if (skipCoin(c)) return '';
     const icons = { "🪙": "🪙", "⭐": "⭐" };
     return `
       <div class="coin-row">
@@ -329,6 +340,10 @@
         .map((it, i) => ({ pct: totalVal ? (it.value / totalVal) * 100 : 0, color: colors[i % colors.length], name: it.name, sym: it.sym }))
         .filter((p) => p.pct > 0.5)
         .sort((a, b) => b.pct - a.pct);
+      // After dropping sub-0.5% holdings the slices no longer span the full
+      // circle; re-scale the survivors so they again sum to exactly 100%.
+      const partSum = parts.reduce((acc, p) => acc + p.pct, 0);
+      if (partSum > 0) parts.forEach((p) => { p.pct = (p.pct / partSum) * 100; });
       let acc = 0;
       const segs = parts.map((p) => {
         const s = `${p.color} ${acc.toFixed(1)}deg ${(acc + p.pct * 3.6).toFixed(1)}deg`;
@@ -484,7 +499,7 @@
     el.querySelectorAll("[data-del-alert]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         try {
-          await request("/api/alerts/delete?alert_id=" + encodeURIComponent(btn.dataset.delAlert));
+          await request("/api/alerts/delete?alert_id=" + encodeURIComponent(btn.dataset.delAlert), "POST");
           toast(T("del") + " ✓");
           renderAlerts(await request("/api/alerts"));
         } catch (e) { /* toast already shown */ }
@@ -533,7 +548,7 @@
     el.querySelectorAll("[data-del-wallet]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         try {
-          await request("/api/wallets/delete?address=" + encodeURIComponent(btn.dataset.delWallet));
+          await request("/api/wallets/delete?address=" + encodeURIComponent(btn.dataset.delWallet), "POST");
           toast(T("del") + " ✓");
           renderWallets(await request("/api/wallets"));
         } catch (e) { /* toast already shown */ }
@@ -555,8 +570,9 @@
   function renderCurrency(d) {
     const el = $("#tab-currency");
     const rates = d.rates || {};
-    const updated = d.updated || Date.now();
-    const date = new Date(updated).toLocaleString();
+    const date = d.updated != null && !isNaN(new Date(d.updated))
+      ? new Date(d.updated).toLocaleString(lang === "fa" ? "fa-IR" : "en-US")
+      : "—";
     const html = `
       <div class="hero-card">
         <div class="hero-label">${T("currency_updated")}</div>
@@ -603,9 +619,17 @@
     const card = p.secondary_bg_color ? p.secondary_bg_color : "#1c2129";
     document.documentElement.style.setProperty("--card", card);
     document.documentElement.style.setProperty("--card-2", set(p.secondary_bg_color, "#21262e"));
+    // The hero card keeps its own fixed dark gradient, so it needs light text
+    // even when the Telegram theme (and thus --text) is light.
+    if (tg.colorScheme === "light") {
+      document.documentElement.style.setProperty("--hero-text", "#e6edf3");
+    } else {
+      document.documentElement.style.removeProperty("--hero-text");
+    }
   }
 
   setLang(lang);
   applyTheme();
+  tg && tg.onEvent && tg.onEvent("themeChanged", applyTheme);
   switchTab("prices");
 })();

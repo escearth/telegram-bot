@@ -20,3 +20,21 @@ RewriteRule ^api/(.*)$ /api/index.php [L,QSA]
     php_flag display_errors off
     php_flag log_errors on
 </IfModule>
+
+# Block dotfiles (e.g. .webapp_cache, .env, .git) from direct download.
+# Apache 2.4 syntax; pre-2.4 fallback below.
+<IfModule mod_authz_core.c>
+  <FilesMatch "^\.">
+    Require all denied
+  </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+  <FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+  </FilesMatch>
+</IfModule>
+
+# Extra belt-and-suspenders: any URL whose last path segment starts with a dot
+# is answered with 404 before it ever reaches the disk.
+RedirectMatch 404 /\.

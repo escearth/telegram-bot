@@ -2,16 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1117">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.telegram.org; frame-ancestors https://web.telegram.org https://telegram.org;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; object-src 'none'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.telegram.org; frame-ancestors https://web.telegram.org https://telegram.org;">
 <title>Earth Crypto</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
 <link rel="stylesheet" href="styles.css?v=2">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-<div id="app" class="theme-dark">
+<div id="app">
 
   <header id="app-header">
     <div class="brand">
@@ -37,22 +37,22 @@
   </main>
 
   <nav id="tabbar" role="tablist">
-    <button class="tab-btn active" type="button" data-tab="prices" role="tab" aria-selected="true">
+    <button class="tab-btn active" type="button" data-tab="prices" role="tab" aria-selected="true" aria-controls="tab-prices">
       <span class="ic" aria-hidden="true">📈</span><span class="lbl">Prices</span>
     </button>
-    <button class="tab-btn" type="button" data-tab="portfolio" role="tab" aria-selected="false">
+    <button class="tab-btn" type="button" data-tab="portfolio" role="tab" aria-selected="false" aria-controls="tab-portfolio">
       <span class="ic" aria-hidden="true">💼</span><span class="lbl">Portfolio</span>
     </button>
-    <button class="tab-btn" type="button" data-tab="market" role="tab" aria-selected="false">
+    <button class="tab-btn" type="button" data-tab="market" role="tab" aria-selected="false" aria-controls="tab-market">
       <span class="ic" aria-hidden="true">🌍</span><span class="lbl">Market</span>
     </button>
-    <button class="tab-btn" type="button" data-tab="alerts" role="tab" aria-selected="false">
+    <button class="tab-btn" type="button" data-tab="alerts" role="tab" aria-selected="false" aria-controls="tab-alerts">
       <span class="ic" aria-hidden="true">🔔</span><span class="lbl">Alerts</span>
     </button>
-    <button class="tab-btn" type="button" data-tab="wallets" role="tab" aria-selected="false">
+    <button class="tab-btn" type="button" data-tab="wallets" role="tab" aria-selected="false" aria-controls="tab-wallets">
       <span class="ic" aria-hidden="true">👛</span><span class="lbl">Wallets</span>
     </button>
-    <button class="tab-btn" type="button" data-tab="currency" role="tab" aria-selected="false">
+    <button class="tab-btn" type="button" data-tab="currency" role="tab" aria-selected="false" aria-controls="tab-currency">
       <span class="ic" aria-hidden="true">💱</span><span class="lbl">Currency</span>
     </button>
   </nav>

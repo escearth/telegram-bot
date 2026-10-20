@@ -32,48 +32,30 @@ except ImportError:
 _EMOJI_PACKS_ENV = os.getenv('EMOJI_PACKS', 'RestrictedEmoji')
 """Comma-separated short names of custom emoji packs to fetch, e.g. ``RestrictedEmoji,MyPack``"""
 
+_EMOJI_BASE = (
+    '\U0001F000-\U0001FAFF'   # Supplemental symbols/pictographs incl. coin 🪙, folders, dice, flags range
+    '\U00002600-\U00002BFF'   # Misc symbols, Arrows, Dingbats (⚖ ⛽ ✅ ☀ ⚠ ⬜ …)
+    '\U00002100-\U0000214F'   # Letterlike symbols (ℹ …)
+    '\U000023F0-\U000023FF'   # Time symbols (⏰ ⏳ ⏹ …)
+)
+
+# Matches full emoji sequences as ONE token:
+#   - regional-indicator flag pairs
+#   - keycaps (1️⃣ #️⃣ *️⃣)
+#   - single emoji + any run of FE0F / skin-tone modifiers
+#   - ZWJ families (👨‍👩‍👧‍👦) folded into one unit instead of three broken
+#     sub-emojis (the old regex matched each code point separately)
 _EMOJI_RE = re.compile(
     '('
-    '[\U0001F1E6-\U0001F1FF]{2}'   # Flag pairs (2 regional indicators)
-    '|'
-    '['
-    '\U0001F300-\U0001F9FF'   # Misc Symbols, Emoticons, etc.
-    '\U0001FA00-\U0001FAFF'   # Chess Symbols
-    '\U0001F600-\U0001F64F'   # Emoticons
-    '\U0001F680-\U0001F6FF'   # Transport
-    '\U0001F1E0-\U0001F1FF'   # Flags (regional indicators, singles)
-    '\U00002600-\U00002BFF'   # Misc symbols, Arrows, Dingbats
-    '\U000023F0-\U000023FF'   # Time symbols (below U+2600)
-    '\U00002100-\U0000214F'   # Letterlike symbols (ℹ etc.)
-    '\U0001F7E0-\U0001F7FF'   # Geometric shapes extended
-    '\u200d'                  # ZWJ
-    '\u20e3'                  # Combining enclosing keycap
-    '\U0001FA99'              # 🪙 coin
-    '\U0001F5C2'              # 🗂 card index
-    '\U0001F5D1'              # 🗑 wastebasket
-    '\U0001F3CE'              # 🏎 race car
-    '\U0001F32A'              # 🌪 tornado
-    '\U0001F441'              # 👁 eye
-    '\U0001F4CF'              # 📏 ruler
-    '\U0001F550'              # 🕐 clock
-    '\U0001F4CB'              # 📋 clipboard
-    '\U0001F4CD'              # 📍 round pushpin
-    '\u2696'                  # ⚖ scales
-    '\u26FD'                  # ⛽ fuel pump
-    '\u2705'                  # ✅ check
-    '\u270F'                  # ✏ pencil
-    '\u274C'                  # ❌ cross
-    '\u2753'                  # ❓ question
-    '\u2795'                  # ➕ plus
-    '\u2600'                  # ☀ sun
-    '\u26A0'                  # ⚠ warning
-    '\u26A1'                  # ⚡ lightning
-    '\u26D4'                  # ⛔ no entry
-    '\u2934'                  # ⤴ arrow up right
-    '\u2935'                  # ⤵ arrow down right
-    '\u23F3'                  # ⏳ hourglass
-    '\u23F9'                  # ⏹ stop button
-    '])\ufe0f?'
+    '[\U0001F1E6-\U0001F1FF]{2}'          # flag pair (2 regional indicators)
+    r'|[0-9#\*]\ufe0f?\u20e3'             # keycap: digit/symbol + FE0F? + enclosing keycap
+    '|[' + _EMOJI_BASE + ']'
+    '(?:'
+        '\ufe0f'                          # variation selector
+        '|[\U0001F3FB-\U0001F3FF]'        # skin-tone modifiers
+        '|\u200d[' + _EMOJI_BASE + ']'    # ZWJ + next member of the family
+    ')*'
+    ')'
 )
 
 # ---------------------------------------------------------------------------
@@ -138,6 +120,13 @@ _EMOJI_SKIP: set[str] = {
 
 _emoji_map: dict[str, str] = {}         # emoji_char -> document_id string
 _emoji_map_lock = threading.Lock()
+_emoji_map_attempted = False            # a fetch already ran, even if it found nothing
+
+# Telethon writes a .session file for this module; pin it to the module
+# directory so it lands in a stable place regardless of the process CWD.
+_EMOJI_SESSION_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'anon_emoji_fetcher'
+)
 
 
 def _telethon_available() -> bool:
@@ -171,7 +160,7 @@ def _fetch_emoji_map_via_telethon(logger: logging.Logger) -> dict[str, str]:
     mapping: dict[str, str] = {}
     try:
         with telethon.sync.TelegramClient(
-            'anon_emoji_fetcher', int(api_id), api_hash,
+            _EMOJI_SESSION_FILE, int(api_id), api_hash,
         ).start(bot_token=bot_token) as client:
             for short_name in pack_names:
                 try:
@@ -248,16 +237,29 @@ def ensure_emoji_map(logger: logging.Logger | None = None) -> dict[str, str]:
 
     Called once at startup.  Silent fallback if Telethon is missing or
     credentials are not configured.
+
+    The *attempted* flag also caches empty results, so a transient Telethon
+    failure doesn't re-trigger the full multi-pack network fetch on every
+    subsequent emoji message.  The network fetch runs OUTSIDE the lock so
+    concurrent callers are never stalled behind slow RPCs; only the final
+    assignment is locked.
     """
-    global _emoji_map
+    global _emoji_map, _emoji_map_attempted
     with _emoji_map_lock:
-        if _emoji_map:
+        if _emoji_map or _emoji_map_attempted:
             return _emoji_map
-        if _telethon_available():
-            _emoji_map = _fetch_emoji_map_via_telethon(logger or logging.getLogger(__name__))
-        else:
-            if logger:
-                logger.info("emoji_utils: Telethon not installed; emojis will stay plain text")
+
+    fetched: dict[str, str] = {}
+    if _telethon_available():
+        fetched = _fetch_emoji_map_via_telethon(logger or logging.getLogger(__name__))
+    else:
+        if logger:
+            logger.info("emoji_utils: Telethon not installed; emojis will stay plain text")
+
+    with _emoji_map_lock:
+        if not _emoji_map:      # a concurrent fetch may already have populated it
+            _emoji_map = fetched
+        _emoji_map_attempted = True
         return _emoji_map
 
 
@@ -266,29 +268,52 @@ def apply_emoji(text: str) -> str:
 
     Emojis not present in the mapping try ``_EMOJI_FALLBACK`` for a visually
     similar alternative.  If neither has a mapping the character is left as-is.
+    Composite tokens (ZWJ families, FE0F variants) are wrapped member by
+    member — each member keeps any FE0F, so 👨‍👩‍👧‍👦 renders as up to
+    four animated members instead of being split at raw code-point level.
     """
     if not _emoji_map:
         return text
 
+    def _wrap_member(core: str) -> str:
+        """Wrap ONE sequence member (emoji char + any FE0F) if it maps."""
+        # Skip list matches either presentation form
+        if core in _EMOJI_SKIP or core.rstrip('\ufe0f') in _EMOJI_SKIP:
+            return core
+        candidate = core.endswith('\ufe0f') and core[:-1] or core
+        # Exact token first, then text-presentation base (old lookup style)
+        for cand in (core, candidate):
+            eid = _emoji_map.get(cand)
+            if not eid:
+                alts = _EMOJI_FALLBACK.get(cand)
+                if alts:
+                    for alt in alts:
+                        eid = _emoji_map.get(alt)
+                        if eid:
+                            return f'<tg-emoji emoji-id="{eid}">{alt}</tg-emoji>'
+                if eid:
+                    return f'<tg-emoji emoji-id="{eid}">{cand}</tg-emoji>'
+        return core    # no mapping — leave plain
+
     def _replacer(m: re.Match) -> str:
-        ch = m.group(1)          # emoji character (without optional FE0F)
-        if ch in _EMOJI_SKIP:
+        token = m.group(1)
+        if token in _EMOJI_SKIP or token.rstrip('\ufe0f') in _EMOJI_SKIP:
             return m.group(0)
-        # Check flag fallback first (flag pairs aren't in _emoji_map)
-        flag_alt = _FLAG_FALLBACK.get(ch)
+        # Whole token mapped directly (most common case)
+        eid = _emoji_map.get(token)
+        if eid:
+            return f'<tg-emoji emoji-id="{eid}">{token}</tg-emoji>'
+        # Flag fallback (flag pairs aren't in _emoji_map)
+        flag_alt = _FLAG_FALLBACK.get(token)
         if flag_alt:
             eid = _emoji_map.get(flag_alt)
             if eid:
                 return f'<tg-emoji emoji-id="{eid}">{flag_alt}</tg-emoji>'
-        eid = _emoji_map.get(ch)
-        if eid:
-            return f'<tg-emoji emoji-id="{eid}">{ch}</tg-emoji>'
-        alts = _EMOJI_FALLBACK.get(ch)
-        if alts:
-            for alt in alts:
-                eid = _emoji_map.get(alt)
-                if eid:
-                    return f'<tg-emoji emoji-id="{eid}">{alt}</tg-emoji>'
+        # Composite tokens (ZWJ families / FE0F variants): wrap per member
+        if '\u200d' in token or '\ufe0f' in token:
+            wrapped = ''.join(_wrap_member(member) for member in token.split('\u200d'))
+            if wrapped != token:
+                return wrapped
         return m.group(0)        # unchanged (preserves any FE0F in original)
 
     return _EMOJI_RE.sub(_replacer, text)

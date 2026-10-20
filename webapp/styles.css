@@ -18,6 +18,9 @@
   --red: #f85149;
   --red-bg: rgba(248, 81, 73, 0.12);
   --gold: #e3b341;
+  /* Hero cards sit on a fixed dark gradient, so their text stays light even
+     when the rest of the theme (e.g. a light Telegram theme) goes dark. */
+  --hero-text: #e6edf3;
   --header-h: 58px;
   --tabbar-h: 62px;
   --radius: 16px;
@@ -65,6 +68,7 @@ body[dir="rtl"] {
   justify-content: space-between;
   height: calc(var(--header-h) + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) 14px 0;
+  background: #0d1117; /* solid fallback: color-mix() is unsupported on older Android WebViews */
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -212,6 +216,7 @@ body[dir="rtl"] {
   padding: 18px 16px;
   margin-bottom: 12px;
   box-shadow: var(--shadow);
+  color: var(--hero-text, #fff);
 }
 .hero-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .hero-value { font-size: 26px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
@@ -487,6 +492,7 @@ body[dir="rtl"] {
   display: flex;
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
+  background: #161b22; /* solid fallback: color-mix() is unsupported on older Android WebViews */
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -553,6 +559,7 @@ body[dir="rtl"] {
   z-index: 60;
   display: grid;
   place-items: center;
+  background: rgba(13, 17, 23, 0.6); /* solid fallback: color-mix() is unsupported on older Android WebViews */
   background: color-mix(in srgb, var(--bg) 60%, transparent);
 }
 .spinner {

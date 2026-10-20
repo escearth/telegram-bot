@@ -3,6 +3,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import hmac
 import telebot
 from telebot import types
+from telebot.apihelper import ApiTelegramException
 from http import HTTPStatus
 from urllib.parse import parse_qsl, urlparse, unquote, quote as url_quote
 from io import BytesIO
@@ -40,6 +41,9 @@ import json
 import threading
 import functools
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+       sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+       sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import sqlite3
 import hashlib
 from pathlib import Path
@@ -245,7 +249,9 @@ def _is_joined_channel(user_id: int) -> bool | None:
     with _joined_cache_lock:
         if user_id in _joined_cache:
             val, ts = _joined_cache[user_id]
-            if time.time() - ts < 3600 and val is True:
+            # Verified members: cache for an hour. Verified non-members
+            # (False): short TTL so they aren't re-checked on every command.
+            if time.time() - ts < (3600 if val else 300):
                 return val
     try:
         _chat_id = _resolve_channel_id()
@@ -255,7 +261,10 @@ def _is_joined_channel(user_id: int) -> bool | None:
         result = member.status in ('member', 'administrator', 'creator')
     except Exception as e:
         logger.warning(f"Failed to check channel membership for user {user_id}: {e}")
-        result = False
+        # Fail-OPEN on API errors: returning False here blocks real members
+        # with a "join channel" prompt whenever Telegram/the network hiccups.
+        # None = "unknown", and the caller only enforces on an explicit False.
+        return None
     with _joined_cache_lock:
         _joined_cache[user_id] = (result, time.time())
     return result
@@ -280,6 +289,14 @@ def _send_join_required(chat_id: int):
 # ── Animated emoji setup (initialised lazily in start_bot to avoid
 #    import-time network calls to Telegram via Telethon) ───────────────
 _TG_EMOJI_RE = re.compile(r'<tg-emoji[^>]*>|</tg-emoji>')
+
+def _strip_html_tags(text: str) -> str:
+    """Remove known inline HTML tags (<b>, <i>, <code>, <pre>, <a...>, <tg-emoji>, blockquote)
+    so a message can be re-sent as plain text when HTML parsing fails."""
+    return re.sub(
+        r'</?(?:b|i|u|s|code|pre|a\b[^>]*|tg-emoji[^>]*|blockquote)?>',
+        '', text
+    )
 
 def _strip_emoji_tags(text: str) -> str:
     """Remove <tg-emoji ...> and </tg-emoji> tags, leaving the emoji char."""
@@ -1050,6 +1067,15 @@ def _fetch_prices_coincap(ids) -> dict:
 
 BINANCE_SKIP = {'tether', 'telegram-stars'}
 
+# Internal id → exchange ticker symbol, shared by the price providers
+# (Binance batch fetch, CryptoCompare fallback, exchange listing…).
+EXCHANGE_SYMBOL_MAP = {
+    'bitcoin': 'BTC', 'ethereum': 'ETH', 'tether': 'USDT',
+    'binancecoin': 'BNB', 'cardano': 'ADA', 'ripple': 'XRP',
+    'solana': 'SOL', 'polkadot': 'DOT', 'dogecoin': 'DOGE',
+    'shiba-inu': 'SHIB', 'tron': 'TRX', 'the-open-network': 'TON',
+}
+
 
 def _fetch_prices_binance(ids) -> dict:
     try:
@@ -1265,20 +1291,9 @@ def _format_cached_group_result(query_type: str, raw_data, user_id: int, text_lo
                 f"📊 <b>{name}</b>\n\n"
                 f"💵 <b>{fmt_price(price_usd)}</b>" + (f"\n{toman_line}" if toman_line else "")
             )
-    elif query_type == 'wallet_check':
+    elif query_type in ('wallet_check', 'tx_check'):
         # raw_data can be string (old format) or dict with chain-specific data
-        if isinstance(raw_data, dict):
-            # New format: {'tron': '...', 'ton': '...'}
-            parts = []
-            if 'tron' in raw_data:
-                parts.append(f"🔗 <b>TRON</b>\n{raw_data['tron']}")
-            if 'ton' in raw_data:
-                parts.append(f"💎 <b>TON</b>\n{raw_data['ton']}")
-            return add_timestamp("\n\n".join(parts))
-        # Old format: string
-        return add_timestamp(raw_data)
-    elif query_type == 'tx_check':
-        # raw_data can be string (old format) or dict with chain-specific data
+        # (both query types render identically — one shared branch)
         if isinstance(raw_data, dict):
             # New format: {'tron': '...', 'ton': '...'}
             parts = []
@@ -1398,6 +1413,17 @@ def _get_me():
     return _me_cache
 
 
+def _bot_username_tag() -> str:
+    """'@username' for the running bot, resolved at runtime — the hardcoded
+    literal used to break whenever the bot was renamed."""
+    try:
+        me = _get_me()
+        un = getattr(me, 'username', None)
+        return f"@{un}" if un else ""
+    except Exception:
+        return ""
+
+
 def _classify_group_query(text_lower: str) -> str:
     """Classify a group plain-text query to determine rate limiting policy.
     Returns query type: 'crypto_price', 'fiat_conversion', 'math', 'wallet_check',
@@ -1416,14 +1442,19 @@ def _classify_group_query(text_lower: str) -> str:
     if text_lower.startswith('/'):
         return 'command'
     
-    # Crypto price queries (btc, eth, 10 trx, etc.)
-    if re.match(r'^([A-Za-z]{3,10}|\d+(?:\.\d+)?\s+[A-Za-z]{3,10})$', text_lower):
-        # Single symbol or amount + symbol
-        parts = text_lower.split()
-        if len(parts) == 1 and parts[0] in CRYPTO_ALIASES:
-            return 'crypto_price'
-        elif len(parts) == 2 and parts[1] in CRYPTO_ALIASES:
-            return 'crypto_price'
+    # Crypto price queries (btc, eth, 10 trx, Persian aliases like "بیت کوین")
+    parts = text_lower.split()
+    if len(parts) == 1 and parts[0] in CRYPTO_ALIASES:
+        return 'crypto_price'
+    if len(parts) == 2 and parts[1] in CRYPTO_ALIASES \
+            and (parts[0].isdigit() or re.match(r'^[A-Za-z]{3,10}$', parts[0])):
+        return 'crypto_price'
+    # Multi-word Persian aliases (e.g. "بیت کوین") never match the ASCII-only
+    # regex above, so check the whole phrase directly: the alias membership
+    # itself is the real allowlist, the format was only a cheap pre-filter.
+    if len(parts) in (1, 2) and text_lower in CRYPTO_ALIASES \
+            and re.match(r'^[\w\s\u0600-\u06FF]{2,40}$', text_lower):
+        return 'crypto_price'
     
     # Fiat conversion (100 usd to toman, etc.)
     if re.match(r'^([\d.,۰-۹٬٫]+)?\s*(\$|usd|dollar|دلار|lira|tl|try|₺|eur|euro|€|gbp|pound|£|aed|dirham|درهم|cny|yuan|یوآن)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال|usd|\$)?$', text_lower):
@@ -1465,7 +1496,9 @@ def _looks_like_bot_query(message):
     """Cheap pre-filter mirroring handle_text's matching rules. Used in groups
     so a reply to the bot only counts as bot-directed when it's a real query
     (coin symbol, math, fx rate, address, tx hash, state-machine input...)."""
-    user_id = message.from_user.id
+    user_id = message.from_user.id if message.from_user else 0
+    if not user_id:
+        return False
     if get_user_state(user_id):
         return True
     text_original = (message.text or '').strip()
@@ -1547,7 +1580,10 @@ def _is_bot_directed_group_message(message):
         return True  # fail-open: if we can't verify, don't block the bot
 
     if text.startswith('/'):
-        cmd = text[1:].split()[0].split('@')[0].lower()
+        parts = text[1:].split()
+        if not parts:
+            return False  # bare "/" — nothing to classify
+        cmd = parts[0].split('@')[0].lower()
         return cmd in KNOWN_COMMANDS
 
     if username and ('@' + username.lower()) in text.lower():
@@ -1571,7 +1607,10 @@ def _ignore_unknown_command(message):
     text = message.text or ''
     if not text.startswith('/'):
         return False
-    cmd = text[1:].split()[0].split('@')[0].lower()
+    parts = text[1:].split()
+    if not parts:
+        return False  # bare "/" — not a known command
+    cmd = parts[0].split('@')[0].lower()
     if not cmd.isalpha():
         return False  # let slash-math etc. fall through to normal handling
     return cmd not in KNOWN_COMMANDS
@@ -1588,7 +1627,11 @@ def rate_limit_check(func):
     @functools.wraps(func)
     def wrapper(message, *args, **kwargs):
         global _last_memory_cleanup
-        user_id = message.from_user.id
+        # Channel/anonymous messages mirrored into supergroups have no
+        # from_user — don't crash on them.
+        user_id = message.from_user.id if message.from_user else 0
+        if not user_id:
+            return  # anonymous senders can't be rate-limited or joined-checked
         chat_id = message.chat.id
 
         # In groups, fully ignore messages that aren't meant for the bot
@@ -1667,10 +1710,14 @@ def rate_limit_check(func):
             record_group_user_request(chat_id, user_id)
 
         try:
-            result = func(message, *args, **kwargs)
-            return result
+            return func(message, *args, **kwargs)
         finally:
-            pass
+            # Record AFTER the handler completes so slow commands don't
+            # inflate the rate-limit window (matches the docstrings).
+            if is_command:
+                record_user_request(user_id)
+            elif is_group:
+                record_group_user_request(chat_id, user_id)
     return wrapper
 
 
@@ -1773,7 +1820,7 @@ STRINGS = {
             "<code>/deleteaccount</code> — delete all your data</blockquote>\n\n"
             "⚡ <b>Just type:</b> <code>btc</code>, <code>10 eth</code>, <code>100 usd</code>\n\n"
             "💖 /donate · 🔒 /privacy · 🌐 /language\n"
-            "<i>Inline:</i> <code>@EscEarthBot</code> in any chat 🚀",
+            "<i>Inline:</i> <code>{bot_username}</code> in any chat 🚀",
 
         # ── /language ─────────────────────────────────────────
         'btn_english':         "🇬🇧 English",
@@ -2157,7 +2204,7 @@ STRINGS = {
             "<code>/digest</code> — تنظیمات خلاصه روزانه\n"
             "<code>/alert</code> — تنظیم هشدار قیمت جدید\n"
             "<code>/alerts</code> — مدیریت هشدارهای شما\n"
-            "<code>/wallets</code> — مدیریت آدرس‌های ترون و تان\n"
+            "<code>/wallets</code> — مدیریت آدرس‌های ترون و تون\n"
             "<code>/mywallets</code> — موجودی زنده کیف پول‌ها\n"
             "<code>/clearwallets</code> — حذف همه کیف پول‌ها</blockquote>\n\n"
             "⚙️ <b>تنظیمات و موارد دیگر</b>\n"
@@ -2168,7 +2215,7 @@ STRINGS = {
             "<code>/deleteaccount</code> — حذف همه داده‌های شما</blockquote>\n\n"
             "⚡ <b>فقط تایپ کنید:</b> <code>btc</code>، <code>10 eth</code>، <code>100 usd</code>\n\n"
             "💖 /donate · 🔒 /privacy · 🌐 /language\n"
-            "<i>اینلاین:</i> <code>@EscEarthBot</code> در هر چتی 🚀",
+            "<i>اینلاین:</i> <code>{bot_username}</code> در هر چتی 🚀",
 
         # ── /language ─────────────────────────────────────────
         'btn_english':         "🇬🇧 English",
@@ -2192,7 +2239,7 @@ STRINGS = {
             "Earth Crypto اطلاعات زیر را مرتبط با شناسه تلگرام شما ذخیره می‌کند:\n\n"
             "• <b>دارایی‌ها</b> - مقادیر ارز که از طریق /set یا /holdings وارد کردید\n"
             "• <b>قیمت خرید</b> - میانگین قیمت خرید برای محاسبه سود/زیان\n"
-            "• <b>کیف پول‌ها</b> - آدرس‌های ترون و تان که اضافه کردید\n"
+            "• <b>کیف پول‌ها</b> - آدرس‌های ترون و تون که اضافه کردید\n"
             "• <b>هشدارها</b> - اهداف قیمتی که تنظیم کردید\n"
             "• <b>تنظیمات خلاصه</b> - وضعیت و زمان خلاصه روزانه\n"
             "• <b>زبان</b> - زبان انتخابی شما\n\n"
@@ -2222,7 +2269,7 @@ STRINGS = {
         'wallets_header':      "👛 <b>کیف پول‌های ذخیره‌شده</b>\n",
         'wallet_added':        "✅ <b>کیف پول اضافه شد!</b>\n\n<code>{address}</code>\n\nشما {count}/{max} کیف پول دارید.",
         'wallet_limit':        "⚠️ به حداکثر تعداد کیف پول ({max}) رسیدید.\nاول یکی را با /wallets حذف کنید.",
-        'wallet_invalid':      "❌ <b>آدرس نامعتبر</b>\n\n<code>{address}</code>\n\nفرمت‌های پشتیبانی‌شده:\n• <b>ترون</b> — با <b>T</b> شروع می‌شود، ۳۴ کاراکتر\n• <b>تان</b> — با <b>EQ</b> یا <b>UQ</b> شروع می‌شود، ۴۸ کاراکتر\n\nلطفاً دوباره بررسی کنید.",
+        'wallet_invalid':      "❌ <b>آدرس نامعتبر</b>\n\n<code>{address}</code>\n\nفرمت‌های پشتیبانی‌شده:\n• <b>ترون</b> — با <b>T</b> شروع می‌شود، ۳۴ کاراکتر\n• <b>تون</b> — با <b>EQ</b> یا <b>UQ</b> شروع می‌شود، ۴۸ کاراکتر\n\nلطفاً دوباره بررسی کنید.",
         'wallet_already_saved':"⚠️ این کیف پول قبلاً ذخیره شده.",
         'wallet_not_found':    "کیف پول پیدا نشد - لیست ممکن است تغییر کرده باشد.",
         'wallet_removed_toast':"✅ کیف پول حذف شد.",
@@ -2232,7 +2279,7 @@ STRINGS = {
         'btn_add_wallet':      "➕ افزودن کیف پول",
         'btn_close':           "❌ بستن",
         'btn_remove':          "🗑 حذف",
-        'send_wallet_addr':    "🔗 آدرس کیف پول ترون یا تان خود را بفرستید:\n(یا /cancel برای لغو)",
+        'send_wallet_addr':    "🔗 آدرس کیف پول ترون یا تون خود را بفرستید:\n(یا /cancel برای لغو)",
         'no_balance':          "❌ موجودی برای این آدرس یافت نشد.",
         'trx_balance':         "👛 موجودی TRX: {bal} TRX",
         'tron_timeout':        "⏳ درخواست منقضی شد. دوباره امتحان کنید.",
@@ -2280,18 +2327,18 @@ STRINGS = {
         'updated_at':          "آپدیت در {time}",
 
         # ── /usd ──────────────────────────────────────────────
-        'usd_rate':            "<blockquote>💵 <b>1 USD = {rate} Toman</b></blockquote>",
+        'usd_rate':            "<blockquote>💵 <b>1 دلار = {rate} تومان</b></blockquote>",
         'usd_conversion':      "💵 <b>{amount} دلار = {result} تومان</b>",
         'rate_unavailable':    "⚠️ نرخ دلار در دسترس نیست. بعداً امتحان کنید.",
 
         # ── /try (لیر ترکیه) ──────────────────────────────────
-        'try_rate':            "<blockquote>🇹🇷 <b>1 TRY = {rate} Toman</b></blockquote>",
+        'try_rate':            "<blockquote>🇹🇷 <b>1 لیر = {rate} تومان</b></blockquote>",
 
         # ── /eur /gbp /aed /cny (نرخ ارز) ─────────────────────
-        'eur_rate':            "<blockquote>🇪🇺 <b>1 EUR = {rate} Toman</b></blockquote>",
-        'gbp_rate':            "<blockquote>🇬🇧 <b>1 GBP = {rate} Toman</b></blockquote>",
-        'aed_rate':            "<blockquote>🇦🇪 <b>1 AED = {rate} Toman</b></blockquote>",
-        'cny_rate':            "<blockquote>🇨🇳 <b>1 CNY = {rate} Toman</b></blockquote>",
+        'eur_rate':            "<blockquote>🇪🇺 <b>1 یورو = {rate} تومان</b></blockquote>",
+        'gbp_rate':            "<blockquote>🇬🇧 <b>1 پوند = {rate} تومان</b></blockquote>",
+        'aed_rate':            "<blockquote>🇦🇪 <b>1 درهم = {rate} تومان</b></blockquote>",
+        'cny_rate':            "<blockquote>🇨🇳 <b>1 یوآن = {rate} تومان</b></blockquote>",
 
         # ── /gold (طلا) ───────────────────────────────────────
         'gold_global':         "🌍 <b>طلای جهانی</b>\nXAU/USD: ${xau}/oz",
@@ -2323,7 +2370,7 @@ STRINGS = {
         'compare_header':      "📊 <b>مقایسه</b>\n",
         'compare_pick1':       "📊 <b>مقایسه ارزها</b>\n\nارز <b>اول</b> را انتخاب کنید:",
         'compare_pick2':       "📊 <b>مقایسه ارزها</b>\n\n✅ اول: <b>{sym}</b>\n\nحالا ارز <b>دوم</b> را انتخاب کنید:",
-        'compare_vol':         "📦 Vol 24h: {vol}\n",
+        'compare_vol':         "📦 حجم ۲۴س: {vol}\n",
         'compare_mcap':        "🏦 ارزش بازار: {mcap}",
         'compare_winner':      "\n🏆 <b>{name}</b> در ۲۴ ساعت گذشته بهتر عمل کرد",
         'compare_tied':        "\n🤝 <b>مساوی</b> - عملکرد یکسان در ۲۴ ساعت",
@@ -2470,8 +2517,8 @@ STRINGS = {
         'price_toman_line':    "💰 {irr} تومان\n",
         'inline_usd_toman':    "دلار → تومان",
         'inline_toman_usd':    "تومان → دلار",
-        'usd_simple':          "1 USD = {rate} Toman",
-        'usd_amount':          "{amount} USD = {rate} Toman",
+        'usd_simple':          "1 دلار = {rate} تومان",
+        'usd_amount':          "{amount} دلار = {rate} تومان",
 
         # ── Exchange / Chart / Trending ───────────────────────
         'exch_set':            "✅ منبع قیمت پیش‌فرض به <b>{name}</b> تغییر یافت",
@@ -2605,6 +2652,14 @@ def _raw_ton_to_user_friendly(raw_address: str) -> str:
     Convert raw TON address (workchain:hex) to user-friendly format (EQ/UQ...).
     Raw format: '0:38f5db3c0c772023befbd23ea0a8e62d26995c003078d146f57a7e7f41b3edc6'
     User-friendly: 'UQA49ds8DHcgI7770j6gqOYtJplcADB40Ub1en5_QbPtxoFU'
+
+    Known limitation (deliberate, not a bug): a raw API address carries no
+    bounceable/non-bounceable flag, so it is impossible to tell whether the
+    source string started with EQ or UQ. We always emit the NON-bounceable
+    'UQ...' encoding (tag 0x51) because that is what regular wallets display
+    for their own accounts. Both encodings refer to the SAME account — only
+    the flag byte differs — so balances and transfers are unaffected; the
+    string just may not byte-identically match the user's EQ-prefixed copy.
     """
     if not raw_address or ':' not in raw_address:
         return raw_address
@@ -2657,14 +2712,23 @@ def _raw_ton_to_user_friendly(raw_address: str) -> str:
         return raw_address
 
 
+_TON_ADDR_RE = re.compile(r'^(?:EQ|UQ)[A-Za-z0-9+/_-]{46}$')
+_TRON_ADDR_RE = re.compile(r'^T[1-9A-HJ-NP-Za-km-z]{33}$')
+
+
 def detect_wallet_chain(address: str) -> str | None:
     """Detect blockchain from wallet address format.
-    Returns 'tron', 'ton', or None if unrecognised."""
+    Returns 'tron', 'ton', or None if unrecognised.
+
+    Character-class validation matters here: these addresses are interpolated
+    into API URLs (toncenter/tonapi/tronscan), so an unvalidated "address"
+    like 'EQaaaa...&x=1' would let a forged string add query parameters.
+    """
     if not address:
         return None
-    if len(address) == 34 and address.startswith('T'):
+    if _TRON_ADDR_RE.fullmatch(address):
         return 'tron'
-    if len(address) == 48 and address[:2] in ('EQ', 'UQ'):
+    if _TON_ADDR_RE.fullmatch(address):
         return 'ton'
     return None
 
@@ -2744,6 +2808,9 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
     """
     # Try TonViewer API first (most accurate)
     try:
+        # Transaction hashes must be plain hex before they may appear in a URL
+        if not re.fullmatch(r'[0-9a-fA-F]{64}', str(hash_value)):
+            return "❌ Invalid transaction hash."
         url = f"https://tonapi.io/v2/blockchain/transactions/{hash_value}"
         headers = {'accept': 'application/json'}
         response = session.get(url, headers=headers, timeout=10)
@@ -2753,7 +2820,7 @@ def _format_ton_transaction(hash_value, user_id: int = 0, inline: bool = False):
         # Parse transaction
         lt = data.get('lt', 'N/A')
         utime = data.get('utime', 0)
-        time_str = datetime.fromtimestamp(utime).strftime('%Y-%m-%d %H:%M:%S') if utime else 'N/A'
+        time_str = datetime.fromtimestamp(utime, IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S') if utime else 'N/A'
         
         # Get account info
         account = data.get('account', {})
@@ -2952,7 +3019,7 @@ def _get_ton_tx_fallback(hash_value, user_id: int = 0, inline: bool = False):
         
         # Parse transaction
         utime = tx.get('utime', 0)
-        time_str = datetime.fromtimestamp(utime).strftime('%Y-%m-%d %H:%M:%S') if utime else 'N/A'
+        time_str = datetime.fromtimestamp(utime, IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S') if utime else 'N/A'
         
         # Get addresses
         account_addr = tx.get('account', 'N/A')
@@ -3107,12 +3174,7 @@ def get_crypto_price(crypto_id, cache_only=False):
     
     # 3) CryptoCompare
     try:
-        sym_map = {
-            'bitcoin': 'BTC', 'ethereum': 'ETH', 'tether': 'USDT', 'binancecoin': 'BNB',
-            'cardano': 'ADA', 'ripple': 'XRP', 'solana': 'SOL', 'polkadot': 'DOT',
-            'dogecoin': 'DOGE', 'shiba-inu': 'SHIB', 'tron': 'TRX', 'the-open-network': 'TON'
-        }
-        sym = sym_map.get(crypto_id)
+        sym = EXCHANGE_SYMBOL_MAP.get(crypto_id)
         if sym:
             resp = session.get(f"https://min-api.cryptocompare.com/data/price?fsym={sym}&tsyms=USD", timeout=8)
             if resp.status_code == 200 and 'USD' in resp.json():
@@ -3124,13 +3186,6 @@ def get_crypto_price(crypto_id, cache_only=False):
     
     return None
 
-
-EXCHANGE_SYMBOL_MAP = {
-    'bitcoin': 'BTC', 'ethereum': 'ETH', 'tether': 'USDT',
-    'binancecoin': 'BNB', 'cardano': 'ADA', 'ripple': 'XRP',
-    'solana': 'SOL', 'polkadot': 'DOT', 'dogecoin': 'DOGE',
-    'shiba-inu': 'SHIB', 'tron': 'TRX', 'the-open-network': 'TON',
-}
 
 EXCHANGES = {
     'binance': {
@@ -3329,7 +3384,7 @@ def get_crypto_chart_image(crypto_id, days=30, user_id=0):
         # Downsample to ~120 points for the URL API to keep it light
         step = max(1, len(prices) // 120)
         sliced_prices = prices[::step]
-        sliced_dates = [datetime.fromtimestamp(ts / 1000).strftime('%b %d') for ts in timestamps[::step]]
+        sliced_dates = [datetime.fromtimestamp(ts / 1000, IRAN_TZ).strftime('%b %d') for ts in timestamps[::step]]
         
         # Use Chart.js v4+ compatible config (QuickChart supports this)
         chart_config = {
@@ -3558,7 +3613,10 @@ def get_usd_to_irr():
         logger.error(f"Error fetching USD/IRR: {e}")
 
     logger.warning("All USD/IRR sources failed - rate unavailable.")
-    if OWNER_USER_ID:
+    # Notify the owner at most once per outage — the 3s API cooldown would
+    # otherwise turn this into one DM every ~3 seconds under load.
+    if OWNER_USER_ID and not cache_get('usd_irr_outage_notified'):
+        cache_set('usd_irr_outage_notified', True, ttl=900)
         try:
             bot.send_message(
                 OWNER_USER_ID,
@@ -3787,6 +3845,16 @@ def evaluate_math(expression, user_id: int = 0):
         if sanitized.strip() in ['+', '-', '*', '/', '(', ')', '+-', '--', '**', '//']:
             return T(user_id, 'invalid_expression')
 
+        # Guard against CPU DoS: simpleeval computes huge exponent chains
+        # (e.g. "9**9**9" -> an astronomically large int) instantly exceeding
+        # any digit budget.  Reject chained exponentiation (right-assoc => the
+        # top exponent explodes) and any single exponent that is large.
+        if sanitized.count('**') > 1:
+            return T(user_id, 'invalid_expression')
+        for _m in re.finditer(r'\*\*\s*(\d+)', sanitized):
+            if len(_m.group(1)) > 6 or int(_m.group(1)) > 1000:
+                return T(user_id, 'invalid_expression')
+
         # Evaluate safely using simpleeval
         try:
             result = simple_eval(sanitized)
@@ -3810,6 +3878,9 @@ def evaluate_math(expression, user_id: int = 0):
 # ─────────────────────────────────────────────
 def get_tron_wallet_trx(address, user_id: int = 0):
     try:
+        # Only plain base58 TRON addresses may reach the API URL
+        if not _TRON_ADDR_RE.fullmatch(str(address)):
+            return "❌ Invalid TRON address."
         url = f"https://apilist.tronscan.org/api/account?address={address}"
         response = session.get(url, timeout=10)
         response.raise_for_status()
@@ -3859,6 +3930,9 @@ def get_tron_transaction_details_inline(hash_value, user_id: int = 0):
 
 def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False):
     try:
+        # Transaction hashes must be plain hex before they may appear in a URL
+        if not re.fullmatch(r'[0-9a-fA-F]{64}', str(hash_value)):
+            return "❌ Invalid transaction hash."
         url = f"https://apilist.tronscan.org/api/transaction-info?hash={hash_value}"
         response = session.get(url, timeout=10)
         response.raise_for_status()
@@ -3866,7 +3940,7 @@ def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False)
         if not data or 'hash' not in data:
             return T(user_id, 'tx_not_found')
         timestamp = data.get('timestamp', 0)
-        time_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S') if timestamp else 'N/A'
+        time_str = datetime.fromtimestamp(timestamp / 1000, IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S') if timestamp else 'N/A'
         confirmed = data.get('confirmed', False)
         # TRON transaction status: confirmed=true -> success, confirmed=false -> pending
         # Check for failed/rejected status
@@ -3884,8 +3958,11 @@ def _format_tron_transaction(hash_value, user_id: int = 0, inline: bool = False)
             status_emoji = '⏳'
             status_text = T(user_id, 'tx_pending')
             
-        block = data.get('block', 'N/A')
-        
+        # Block may be missing; use a numeric default so f"{block:,}" never
+        # hits ValueError (the old 'N/A' string default crashed the formatter
+        # and the transaction fell through to the generic error).
+        block = data.get('block') or 0
+
         hash_escaped = html.escape(str(hash_value))
         
         if inline:
@@ -4033,7 +4110,8 @@ def start(message):
             return
     bot.send_message(
         message.chat.id,
-        T(user_id, 'start_welcome', name=name),
+        T(user_id, 'start_welcome', name=name,
+          bot_username=_bot_username_tag()),
         parse_mode='HTML'
     )
     logger.info(f"User {user_id} started the bot")
@@ -4294,6 +4372,25 @@ def _answer_call(call, text: str | None = None, show_alert: bool = False, **kwar
         logger.debug(f"answerCallbackQuery failed for {call_id}")
 
 
+def _edit_call(call, text, reply_markup=None):
+    """Edit the message a callback came from (HTML mode).
+
+    Replaces the ~20 copy-pasted try/edit/except blocks: failures are logged
+    and ignored (the chat already shows either the old message or the
+    fallback toast sent by the caller).
+    """
+    try:
+        bot.edit_message_text(
+            text,
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.debug(f"Failed to edit message: {e}")
+
+
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     if call.message is None:
@@ -4331,7 +4428,8 @@ def handle_callback(call):
             else:
                 bot.send_message(
                     call.message.chat.id,
-                    T(user_id, 'start_welcome', name=name),
+                    T(user_id, 'start_welcome', name=name,
+                      bot_username=_bot_username_tag()),
                     parse_mode='HTML'
                 )
         else:
@@ -4346,18 +4444,12 @@ def handle_callback(call):
         
         set_user_state(user_id, 'admin_broadcast')
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                "📢 <b>Broadcast Message</b>\n\n"
+        _edit_call(
+        "📢 <b>Broadcast Message</b>\n\n"
                 "Send the message you want to broadcast to all users.\n\n"
                 "<i>This will be sent to ALL users who have used the bot.</i>\n\n"
-                "To cancel, send /cancel",
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML'
-            )
-        except:
-            pass
+                "To cancel, send /cancel"
+        )
         return
     
     if data == "admin_clear_cache":
@@ -4411,15 +4503,9 @@ def handle_callback(call):
             msg += f"  {sym}: {count} alerts\n"
         
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                add_timestamp(msg),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML'
-            )
-        except:
-            pass
+        _edit_call(
+        add_timestamp(msg)
+        )
         return
     
     # ⭐ SECURITY: Check panel ownership (except for language selection)
@@ -4455,7 +4541,8 @@ def handle_callback(call):
         name = call.from_user.first_name or "there"
         bot.send_message(
             call.message.chat.id,
-            T(user_id, 'start_welcome', name=name),
+            T(user_id, 'start_welcome', name=name,
+              bot_username=_bot_username_tag()),
             parse_mode='HTML'
         )
         logger.info(f"User {user_id} set language to {lang}")
@@ -4465,30 +4552,12 @@ def handle_callback(call):
     if data.startswith("cvt1_"):
         from_cid = data[5:]
         from_sym = _sym(from_cid)
-        coins = list(CRYPTO_LIST.keys()) + ['usd', 'toman']
-        rows = []
-        row = []
-        for cid in coins:
-            if cid == from_cid:
-                continue
-            sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt2_{from_cid}_{cid}"))
-            if len(row) == 3:
-                rows.append(row)
-                row = []
-        if row:
-            rows.append(row)
+        # Second-leg picker: crypto coins + usd + toman, minus the chosen coin
+        picker_coins = [c for c in list(CRYPTO_LIST.keys()) + ['usd', 'toman']
+                        if c != from_cid]
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'convert_step2', sym=from_sym),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=types.InlineKeyboardMarkup(rows)
-            )
-        except Exception:
-            pass
+        kb = _coin_picker_keyboard(f"cvt2_{from_cid}_", coins=picker_coins)
+        _edit_call(T(user_id, 'convert_step2', sym=from_sym), reply_markup=kb)
         return
 
     if data.startswith("cvt2_"):
@@ -4497,18 +4566,11 @@ def handle_callback(call):
         to_sym   = _sym(to_cid)
         set_user_state(user_id, f"convert_{from_cid}_{to_cid}")
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'convert_step3', from_sym=from_sym, to_sym=to_sym),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=types.InlineKeyboardMarkup([[
+        _edit_call(
+        T(user_id, 'convert_step3', from_sym=from_sym, to_sym=to_sym), reply_markup=types.InlineKeyboardMarkup([[
                     types.InlineKeyboardButton(T(user_id, "btn_cvt_cancel"), callback_data="cvt_cancel")
                 ]])
-            )
-        except Exception:
-            pass
+        )
         return
 
     if data == "cvt_cancel":
@@ -4524,18 +4586,11 @@ def handle_callback(call):
     if data == "stars_calc":
         set_user_state(user_id, 'stars_amount')
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'stars_prompt'),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=types.InlineKeyboardMarkup([[
+        _edit_call(
+        T(user_id, 'stars_prompt'), reply_markup=types.InlineKeyboardMarkup([[
                     types.InlineKeyboardButton(T(user_id, "btn_cvt_cancel"), callback_data="stars_cancel")
                 ]])
-            )
-        except Exception:
-            pass
+        )
         return
 
     if data == "stars_cancel":
@@ -4559,29 +4614,12 @@ def handle_callback(call):
     # ── Compare coin picker (step 1 & 2) ─────────────────────────────
     if data.startswith("cmp1_"):
         cid1 = data[5:]
-        filtered = [cid for cid in CRYPTO_LIST if cid != cid1]
-        rows = []
-        row = []
-        for cid in filtered:
-            sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp2_{cid1}_{cid}"))
-            if len(row) == 3:
-                rows.append(row)
-                row = []
-        if row:
-            rows.append(row)
+        # Second-leg picker: exclude the already-chosen coin
         sym1 = _sym(cid1)
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'compare_pick2', sym=sym1),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=types.InlineKeyboardMarkup(rows)
-            )
-        except Exception:
-            pass
+        kb = _coin_picker_keyboard(f"cmp2_{cid1}_",
+                                   coins=[cid for cid in CRYPTO_LIST if cid != cid1])
+        _edit_call(T(user_id, 'compare_pick2', sym=sym1), reply_markup=kb)
         return
 
     if data.startswith("cmp2_"):
@@ -4618,21 +4656,13 @@ def handle_callback(call):
 
     if data == "alrt_new":
         _answer_call(call)
-        coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
-        rows = []
-        for i in range(0, len(coins), 3):
-            row = []
-            for cid in coins[i:i+3]:
-                sym = _sym(cid)
-                row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}"))
-            rows.append(row)
-        rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")])
+        kb = _coin_picker_keyboard("alrt1_", cancel="alrt_cancel", user_id=user_id)
         try:
             bot.send_message(
                 call.message.chat.id,
                 T(user_id, 'alert_step1'),
                 parse_mode='HTML',
-                reply_markup=types.InlineKeyboardMarkup(rows)
+                reply_markup=kb
             )
         except Exception:
             pass
@@ -4653,16 +4683,9 @@ def handle_callback(call):
             types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel"),
         ]])
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'alert_step2', sym=sym, price=price_str),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=kb
-            )
-        except Exception:
-            pass
+        _edit_call(
+        T(user_id, 'alert_step2', sym=sym, price=price_str), reply_markup=kb
+        )
         return
 
     if data.startswith("alrt2_"):
@@ -4671,24 +4694,22 @@ def handle_callback(call):
             _answer_call(call, T(user_id, 'invalid_data'))
             return
         cid, direction = parts[1], parts[2]
+        # Callback data is user-forgeable: validate both fields before the
+        # coin id reaches get_crypto_price / the CoinGecko query string.
+        if cid not in CRYPTO_LIST or direction not in ("above", "below"):
+            _answer_call(call, T(user_id, 'invalid_data'))
+            return
         sym = _sym(cid)
         price = get_crypto_price(cid)
         price_str = fmt_price(price) if price else "-"
         arrow = "📈" if direction == "above" else "📉"
         set_user_state(user_id, f"alert_price_{cid}_{direction}")
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'alert_step3', sym=sym, price=price_str, arrow=arrow, direction=direction),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=types.InlineKeyboardMarkup([[
+        _edit_call(
+        T(user_id, 'alert_step3', sym=sym, price=price_str, arrow=arrow, direction=direction), reply_markup=types.InlineKeyboardMarkup([[
                     types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")
                 ]])
-            )
-        except Exception:
-            pass
+        )
         return
 
     if data == "show_alerts":
@@ -4751,7 +4772,14 @@ def handle_callback(call):
         return
 
     if data.startswith("wrem_"):
-        idx = int(data.split("_")[1])
+        parts = data.split("_")
+        idx_str = parts[1] if len(parts) > 1 else ''
+        # String isdigit guard — negative indices must not be accepted:
+        # "wrem_-1" used to delete the LAST wallet.
+        if not idx_str.isdigit():
+            _answer_call(call, T(user_id, 'invalid_data'))
+            return
+        idx = int(idx_str)
         wallets = db_get_wallets(user_id)
         if idx >= len(wallets):
             _answer_call(call, T(user_id, 'wallet_not_found'))
@@ -4760,16 +4788,9 @@ def handle_callback(call):
         db_remove_wallet(user_id, address)
         logger.info(f"User {user_id} removed wallet {address[:6]}…{address[-4:]}")
         wallets = db_get_wallets(user_id)
-        try:
-            bot.edit_message_text(
-                wallets_message_text(wallets),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=build_wallets_keyboard(wallets)
-            )
-        except Exception as e:
-            logger.debug(f"Failed to edit message: {e}")
+        _edit_call(
+        wallets_message_text(wallets, user_id), reply_markup=build_wallets_keyboard(wallets, user_id)
+        )
         _answer_call(call, T(user_id, 'wallet_removed_toast'))
         return
 
@@ -4809,21 +4830,20 @@ def handle_callback(call):
         kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(T(user_id, 'btn_refresh'), callback_data="refresh_all_prices")
         ]])
-        try:
-            bot.edit_message_text(
-                add_timestamp(text),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=kb
-            )
-        except Exception:
-            pass
+        _edit_call(
+        add_timestamp(text), reply_markup=kb
+        )
         return
 
     # Price refresh button on chart messages
     if data.startswith("refresh_"):
         crypto = data[len("refresh_"):]
+        # Callback data is user-forgeable: only allow real coin ids here,
+        # otherwise an unknown id flows straight into the CoinGecko query
+        # string and pollutes the cache (alrt1_/hpick_/chart_ already do this).
+        if crypto not in CRYPTO_LIST:
+            _answer_call(call, T(user_id, 'unknown_coin', sym=crypto))
+            return
         allowed, msg = is_refresh_allowed(user_id)
         if not allowed:
             _answer_call(call, msg, show_alert=True)
@@ -4866,21 +4886,16 @@ def handle_callback(call):
             c.execute("DELETE FROM wallets     WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM alerts      WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM digest_prefs WHERE user_id=?", (user_id,))
+            c.execute("DELETE FROM exchange_prefs WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM user_languages WHERE user_id=?", (user_id,))
             conn.commit()
         del_user_state(user_id)
         with _lang_cache_lock:
             _lang_cache.pop(user_id, None)
         logger.info(f"GDPR delete: all data removed for user {user_id}")
-        try:
-            bot.edit_message_text(
-                T(user_id, 'delete_done'),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML'
-            )
-        except Exception:
-            pass
+        _edit_call(
+        T(user_id, 'delete_done')
+        )
         return
 
     if data == "gdpr_delete_cancel":
@@ -4898,9 +4913,9 @@ def handle_callback(call):
         buy_prices = db_get_buy_prices(user_id)
         bot.send_message(
             call.message.chat.id,
-            holdings_message_text(saved, usd_to_irr, buy_prices),
+            holdings_message_text(saved, usd_to_irr, buy_prices, user_id),
             parse_mode='HTML',
-            reply_markup=build_holdings_keyboard(saved)
+            reply_markup=build_holdings_keyboard(saved, user_id)
         )
         return
 
@@ -4909,9 +4924,9 @@ def handle_callback(call):
         wallets = db_get_wallets(user_id)
         bot.send_message(
             call.message.chat.id,
-            wallets_message_text(wallets),
+            wallets_message_text(wallets, user_id),
             parse_mode='HTML',
-            reply_markup=build_wallets_keyboard(wallets)
+            reply_markup=build_wallets_keyboard(wallets, user_id)
         )
         return
 
@@ -4928,16 +4943,9 @@ def handle_callback(call):
         holdings = db_get_holdings(user_id) or {}
         usd_to_irr = get_usd_to_irr()
         buy_prices = db_get_buy_prices(user_id)
-        try:
-            bot.edit_message_text(
-                holdings_message_text(holdings, usd_to_irr, buy_prices),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=build_holdings_keyboard(holdings)
-            )
-        except Exception:
-            pass
+        _edit_call(
+        holdings_message_text(holdings, usd_to_irr, buy_prices), reply_markup=build_holdings_keyboard(holdings)
+        )
         _answer_call(call, T(user_id, "holding_removed_toast", sym=symbol))
         return
 
@@ -5021,18 +5029,11 @@ def handle_callback(call):
         price_str = T(user_id, 'now_price', price=fmt_price(price)) if price else ""
         set_user_state(user_id, f"hpick_amount_{cid}")
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'coin_amount_prompt', sym=sym, price=price_str),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=types.InlineKeyboardMarkup([[
+        _edit_call(
+        T(user_id, 'coin_amount_prompt', sym=sym, price=price_str), reply_markup=types.InlineKeyboardMarkup([[
                     types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="hpick_cancel")
                 ]])
-            )
-        except Exception:
-            pass
+        )
         return
 
     if data == "hadd":
@@ -5063,16 +5064,12 @@ def handle_callback(call):
         with get_db_conn() as conn:
             c = conn.cursor()
             c.execute("DELETE FROM holdings WHERE user_id=?", (user_id,))
+            # Also clear buy prices — otherwise P&L rows are orphaned
+            c.execute("DELETE FROM buy_prices WHERE user_id=?", (user_id,))
             conn.commit()
-        try:
-            bot.edit_message_text(
-                T(user_id, 'holdings_cleared'),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML'
-            )
-        except Exception:
-            pass
+        _edit_call(
+        T(user_id, 'holdings_cleared')
+        )
         return
 
     if data == "hclearall_cancel":
@@ -5093,16 +5090,9 @@ def handle_callback(call):
         kb = types.InlineKeyboardMarkup(row_width=4)
         kb.add(*[types.InlineKeyboardButton(d, callback_data=f"chart_{cid}_{d}") for d in CHART_DAYS])
         _answer_call(call)
-        try:
-            bot.edit_message_text(
-                T(user_id, 'chart_pick_days', sym=sym),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=kb
-            )
-        except Exception:
-            pass
+        _edit_call(
+        T(user_id, 'chart_pick_days', sym=sym), reply_markup=kb
+        )
         return
 
     # ── Chart range selector ──────────────────────────────────
@@ -5110,6 +5100,10 @@ def handle_callback(call):
         parts = data.split("_", 2)
         if len(parts) == 3:
             _, crypto, days_label = parts
+            if days_label not in CHART_DAYS:
+                # Forgeable callback data — never echo it back into HTML
+                _answer_call(call, T(user_id, 'invalid_data'))
+                return
             days = CHART_DAYS.get(days_label, 30)
             _answer_call(call, T(user_id, 'generating_chart'))
             # Show loading message that will be replaced
@@ -5136,6 +5130,12 @@ def handle_callback(call):
                         chat_id=call.message.chat.id, message_id=call.message.message_id,
                         reply_markup=kb
                     )
+                    if loading_msg:
+                        try:
+                            bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+                        except Exception:
+                            pass
+                    return  # media edited in place — do NOT send a duplicate photo
                 else:
                     # Not a photo message - replace entirely
                     try:
@@ -5169,18 +5169,16 @@ def handle_callback(call):
     # ── Exchange selector ─────────────────────────────────────
     if data.startswith("setex_"):
         exch = data.split("_", 1)[1]
-        if exch in EXCHANGES or exch == 'coingecko':
-            set_user_exchange(user_id, exch)
-            name = EXCHANGE_NAMES.get(exch, 'CoinGecko')
-            _answer_call(call, f"✅ Source set to {name}")
-            try:
-                bot.edit_message_text(
-                    f"✅ Default price source set to <b>{name}</b>",
-                    chat_id=call.message.chat.id, message_id=call.message.message_id,
-                    parse_mode='HTML'
-                )
-            except Exception as e:
-                logger.debug(f"Failed to edit message: {e}")
+        if exch not in EXCHANGES and exch != 'coingecko':
+            # Always clear the loading spinner, even on unknown values
+            _answer_call(call, T(user_id, 'invalid_data'))
+            return
+        set_user_exchange(user_id, exch)
+        name = EXCHANGE_NAMES.get(exch, 'CoinGecko')
+        _answer_call(call, f"✅ Source set to {name}")
+        _edit_call(
+        f"✅ Default price source set to <b>{name}</b>"
+        )
         return
 
     _answer_call(call)
@@ -5215,14 +5213,27 @@ def show_wallets_with_balance(message):
         bot.reply_to(message, T(user_id, 'no_wallets_yet'))
         return
     bot.send_chat_action(message.chat.id, 'typing')
-    lines = []
     # Shared, bounded pool: reusing one executor avoids the thread churn that a
     # fresh ThreadPoolExecutor per /mywallets call causes under load (a steady
     # stream of short-lived commands can otherwise hit "can't start new thread").
     fut_map = {_WALLET_BALANCE_EXECUTOR.submit(get_wallet_balance, addr, user_id): addr for addr in wallets}
+    results = {}
     for fut in concurrent.futures.as_completed(fut_map):
         addr = fut_map[fut]
-        balance_msg = fut.result()
+        try:
+            results[addr] = fut.result()
+        except Exception as e:
+            # One failing wallet used to abort the entire reply — degrade
+            # gracefully and keep the rest of the balances visible.
+            logger.error(f"Wallet balance failed for {addr[:6]}…: {e}")
+            results[addr] = T(user_id, 'tx_error')
+    # Render in stored order (as_completed = arrival order, which used to
+    # scramble the wallet list on every view).
+    lines = []
+    for addr in wallets:
+        balance_msg = results.get(addr)
+        if balance_msg is None:
+            continue
         icon = _wallet_chain_icon(addr)
         # Add space between address and balance for better readability
         lines.append(f"{icon} <code>{html.escape(addr)}</code>\n\n {balance_msg}")
@@ -5283,6 +5294,12 @@ def price(message):
     prices = _fetch_prices_batch(ids)
     if not prices:
         bot.reply_to(message, T(message.from_user.id, 'price_unavailable'))
+        # Don't leave the "Fetching prices..." bubble behind on failure
+        if loading_msg:
+            try:
+                bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+            except Exception:
+                pass
         return
 
     uid_p = message.from_user.id
@@ -5291,19 +5308,21 @@ def price(message):
     kb = types.InlineKeyboardMarkup([[
         types.InlineKeyboardButton(T(uid_p, 'btn_refresh'), callback_data="refresh_all_prices")
     ]])
-    # Edit the loading message with results
+    # Edit the loading message with results (keep the refresh button —
+    # refresh_all_prices expects this message to already carry it)
     if loading_msg:
         try:
             bot.edit_message_text(
                 add_timestamp(text),
                 chat_id=loading_msg.chat.id,
                 message_id=loading_msg.message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                reply_markup=kb
             )
         except Exception:
             pass
     else:
-        bot.reply_to(message, add_timestamp(text), parse_mode='HTML')
+        bot.reply_to(message, add_timestamp(text), parse_mode='HTML', reply_markup=kb)
     logger.info(f"User {message.from_user.id} requested prices")
 
 
@@ -5484,19 +5503,8 @@ def _stars_price_lines(uid, stars_price, count=1, header=None):
 
 def _show_holding_coin_picker(chat_id, prompt, user_id=0):
     """Show coin picker buttons for add/set holding flows."""
-    coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
-    rows = []
-    row = []
-    for cid in coins:
-        sym = _sym(cid)
-        row.append(types.InlineKeyboardButton(sym, callback_data=f"hpick_{cid}"))
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="hpick_cancel")])
-    bot.send_message(chat_id, prompt, parse_mode='HTML', reply_markup=types.InlineKeyboardMarkup(rows))
+    kb = _coin_picker_keyboard("hpick_", cancel="hpick_cancel", user_id=user_id)
+    bot.send_message(chat_id, prompt, parse_mode='HTML', reply_markup=kb)
 
 
 @bot.message_handler(commands=['set'])
@@ -5531,24 +5539,15 @@ def holdings(message):
 @loading_indicator
 def convert_cmd(message):
     # Always show the interactive coin picker
-    coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars'] + ['usd', 'toman']
-    rows = []
-    row = []
-    for cid in coins:
-        sym = _sym(cid)
-        row.append(types.InlineKeyboardButton(sym, callback_data=f"cvt1_{cid}"))
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
+    picker_coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars'] + ['usd', 'toman']
+    kb = _coin_picker_keyboard("cvt1_", coins=picker_coins)
 
     uid_cv = message.from_user.id
     msg = bot.reply_to(
         message,
         T(uid_cv, 'convert_step1'),
         parse_mode='HTML',
-        reply_markup=types.InlineKeyboardMarkup(rows)
+        reply_markup=kb
     )
     register_panel_owner(message.chat.id, msg.message_id, message.from_user.id)
 
@@ -5598,22 +5597,12 @@ def chart_cmd(message):
     uid = message.from_user.id
 
     # Always show the coin picker (buttons)
-    coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
-    rows = []
-    row = []
-    for cid in coins:
-        sym = _sym(cid)
-        row.append(types.InlineKeyboardButton(sym, callback_data=f"chr1_{cid}"))
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
+    kb = _coin_picker_keyboard("chr1_")
     msg = bot.reply_to(
         message,
         T(uid, 'chart_pick_coin'),
         parse_mode='HTML',
-        reply_markup=types.InlineKeyboardMarkup(rows)
+        reply_markup=kb
     )
     register_panel_owner(message.chat.id, msg.message_id, uid)
 
@@ -5716,10 +5705,12 @@ def _fetch_gainers_losers():
         coins = resp.json()
         coins = [c for c in coins if c.get('price_change_percentage_24h') is not None]
         coins.sort(key=lambda c: c['price_change_percentage_24h'], reverse=True)
-        return {
+        data = {
             'gainers': coins[:5],
             'losers': coins[-5:][::-1],
         }
+        cache_set('gainers_losers', data, ttl=TRENDING_CACHE_TTL)
+        return data
     except Exception as e:
         logger.error(f"Gainers/losers fetch failed: {e}")
         return None
@@ -6519,7 +6510,9 @@ def inline_query_handler(inline_query):
 @loading_indicator
 def alert_cmd(message):
     user_id = message.from_user.id
-    parts = message.text.strip().split()
+    # Normalize Persian/Arabic digits so "۱۰۰۰۰۰" works the same as "100000"
+    # (the text-state paths already do this; the direct command form did not).
+    parts = _normalize_persian(message.text).strip().split()
 
     # Direct: /alert BTC 100000  or  /alert BTC above 100000
     if len(parts) >= 3:
@@ -6541,21 +6534,13 @@ def alert_cmd(message):
         bot.reply_to(message, T(message.from_user.id, 'alert_limit', max=MAX_ALERTS_PER_USER), parse_mode='HTML')
         return
 
-    coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
-    rows = []
-    for i in range(0, len(coins), 3):
-        row = []
-        for cid in coins[i:i+3]:
-            sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"alrt1_{cid}"))
-        rows.append(row)
-    rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'), callback_data="alrt_cancel")])
+    kb = _coin_picker_keyboard("alrt1_", cancel=True, user_id=user_id)
 
     msg = bot.reply_to(
         message,
         T(user_id, 'alert_step1'),
         parse_mode='HTML',
-        reply_markup=types.InlineKeyboardMarkup(rows)
+        reply_markup=kb
     )
     register_panel_owner(message.chat.id, msg.message_id, user_id)
 
@@ -6670,23 +6655,40 @@ def list_alerts(message):
 @loading_indicator
 def compare_cmd(message):
     # Always show the coin picker (buttons)
-    coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
-    rows = []
-    for i in range(0, len(coins), 3):
-        row = []
-        for cid in coins[i:i+3]:
-            sym = _sym(cid)
-            row.append(types.InlineKeyboardButton(sym, callback_data=f"cmp1_{cid}"))
-        rows.append(row)
+    kb = _coin_picker_keyboard("cmp1_")
 
     msg = bot.reply_to(
         message,
         T(message.from_user.id, 'compare_pick1'),
         parse_mode='HTML',
-        reply_markup=types.InlineKeyboardMarkup(rows)
+        reply_markup=kb
     )
     # Register panel owner
     register_panel_owner(message.chat.id, msg.message_id, message.from_user.id)
+
+
+def _coin_picker_keyboard(prefix: str, coins=None, cancel=None,
+                          user_id: int = 0) -> types.InlineKeyboardMarkup:
+    """Standard coin-picker grid: 3 buttons per row, each button labelled with
+    the coin symbol and firing callback ``prefix + <coin_id>``.
+
+    ``coins``   — optional coin-id list (defaults to CRYPTO_LIST minus
+                 telegram-stars)
+    ``cancel``  — optional callback_data for a trailing cancel row, labelled
+                 with T(user_id, 'btn_cancel')
+    """
+    if coins is None:
+        coins = [c for c in CRYPTO_LIST.keys() if c != 'telegram-stars']
+    rows = []
+    for i in range(0, len(coins), 3):
+        rows.append([
+            types.InlineKeyboardButton(_sym(cid), callback_data=f"{prefix}{cid}")
+            for cid in coins[i:i + 3]
+        ])
+    if cancel:
+        rows.append([types.InlineKeyboardButton(T(user_id, 'btn_cancel'),
+                                                callback_data=cancel)])
+    return types.InlineKeyboardMarkup(rows)
 
 
 def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
@@ -6717,7 +6719,16 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
             cid = raw.lower()
         if cid not in CRYPTO_LIST:
             uid_tmp = user_id or getattr(getattr(message, "from_user", None), "id", 0)
-            bot.send_message(chat_id, T(uid_tmp, 'unknown_coin', sym=raw), parse_mode='HTML')
+            bot.send_message(
+                chat_id,
+                T(uid_tmp, 'unknown_coin', sym=html.escape(raw)),
+                parse_mode='HTML'
+            )
+            if loading_msg:
+                try:
+                    bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+                except Exception:
+                    pass
             return
         ids.append(cid)
         names.append(_sym(cid))
@@ -6846,11 +6857,18 @@ def market_cmd(message, user_id=None, edit_msg_id=None):
         g = cache_get('market_global_data_stale')
     if not g:
         bot.send_message(message.chat.id, T(uid_m, 'market_unavailable'))
+        # Don't leave the stale "Fetching market data…" bubble on screen
+        if loading_msg:
+            try:
+                bot.delete_message(loading_msg.chat.id, loading_msg.message_id)
+            except Exception:
+                pass
         return
 
     try:
         fg_resp = session.get("https://api.alternative.me/fng/?limit=1", timeout=8)
-        fg_data = fg_resp.json().get('data', [{}])[0]
+        _fg_list = fg_resp.json().get('data') or [{}]
+        fg_data = _fg_list[0] if _fg_list else {}
         fg_val   = int(fg_data.get('value', 50))
         fg_label_raw = fg_data.get('value_classification', '?')
         fg_label_map = {
@@ -6976,7 +6994,7 @@ def run_tests(message):
     def fail(text, detail=""):
         nonlocal failed
         failed += 1
-        d = f" - {detail}" if detail else ""
+        d = f" - {html.escape(str(detail))}" if detail else ""
         results.append(f"  ❌ {text}{d}")
 
     def section(title):
@@ -7171,9 +7189,14 @@ def run_tests(message):
 
     report = "🔬 <b>Bot Diagnostic Report</b>\n" + "\n".join(results)
 
-    # Split long messages (Telegram 4096 limit)
+    # Split long messages (Telegram 4096 limit).  Fixed-width HTML chunks can
+    # split a tag mid-way and Telegram then rejects the whole message with a
+    # 400, so fall back to plain text for that chunk on parse errors.
     for chunk in [report[i:i+4000] for i in range(0, len(report), 4000)]:
-        bot.send_message(chat_id, chunk, parse_mode='HTML')
+        try:
+            bot.send_message(chat_id, chunk, parse_mode='HTML')
+        except Exception:
+            bot.send_message(chat_id, _strip_html_tags(chunk))
 
 @bot.message_handler(commands=['admin'])
 @rate_limit_check
@@ -7269,40 +7292,46 @@ def _handle_text_state(message, user_id, text, text_lower, text_original, state)
         from telebot.apihelper import ApiTelegramException
 
         broadcast_msg = message.text
-        sent_count = 0
-        failed_count = 0
-        
-        bot.reply_to(message, f"📢 Broadcasting to {len(all_users)} users...")
-        
-        for target_user in all_users:
-            for attempt in range(3):
-                try:
-                    bot.send_message(target_user, broadcast_msg, parse_mode='HTML')
-                    sent_count += 1
-                    time.sleep(0.033)
-                    break
-                except ApiTelegramException as e:
-                    if 'retry after' in str(e).lower():
-                        wait = re.search(r'(\d+)', str(e))
-                        wait_sec = int(wait.group(1)) + 1 if wait else 5
-                        logger.warning(f"Flood wait {wait_sec}s for user {target_user}")
-                        time.sleep(wait_sec)
-                        continue
-                    failed_count += 1
-                    logger.error(f"Broadcast failed for user {target_user}: {e}")
-                    break
-                except Exception as e:
-                    failed_count += 1
-                    logger.error(f"Broadcast failed for user {target_user}: {e}")
-                    break
 
-        bot.send_message(
-            message.chat.id,
-            f"✅ <b>Broadcast Complete</b>\n\n"
-            f"Sent: {sent_count}\n"
-            f"Failed: {failed_count}",
-            parse_mode='HTML'
-        )
+        bot.reply_to(message, f"📢 Broadcasting to {len(all_users)} users...")
+
+        # Run in a dedicated thread: the sequential per-user loop takes many
+        # minutes for large user bases and used to stall the entire polling
+        # thread (every other user request queued behind it).
+        def _broadcast_worker():
+            sent_count = 0
+            failed_count = 0
+            for target_user in all_users:
+                for attempt in range(3):
+                    try:
+                        bot.send_message(target_user, broadcast_msg, parse_mode='HTML')
+                        sent_count += 1
+                        time.sleep(0.033)
+                        break
+                    except ApiTelegramException as e:
+                        if 'retry after' in str(e).lower():
+                            wait = re.search(r'(\d+)', str(e))
+                            wait_sec = int(wait.group(1)) + 1 if wait else 5
+                            logger.warning(f"Flood wait {wait_sec}s for user {target_user}")
+                            time.sleep(wait_sec)
+                            continue
+                        failed_count += 1
+                        logger.error(f"Broadcast failed for user {target_user}: {e}")
+                        break
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"Broadcast failed for user {target_user}: {e}")
+                        break
+
+            bot.send_message(
+                message.chat.id,
+                f"✅ <b>Broadcast Complete</b>\n\n"
+                f"Sent: {sent_count}\n"
+                f"Failed: {failed_count}",
+                parse_mode='HTML'
+            )
+
+        threading.Thread(target=_broadcast_worker, daemon=True, name='BroadcastWorker').start()
         return True
 
     # Adding a wallet via the inline ➕ button
@@ -7380,7 +7409,7 @@ def _handle_text_state(message, user_id, text, text_lower, text_original, state)
                 raise ValueError("non-positive")
         except ValueError:
             bot.reply_to(message, T(user_id, 'stars_invalid'), parse_mode='HTML')
-            return  # keep state so user can retry
+            return True  # keep state so user can retry
         del_user_state(user_id)
         bot.send_chat_action(message.chat.id, 'typing')
         stars_price = get_crypto_price('telegram-stars')
@@ -7412,7 +7441,7 @@ def _handle_text_state(message, user_id, text, text_lower, text_original, state)
                 raise ValueError("Negative")
         except ValueError:
             bot.reply_to(message, T(user_id, 'invalid_amount'), parse_mode='HTML')
-            return  # keep state so user can retry
+            return True  # keep state so user can retry
         del_user_state(user_id)
         saved = db_get_holdings(user_id) or {}
         # FIX: Overwrite instead of add for /set command
@@ -7448,9 +7477,9 @@ def _handle_text_state(message, user_id, text, text_lower, text_original, state)
         buy_prices = db_get_buy_prices(user_id)
         bot.reply_to(
             message,
-            holdings_message_text(saved, usd_to_irr, buy_prices),
+            holdings_message_text(saved, usd_to_irr, buy_prices, user_id),
             parse_mode='HTML',
-            reply_markup=build_holdings_keyboard(saved)
+            reply_markup=build_holdings_keyboard(saved, user_id)
         )
         return True
 
@@ -7463,7 +7492,7 @@ def _handle_text_state(message, user_id, text, text_lower, text_original, state)
                 raise ValueError
         except ValueError:
             bot.reply_to(message, T(user_id, 'invalid_amount'))
-            return  # keep state so user can retry
+            return True  # keep state so user can retry
         saved = db_get_holdings(user_id) or {}
         saved[symbol] = new_amount
         db_set_holdings(user_id, saved)
@@ -8077,16 +8106,9 @@ def _handle_alert_callbacks(call, data, user_id):
                 types.InlineKeyboardButton(T(user_id, 'btn_add_alert'),  callback_data="alrt_new"),
                 types.InlineKeyboardButton(T(user_id, 'btn_delete_all'), callback_data="alertdelall"),
             ])
-            try:
-                bot.edit_message_text(
-                    text,
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    parse_mode='HTML',
-                    reply_markup=types.InlineKeyboardMarkup(keyboard)
-                )
-            except Exception:
-                pass
+            _edit_call(
+            text, reply_markup=types.InlineKeyboardMarkup(keyboard)
+            )
         _answer_call(call, T(user_id, 'alert_deleted'))
         return True
 
@@ -8144,36 +8166,22 @@ def _handle_alert_callbacks(call, data, user_id):
         enabled = pref['enabled']
         hour    = pref['hour']
         status  = T(user_id, 'digest_enabled') if enabled else T(user_id, 'digest_disabled')
-        try:
-            bot.edit_message_text(
-                T(user_id, 'digest_header') +
-                T(user_id, 'digest_status', status=status, hour=f"{hour:02d}"),
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='HTML',
-                reply_markup=_build_digest_keyboard(enabled, hour, user_id)
-            )
-        except Exception:
-            pass
+        _edit_call(
+        T(user_id, 'digest_header') +
+                T(user_id, 'digest_status', status=status, hour=f"{hour:02d}"), reply_markup=_build_digest_keyboard(enabled, hour, user_id)
+        )
         return True
 
     return False
 
 
-def _check_alert_condition(alert: dict, current_price: float) -> bool:
-    """Check if an alert condition is met."""
-    if alert['direction'] == 'above':
-        return current_price >= alert['target_price']
-    else:  # below
-        return current_price <= alert['target_price']
-
-
 def _send_digest_to_user(user_id: int):
-    """Send daily digest to a specific user."""
+    """Send daily digest to a specific user. Returns True when the message
+    was actually sent (used by the scheduler to mark the slot as done)."""
     try:
         saved = db_get_holdings(user_id)
         if not saved:
-            return
+            return True  # nothing to send — the slot is "done" either way
         usd_to_irr = get_usd_to_irr()
         buy_prices = db_get_buy_prices(user_id)
 
@@ -8215,14 +8223,16 @@ def _send_digest_to_user(user_id: int):
             lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr=f"{total_irr:,.0f}"))
         else:
             lines.append(_T_cached(user_id, 'digest_total', usd=fmt_price(total_usd), irr="N/A"))
-        lines.append(f"\n<i>📅 {datetime.now(pytz.utc).strftime('%b %d, %Y  %H:%M UTC')}</i>")
+        lines.append(f"\n<i>📅 {datetime.now(IRAN_TZ).strftime('%b %d, %Y  %H:%M')} (Tehran)</i>")
         kb = types.InlineKeyboardMarkup([[
             types.InlineKeyboardButton(_T_cached(user_id, 'btn_portfolio'), callback_data="show_holdings"),
             types.InlineKeyboardButton(_T_cached(user_id, 'btn_alerts'),    callback_data="show_alerts"),
         ]])
         bot.send_message(user_id, "\n".join(lines), parse_mode='HTML', reply_markup=kb)
+        return True
     except Exception as e:
         logger.error(f"Digest send failed for user {user_id}: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────
@@ -8236,18 +8246,14 @@ def _check_alerts_once():
         unique_ids = list({a['crypto_id'] for a in alerts})
         price_map: dict[str, float] = {}
         try:
-            resp = session.get(
-                f"https://api.coingecko.com/api/v3/simple/price"
-                f"?ids={','.join(unique_ids)}&vs_currencies=usd",
-                timeout=10
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                for cid in unique_ids:
-                    p = data.get(cid, {}).get('usd')
-                    if p:
-                        price_map[cid] = p
-                        cache_set(cid, p)
+            # Use the shared rate-limited batch fetcher instead of a raw
+            # CoinGecko call that competed with user traffic for the rate budget.
+            batch = _fetch_prices_batch(','.join(unique_ids)) or {}
+            for cid in unique_ids:
+                p = (batch.get(cid) or {}).get('usd')
+                if p:
+                    price_map[cid] = p
+                    cache_set(cid, p)
         except Exception as e:
             logger.warning(f"Alert checker batch fetch failed: {e} - falling back to cache")
             # Fall back to individually cached values
@@ -8281,31 +8287,33 @@ def _check_alerts_once():
                         parse_mode='HTML',
                         reply_markup=kb
                     )
+                    # Delete on permanent errors too: a 403 (user blocked the
+                    # bot) used to retry forever, logging an error every cycle.
+                    db_delete_alert_by_id(a['id'])
                     logger.info(
                         f"Alert {a['id']} fired for user {a['user_id']}: "
                         f"{a['symbol']} {a['direction']} {fmt_price(a['target_price'])}"
                     )
-                    db_delete_alert_by_id(a['id'])
+                except ApiTelegramException as e:
+                    err = str(e).lower()
+                    if 'bot was blocked' in err or 'chat not found' in err or 'forbidden' in err \
+                            or getattr(e, 'error_code', None) == 403:
+                        logger.info(
+                            f"User {a['user_id']} blocked the bot; removing alert {a['id']}"
+                        )
+                        db_delete_alert_by_id(a['id'])
+                    else:
+                        logger.error(f"Could not send alert to user {a['user_id']}: {e}")
                 except Exception as e:
                     logger.error(f"Could not send alert to user {a['user_id']}: {e}")
 
 
-def _alert_checker_loop():
-    logger.info("Alert checker thread started.")
-    while True:
-        try:
-            _check_alerts_once()
-        except Exception as e:
-            logger.error(f"Alert checker error: {e}", exc_info=True)
-        time.sleep(60)
-
-
 # ─────────────────────────────────────────────
 # Background: daily digest sender
+# (the old dedicated _alert_checker_loop/_digest_loop threads were removed —
+#  the unified _background_scheduler_loop below owns both jobs now, and
+#  accidentally starting both would double-fire alerts/digests)
 # ─────────────────────────────────────────────
-_send_digest = _send_digest_to_user
-
-
 _digest_last_sent: dict = {}  # user_id -> "YYYY-MM-DD HH" of last send
 
 
@@ -8320,18 +8328,12 @@ def _run_digests_once():
     for u in db_get_all_digest_users():
         uid, hour = u['user_id'], u['hour']
         if now.hour == hour and _digest_last_sent.get(uid) != slot:
-            _digest_last_sent[uid] = slot
-            threading.Thread(target=_send_digest_to_user, args=(uid,), daemon=True).start()
-
-
-def _digest_loop():
-    logger.info("Daily digest thread started.")
-    while True:
-        try:
-            _run_digests_once()
-        except Exception as e:
-            logger.error(f"Digest loop error: {e}")
-        time.sleep(60)
+            # Mark the slot only AFTER the send succeeds — otherwise a failed
+            # send silently skips the user's digest for that hour slot.
+            def _send_and_mark(uid=uid, slot=slot):
+                if _send_digest_to_user(uid):
+                    _digest_last_sent[uid] = slot
+            threading.Thread(target=_send_and_mark, daemon=True).start()
 
 
 def global_exception_handler(exc_type, exc_value, exc_traceback):
@@ -8638,6 +8640,8 @@ def _webapp_alerts(uid):
 
 def _webapp_trx_balance(address):
     try:
+        if not _TRON_ADDR_RE.fullmatch(str(address)):
+            return None
         resp = session.get(f'https://apilist.tronscan.org/api/account?address={address}', timeout=10)
         if resp.status_code != 200:
             return None
@@ -8650,6 +8654,8 @@ def _webapp_trx_balance(address):
 
 def _webapp_ton_balance(address):
     try:
+        if not _TON_ADDR_RE.fullmatch(str(address)):
+            return None
         resp = session.get(f'https://toncenter.com/api/v2/getAddressInformation?address={address}', timeout=10)
         if resp.status_code != 200:
             return None
@@ -8856,50 +8862,34 @@ def start_webapp_server():
         port = base_port + attempt
         try:
             logger.info(f"Starting WebApp server on port {port} (attempt {attempt + 1}/{max_retries})")
-            threading.Thread(
-                target=lambda p=port: waitress.serve(
-                    _webapp_wsgi,
-                    host=WEBAPP_HOST,
-                    port=p,
-                    clear_untrusted_proxy_headers=True,
-                    threads=4,
-                    _quiet=True
-                ),
-                daemon=True,
-                name='WebAppServer'
-            ).start()
-            logger.info(f"WebApp server listening on http://{WEBAPP_HOST}:{port} (Waitress WSGI)")
-            return None
+            # create_server() binds the socket HERE, inside this try block, so
+            # a busy port raises instead of dying silently inside the thread
+            # (waitress.serve() inside a thread made the old except dead code,
+            # and the Linux-only errno==98 check also broke on Windows).
+            server = waitress.create_server(
+                _webapp_wsgi,
+                host=WEBAPP_HOST,
+                port=port,
+                clear_untrusted_proxy_headers=True,
+                threads=4,
+                _quiet=True
+            )
         except OSError as e:
-            if e.errno == 98:  # Address already in use
-                logger.warning(f"Port {port} already in use, trying next port...")
-                if attempt < max_retries - 1:
-                    time.sleep(0.5)  # Brief pause before retry
-                    continue
-            logger.error(f"WebApp server failed to start: {e}")
+            logger.warning(f"Port {port} not usable ({e}), trying next port...")
+            if attempt < max_retries - 1:
+                time.sleep(0.5)  # Brief pause before retry
+                continue
+            logger.error(f"Failed to start WebApp server after {max_retries} attempts")
             raise
+        threading.Thread(
+            target=server.run,
+            daemon=True,
+            name='WebAppServer'
+        ).start()
+        logger.info(f"WebApp server listening on http://{WEBAPP_HOST}:{port} (Waitress WSGI)")
+        return None
     logger.error(f"Failed to start WebApp server after {max_retries} attempts")
     return None
-
-
-def _webapp_cache_warmer_loop():
-    """Runs every 5 minutes to fetch prices and market data so they stay warm for webapp users."""
-    logger.info("WebApp cache warmer thread started.")
-    while True:
-        try:
-            # Re-warm prices batch cache (usually done when a user opens the app)
-            ids = ','.join(k for k in CRYPTO_LIST if k != 'telegram-stars')
-            batch = _fetch_prices_batch(ids)
-            
-            # Re-warm sparklines cache
-            _webapp_sparklines(CRYPTO_LIST)
-            
-            # Re-warm global market cache
-            _fetch_coingecko_global()
-        except Exception as e:
-            logger.error(f"WebApp cache warmer failed: {e}")
-        time.sleep(300)
-
 
 
 # ─────────────────────────────────────────────
