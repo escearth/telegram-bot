@@ -1947,6 +1947,11 @@ STRINGS = {
         'wallet_not_found':    "Wallet not found - list may have changed.",
         'wallet_header_tron':  "👛 <b>TRON Wallet</b>\n",
         'wallet_header_ton':   "👛 <b>TON Wallet</b>\n",
+        'wallet_group_tron':   "🔗 <b>TRON</b>",
+        'wallet_group_ton':    "💎 <b>TON</b>",
+        'wallet_menu_tron':    "🔗 TRON",
+        'wallet_menu_ton':     "💎 TON",
+        'wallet_menu_all':     "👥 All",
         'wallet_removed_toast':"✅ Wallet removed.",
         'no_wallets_yet':      "⚠️ No saved wallets yet.\nUse /wallets to manage them.",
         'wallets_balances_hdr':"👛 <b>Wallets &amp; Balances</b>\n\n",
@@ -2205,6 +2210,7 @@ STRINGS = {
         'cur_current':         "💱 Current display currency: <b>{name}</b>\n\nPick the currency shown under every price:",
         'cur_set':             "✅ Default display currency set to <b>{name}</b>",
         'cur_unknown':         "❌ Unknown currency. Available: <code>{list}</code>",
+        'fiat_to_cur':         "<blockquote>{flag} <b>{amount} {src} = {result} {dst}</b></blockquote>",
 
         # ── /clearwallets ────────────────────────────────────
         'clearwallets_prompt': "⚠️ <b>Remove all saved wallets?</b>\n\nThis deletes every TRON &amp; TON address you saved.\nTheir balances are NOT affected — only this bot forgets them.\n\nThis cannot be undone.",
@@ -2374,6 +2380,11 @@ STRINGS = {
         'wallet_not_found':    "کیف پول پیدا نشد - لیست ممکن است تغییر کرده باشد.",
         'wallet_header_tron':  "👛 <b>کیف پول ترون</b>\n",
         'wallet_header_ton':   "👛 <b>کیف پول تون</b>\n",
+        'wallet_group_tron':   "🔗 <b>ترون</b>",
+        'wallet_group_ton':    "💎 <b>تون</b>",
+        'wallet_menu_tron':    "🔗 ترون",
+        'wallet_menu_ton':     "💎 تون",
+        'wallet_menu_all':     "👥 همه",
         'wallet_removed_toast':"✅ کیف پول حذف شد.",
         'no_wallets_yet':      "⚠️ هنوز کیف پولی ذخیره نشده.\nاز /wallets برای مدیریت استفاده کنید.",
         'wallets_balances_hdr':"👛 <b>کیف پول‌ها و موجودی</b>\n\n",
@@ -2632,6 +2643,7 @@ STRINGS = {
         'cur_current':         "💱 ارز نمایش فعلی: <b>{name}</b>\n\nارزی که زیر هر قیمت نمایش داده می‌شود را انتخاب کنید:",
         'cur_set':             "✅ ارز نمایش پیش‌فرض به <b>{name}</b> تغییر یافت",
         'cur_unknown':         "❌ ارز ناشناخته. گزینه‌های معتبر: <code>{list}</code>",
+        'fiat_to_cur':         "<blockquote>{flag} <b>{amount} {src} = {result} {dst}</b></blockquote>",
 
         # ── /clearwallets ────────────────────────────────────
         'clearwallets_prompt': "⚠️ <b>همه کیف پول‌های ذخیره‌شده حذف شوند؟</b>\n\nاین کار همه آدرس‌های ترون و تون ذخیره‌شده را پاک می‌کند.\nموجودی خود کیف پول‌ها تغییری نمی‌کند — فقط این ربات آن‌ها را فراموش می‌کند.\n\nاین عمل قابل بازگشت نیست.",
@@ -4061,6 +4073,35 @@ def usd_to_fiat(usd_amount, toman_per_unit, decimals: int = 2, usd_to_irr=None):
         return None
 
 
+def _rate_to_toman(code: str):
+    """Toman per 1 unit of a fiat code ('usd'|'try'|'eur'|'gbp'|'aed'|'cny')."""
+    getters = {
+        'usd': get_usd_to_irr, 'try': get_try_to_irr, 'eur': get_eur_to_irr,
+        'gbp': get_gbp_to_irr, 'aed': get_aed_to_irr, 'cny': get_cny_to_irr,
+    }
+    getter = getters.get(code.lower())
+    return getter() if getter else None
+
+
+def _fiat_to_fiat(amount, src_code: str, dst_code: str):
+    """Convert a fiat amount from one currency into another via Toman rates.
+    Returns Decimal or None when a rate is unavailable."""
+    src_rate = _rate_to_toman(src_code)
+    dst_rate = _rate_to_toman(dst_code)
+    if not src_rate or not dst_rate:
+        return None
+    try:
+        return Decimal(str(amount)) * Decimal(str(src_rate)) / Decimal(str(dst_rate))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+_FIAT_FLAGS = {
+    'usd': '💵', 'try': '🇹🇷', 'eur': '🇪🇺',
+    'gbp': '🇬🇧', 'aed': '🇦🇪', 'cny': '🇨🇳',
+}
+
+
 # ─────────────────────────────────────────────
 # Safe math evaluation
 # ─────────────────────────────────────────────
@@ -4544,17 +4585,32 @@ def _wallet_chain_icon(addr: str) -> str:
     return '🔗'      # TRON default
 
 
-def build_wallets_keyboard(wallets: list[str], user_id: int = 0) -> types.InlineKeyboardMarkup:
-    """One row per wallet: [💎/🔗 Txxx…xxx]  [🗑 Remove]
-    Plus an ➕ Add Wallet button at the bottom."""
+def build_wallets_keyboard(wallets: list[str], user_id: int = 0,
+                           chain_filter: str = 'all') -> types.InlineKeyboardMarkup:
+    """One row per wallet (filtered by chain): [💎/🔗 Txxx…xxx]  [🗑 Remove]
+    Plus a 🔗 TRON / 💎 TON / 👥 All chain menu and ➕ Add / ❌ Close."""
     keyboard = []
     for i, addr in enumerate(wallets):
+        chain = detect_wallet_chain(addr)
+        if chain_filter != 'all' and chain != chain_filter:
+            continue
         short = f"{addr[:6]}…{addr[-4:]}"
         icon = _wallet_chain_icon(addr)
         keyboard.append([
             types.InlineKeyboardButton(f"{icon} {short}", callback_data=f"wnoop_{i}"),
             types.InlineKeyboardButton(T(user_id, 'btn_remove'), callback_data=f"wrem_{i}"),
         ])
+    keyboard.append([
+        types.InlineKeyboardButton(
+            f"✓ {T(user_id, 'wallet_menu_tron')}" if chain_filter == 'tron' else T(user_id, 'wallet_menu_tron'),
+            callback_data="wflt_tron"),
+        types.InlineKeyboardButton(
+            f"✓ {T(user_id, 'wallet_menu_ton')}" if chain_filter == 'ton' else T(user_id, 'wallet_menu_ton'),
+            callback_data="wflt_ton"),
+        types.InlineKeyboardButton(
+            f"✓ {T(user_id, 'wallet_menu_all')}" if chain_filter == 'all' else T(user_id, 'wallet_menu_all'),
+            callback_data="wflt_all"),
+    ])
     keyboard.append([
         types.InlineKeyboardButton(T(user_id, 'btn_add_wallet'), callback_data="wadd"),
         types.InlineKeyboardButton(T(user_id, 'btn_close'),      callback_data="wclose"),
@@ -4585,16 +4641,26 @@ def build_holdings_keyboard(holdings: dict, user_id: int = 0) -> types.InlineKey
     return types.InlineKeyboardMarkup(keyboard)
 
 
-def wallets_message_text(wallets: list[str], user_id: int = 0) -> str:
+def wallets_message_text(wallets: list[str], user_id: int = 0, chain_filter: str = 'all') -> str:
+    """Saved-wallet message grouped by chain (🔗 TRON / 💎 TON), each wallet
+    in its own numbered block. ``chain_filter`` limits the listing to one
+    chain ('tron' | 'ton') or shows all ('all')."""
     if not wallets:
         return T(user_id, 'no_wallets')
     header = T(user_id, 'wallets_header')
-    rows = []
-    for i, addr in enumerate(wallets, 1):
-        chain = detect_wallet_chain(addr)
-        chain_tag = '💎 TON' if chain == 'ton' else '🔗 TRON'
-        rows.append(f"{i}. {chain_tag}\n   <code>{html.escape(addr)}</code>")
-    return header + quote("\n\n".join(rows))
+    chunks = []
+    for chain_key, label_key in (('tron', 'wallet_group_tron'), ('ton', 'wallet_group_ton')):
+        if chain_filter not in ('all', chain_key):
+            continue
+        addrs = [a for a in wallets if detect_wallet_chain(a) == chain_key]
+        if not addrs:
+            continue
+        rows = [f"{n}. <code>{html.escape(a)}</code>"
+                for n, a in enumerate(addrs, 1)]
+        chunks.append(T(user_id, label_key) + "\n" + quote("\n".join(rows)))
+    if not chunks:
+        return header + T(user_id, 'no_wallets')
+    return header + "\n".join(chunks)
 
 
 def holdings_message_text(holdings: dict, usd_to_irr, buy_prices: dict = None, user_id: int = 0) -> str:
@@ -5195,6 +5261,35 @@ def handle_callback(call):
         bot.send_message(call.message.chat.id, T(user_id, 'send_wallet_addr'))
         return
 
+    # ── Wallet chain filter menu (🔗 TRON / 💎 TON / 👥 All) ───
+    if data in ("wflt_tron", "wflt_ton", "wflt_all"):
+        chain_filter = data.split("_", 1)[1]
+        _answer_call(call)
+        wallets = db_get_wallets(user_id)
+        _edit_call(call,
+                   wallets_message_text(wallets, user_id, chain_filter),
+                   reply_markup=build_wallets_keyboard(wallets, user_id, chain_filter)
+                   )
+        return
+
+    # ── /mywallets chain filter menu ──────────────────────────
+    if data in ("mflt_tron", "mflt_ton", "mflt_all"):
+        chain_filter = data.split("_", 1)[1]
+        _answer_call(call, T(user_id, 'fetching'))
+        wallets = db_get_wallets(user_id)
+        if chain_filter != 'all':
+            wallets = [a for a in wallets if detect_wallet_chain(a) == chain_filter]
+        if not wallets:
+            _edit_call(call, T(user_id, 'no_wallets'),
+                       reply_markup=_mywallets_menu_keyboard(chain_filter, user_id))
+            return
+        balances = _fetch_wallet_balances(wallets, user_id)
+        _edit_call(call,
+                   build_mywallets_message(wallets, balances, user_id, chain_filter),
+                   reply_markup=_mywallets_menu_keyboard(chain_filter, user_id)
+                   )
+        return
+
     if data == "hclose" or data == "wclose":
         _answer_call(call)
         try:
@@ -5579,6 +5674,63 @@ def show_wallets_only(message):
     )
 
 
+def _fetch_wallet_balances(wallets, user_id: int) -> dict[str, str]:
+    """Fetch balances for the given wallets on the shared bounded pool.
+    Returns {address: balance_text}."""
+    fut_map = {_WALLET_BALANCE_EXECUTOR.submit(get_wallet_balance, addr, user_id): addr for addr in wallets}
+    results = {}
+    for fut in concurrent.futures.as_completed(fut_map):
+        addr = fut_map[fut]
+        try:
+            results[addr] = fut.result()
+        except Exception as e:
+            # One failing wallet used to abort the entire reply — degrade
+            # gracefully and keep the rest of the balances visible.
+            logger.error(f"Wallet balance failed for {addr[:6]}…: {e}")
+            results[addr] = T(user_id, 'tx_error')
+    return results
+
+
+def build_mywallets_message(wallets: list[str], balances: dict[str, str],
+                            user_id: int, chain_filter: str = 'all') -> str:
+    """Wallets & balances grouped by chain (🔗 TRON / 💎 TON), each wallet in
+    its own block: address + balance inside one section per wallet."""
+    chunks = []
+    for chain_key, label_key in (('tron', 'wallet_group_tron'), ('ton', 'wallet_group_ton')):
+        if chain_filter not in ('all', chain_key):
+            continue
+        addrs = [a for a in wallets if detect_wallet_chain(a) == chain_key]
+        if not addrs:
+            continue
+        wallet_blocks = [
+            _wallet_chain_icon(addr) + " <code>" + html.escape(addr) + "</code>\n\n "
+            + balances.get(addr, "")
+            for addr in addrs
+        ]
+        chunks.append(
+            T(user_id, label_key) + "\n"
+            + quote("\n\n".join(wallet_blocks))
+        )
+    if not chunks:
+        return T(user_id, 'wallets_balances_hdr') + T(user_id, 'no_wallets')
+    return T(user_id, 'wallets_balances_hdr') + "\n".join(chunks)
+
+
+def _mywallets_menu_keyboard(chain_filter: str = 'all', user_id: int = 0) -> types.InlineKeyboardMarkup:
+    """🔗 TRON / 💎 TON / 👥 All chain menu for the /mywallets panel."""
+    return types.InlineKeyboardMarkup([[
+        types.InlineKeyboardButton(
+            f"✓ {T(user_id, 'wallet_menu_tron')}" if chain_filter == 'tron' else T(user_id, 'wallet_menu_tron'),
+            callback_data="mflt_tron"),
+        types.InlineKeyboardButton(
+            f"✓ {T(user_id, 'wallet_menu_ton')}" if chain_filter == 'ton' else T(user_id, 'wallet_menu_ton'),
+            callback_data="mflt_ton"),
+        types.InlineKeyboardButton(
+            f"✓ {T(user_id, 'wallet_menu_all')}" if chain_filter == 'all' else T(user_id, 'wallet_menu_all'),
+            callback_data="mflt_all"),
+    ]])
+
+
 @bot.message_handler(commands=['mywallets'])
 @rate_limit_check
 @loading_indicator
@@ -5592,30 +5744,10 @@ def show_wallets_with_balance(message):
     # Shared, bounded pool: reusing one executor avoids the thread churn that a
     # fresh ThreadPoolExecutor per /mywallets call causes under load (a steady
     # stream of short-lived commands can otherwise hit "can't start new thread").
-    fut_map = {_WALLET_BALANCE_EXECUTOR.submit(get_wallet_balance, addr, user_id): addr for addr in wallets}
-    results = {}
-    for fut in concurrent.futures.as_completed(fut_map):
-        addr = fut_map[fut]
-        try:
-            results[addr] = fut.result()
-        except Exception as e:
-            # One failing wallet used to abort the entire reply — degrade
-            # gracefully and keep the rest of the balances visible.
-            logger.error(f"Wallet balance failed for {addr[:6]}…: {e}")
-            results[addr] = T(user_id, 'tx_error')
-    # Render in stored order (as_completed = arrival order, which used to
-    # scramble the wallet list on every view).
-    lines = []
-    for addr in wallets:
-        balance_msg = results.get(addr)
-        if balance_msg is None:
-            continue
-        icon = _wallet_chain_icon(addr)
-        # Add space between address and balance for better readability
-        lines.append(f"{icon} <code>{html.escape(addr)}</code>\n\n {balance_msg}")
-    # Apply blockquote formatting
-    reply = T(user_id, 'wallets_balances_hdr') + quote("\n\n".join(lines))
-    bot.reply_to(message, reply, parse_mode='HTML')
+    balances = _fetch_wallet_balances(wallets, user_id)
+    reply = build_mywallets_message(wallets, balances, user_id)
+    bot.reply_to(message, reply, parse_mode='HTML',
+                 reply_markup=_mywallets_menu_keyboard(user_id=user_id))
     logger.info(f"User {user_id} viewed wallets with balances")
 
 
@@ -5732,21 +5864,43 @@ FIAT_COMMANDS = {
 
 
 def _handle_fiat_command(message, cmd_key):
-    """Unified handler for fiat currency rate commands."""
+    """Unified handler for fiat currency rate commands.
+
+    When the user's display currency (/setcurrency) is a fiat other than
+    Toman (e.g. TRY), the amount is converted into that currency instead
+    of Toman (1 USD = 34.5 TRY)."""
     uid = message.from_user.id
     bot.send_chat_action(message.chat.id, 'typing')
     rate_key, emoji, getter, code = FIAT_COMMANDS[cmd_key]
-    rate = getter()
-    if rate is None:
+    display = db_get_currency(uid) or 'toman'
+    if display not in ('usd', 'eur', 'try') or display == cmd_key:
+        # Default behaviour: rate in Toman
+        rate = getter()
+        if rate is None:
+            bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
+            return
+        rate_str = f"{rate:,.0f}"
+        bot.reply_to(
+            message,
+            add_timestamp(T(uid, rate_key, rate=rate_str)),
+            parse_mode='HTML'
+        )
+        logger.info(f"User {uid} requested {code} → Toman")
+        return
+    # Display currency is a fiat: convert the amount into it
+    result_val = _fiat_to_fiat(1, cmd_key, display)
+    if result_val is None:
         bot.reply_to(message, add_timestamp(T(uid, 'rate_unavailable')), parse_mode='HTML')
         return
-    rate_str = f"{rate:,.0f}"
+    dst_label = DISPLAY_CURRENCIES[display]['label']
     bot.reply_to(
         message,
-        add_timestamp(T(uid, rate_key, rate=rate_str)),
+        add_timestamp(T(uid, 'fiat_to_cur',
+                        flag=_FIAT_FLAGS.get(cmd_key, emoji), amount=1,
+                        src=code, result=f"{result_val:,.2f}", dst=dst_label)),
         parse_mode='HTML'
     )
-    logger.info(f"User {uid} requested {code} → Toman")
+    logger.info(f"User {uid} requested {code} → {dst_label}")
 
 
 @bot.message_handler(commands=['usd'])
@@ -5857,15 +6011,15 @@ def stars_command(message):
     if not stars_price:
         stars_price = float(os.getenv('STARS_PRICE_USD', '0.015'))
     msg = _stars_price_lines(uid, stars_price, 1, T(uid, 'stars_header'))
-    kb = types.InlineKeyboardMarkup([[
-        types.InlineKeyboardButton(T(uid, 'stars_calc_btn'), callback_data="stars_calc")
-    ]])
-    bot.reply_to(message, add_timestamp(msg), parse_mode='HTML', reply_markup=kb)
+    bot.reply_to(message, add_timestamp(msg), parse_mode='HTML')
     logger.info(f"User {uid} requested Stars price")
 
 
 def _stars_price_lines(uid, stars_price, count=1, header=None, cache_only=False):
     """Build Stars price lines for the given count of stars.
+
+    Shows ONLY the USD price plus the user's chosen display currency —
+    no full fiat table, no TON conversion.
 
     cache_only=True (inline mode) reads every rate strictly from cache so the
     inline query never blocks on the network; the background warmer keeps
@@ -5874,27 +6028,12 @@ def _stars_price_lines(uid, stars_price, count=1, header=None, cache_only=False)
     header = header or T(uid, 'stars_result', amount=f"{count:g}")
     if cache_only:
         irr_rate = cache_get('usd_to_irr')
-        rates = {code: _cached_toman_rate(code) for code, _, _, _ in _INLINE_FIATS}
-        ton_price = get_crypto_price('the-open-network', cache_only=True)
     else:
         irr_rate = get_usd_to_irr()
-        rates = {
-            'try': get_try_to_irr(),
-            'eur': get_eur_to_irr(),
-            'gbp': get_gbp_to_irr(),
-            'aed': get_aed_to_irr(),
-            'cny': get_cny_to_irr(),
-        }
-        ton_price = get_crypto_price('the-open-network')
     rows = [f"💵 ${usd:.3f} USD"]
-    if irr_rate:
-        rows.append(f"💰 {format_fiat(Decimal(str(usd * irr_rate)), decimals=0)} {T(uid, 'toman_label')}")
-    for code, label, flag, decimals in _INLINE_FIATS:
-        val = usd_to_fiat(usd, rates.get(code), decimals=decimals, usd_to_irr=irr_rate)
-        if val is not None:
-            rows.append(f"{flag} {val:,.{decimals}f} {label}")
-    if ton_price:
-        rows.append(f"🪙 {format_crypto(Decimal(str(usd / ton_price)))} TON")
+    secondary = _secondary_currency_line(uid, usd, irr_rate)
+    if secondary:
+        rows.append(secondary)
     return header + quote("\n".join(rows))
 
 
@@ -6560,11 +6699,11 @@ def inline_query_handler(inline_query):
                     name  = _sym(cur)
                     toman_lbl = T(uid, 'toman_label')
                     desc  = f"${v_usd_f:,.2f} | {v_irr_f:,.0f} {toman_lbl}" if irr_v else f"${v_usd_f:,.2f}"
-                    # Same rows as the '10 trx' text reply: 💵 price, 💰 toman, 🇹🇷🇪🇺… fiat
+                    # Same rows as the '10 trx' text reply: USD + display currency only
+                    secondary_line = _secondary_currency_line(uid, v_usd_f, irr_v)
                     rows = [f"💵 {fmt_price(v_usd_f)}"]
-                    if irr_v:
-                        rows.append(f"💰 {v_irr_f:,.0f} {toman_lbl}")
-                    rows.extend(_inline_fiat_lines(v_usd_f, irr_v))
+                    if secondary_line:
+                        rows.append(secondary_line)
                     msg_text = f"💰 <b>{amt_f:,.6g} {name}</b>\n" + quote("\n".join(rows))
                     results.append(article(
                         "amt_coin", f"{amt_f:,.6g} {name}",
@@ -6581,19 +6720,16 @@ def inline_query_handler(inline_query):
                 name  = CRYPTO_LIST[crypto]
                 toman_lbl = T(uid, 'toman_label')
 
-                # Shared price block (same layout as the text reply)
-                if irr_v:
-                    toman_price = p * irr_v
-                    desc_text = f"{fmt_price(p)} | {toman_price:,.0f} {toman_lbl}"
-                else:
-                    toman_price = None
-                    desc_text = fmt_price(p)
-
+                # Shared price block (same layout as the text reply).
+                # Only USD + the user's display currency — no fiat table.
+                secondary_line = _secondary_currency_line(uid, p, irr_v)
                 msg_text = _coin_price_block(
                     uid, name, fmt_price(p),
-                    toman_str=f"💰 {toman_price:,.0f} {toman_lbl}" if toman_price is not None else "",
-                    extra_rows=_inline_fiat_lines(p, irr_v),
+                    toman_str=secondary_line,
                 )
+                desc_text = f"{fmt_price(p)}"
+                if secondary_line:
+                    desc_text += f" | {secondary_line.split(' ', 1)[1]}"
                 results.append(article(
                     "crypto_price", f"{name} Price",
                     desc_text,
@@ -6880,7 +7016,7 @@ def alert_cmd(message):
         bot.reply_to(message, T(message.from_user.id, 'alert_limit', max=MAX_ALERTS_PER_USER), parse_mode='HTML')
         return
 
-    kb = _coin_picker_keyboard("alrt1_", cancel=True, user_id=user_id)
+    kb = _coin_picker_keyboard("alrt1_", cancel="alrt_cancel", user_id=user_id)
 
     msg = bot.reply_to(
         message,
@@ -7869,108 +8005,58 @@ def _handle_text_math(message, user_id, text, text_lower, text_original):
 
     return False
 
+def _build_fiat_conversion_text(user_id: int, amount: Decimal, src_code: str):
+    """Plain-text fiat conversion reply honouring the user's display currency.
+
+    Display currency is USD/TRY/EUR → convert the amount into that currency
+    ('fiat_to_cur'); otherwise the classic source → Toman reply.
+    Returns the reply text, or None when a required rate is unavailable."""
+    display = db_get_currency(user_id)
+    user_lang = db_get_lang(user_id)
+    amount_formatted = format_for_locale(format_fiat(amount), user_lang)
+    if display in ('usd', 'try', 'eur') and display != src_code:
+        result_val = _fiat_to_fiat(amount, src_code, display)
+        if result_val is None:
+            return None
+        result_formatted = format_for_locale(format_fiat(result_val, decimals=2), user_lang)
+        return T(user_id, 'fiat_to_cur', flag=_FIAT_FLAGS.get(src_code, '💵'),
+                 amount=amount_formatted, src=src_code.upper(),
+                 result=result_formatted, dst=DISPLAY_CURRENCIES[display]['label'])
+    rate = _rate_to_toman(src_code)
+    if rate is None:
+        return None
+    result_formatted = format_for_locale(format_fiat(amount * Decimal(str(rate)), decimals=0), user_lang)
+    reply_key = {'usd': 'usd_conversion', 'try': 'try_conversion'}.get(src_code, f'{src_code}_conversion')
+    return T(user_id, reply_key, amount=amount_formatted, result=result_formatted)
+
+
 def _handle_text_fiat(message, user_id, text_lower):
     is_group = message.chat.type in ('group', 'supergroup')
     chat_id = message.chat.id
-    # USD → Toman (support flexible number formats)
-    usd_pattern = r'^([\d.,۰-۹٬٫]+)?\s*(\$|usd|dollar|دلار)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$'
-    m = re.match(usd_pattern, text_lower)
-    if m:
-        amount_str = m.group(1)
-        amount = parse_number(amount_str) if amount_str else Decimal('1')
-        if amount is None:
-            amount = Decimal('1')
-        
-        usd_to_irr = get_usd_to_irr()
-        if usd_to_irr is None:
-            bot.reply_to(message, T(user_id, 'rate_unavailable'), parse_mode='HTML')
-            return True
-        result_toman = amount * Decimal(str(usd_to_irr))
-        
-        # Format with proper number handling
-        user_lang = db_get_lang(user_id)
-        amount_formatted = format_fiat(amount)
-        result_formatted = format_fiat(result_toman, decimals=0)
-        
-        # Apply locale
-        amount_formatted = format_for_locale(amount_formatted, user_lang)
-        result_formatted = format_for_locale(result_formatted, user_lang)
-        
-        reply_text = T(user_id, 'usd_conversion', amount=amount_formatted, result=result_formatted)
-        
-        bot.reply_to(message, add_timestamp(reply_text), parse_mode='HTML')
-        if is_group:
-            query_key = f"fiat:usd_to_toman:{text_lower}"
-            raw_data = {'rate': usd_to_irr, 'amount': str(amount)}
-            set_group_cached_query(chat_id, query_key, raw_data)
-        return True
-
-    # TRY → Toman (support flexible number formats)
-    try_pattern = r'^([\d.,۰-۹٬٫]+)?\s*(lira|tl|try|₺)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$'
-    m = re.match(try_pattern, text_lower)
-    if m:
-        amount_str = m.group(1)
-        amount = parse_number(amount_str) if amount_str else Decimal('1')
-        if amount is None:
-            amount = Decimal('1')
-
-        try_to_irr = get_try_to_irr()
-        if try_to_irr is None:
-            bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
-            return True
-        result_toman = amount * Decimal(str(try_to_irr))
-
-        user_lang = db_get_lang(user_id)
-        amount_formatted = format_fiat(amount)
-        result_formatted = format_fiat(result_toman, decimals=0)
-        amount_formatted = format_for_locale(amount_formatted, user_lang)
-        result_formatted = format_for_locale(result_formatted, user_lang)
-
-        reply_text = T(user_id, 'try_conversion', amount=amount_formatted, result=result_formatted)
-
-        bot.reply_to(message, add_timestamp(reply_text), parse_mode='HTML')
-        if is_group:
-            query_key = f"fiat:try_to_toman:{text_lower}"
-            raw_data = {'rate': try_to_irr, 'amount': str(amount)}
-            set_group_cached_query(chat_id, query_key, raw_data)
-        return True
-
-    # EUR / GBP / AED / CNY → Toman (support flexible number formats)
-    fx_defs = [
-        (r'^([\d.,۰-۹٬٫]+)?\s*(eur|euro|€)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_eur_to_irr, 'EUR', '🇪🇺'),
-        (r'^([\d.,۰-۹٬٫]+)?\s*(gbp|pound|£)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_gbp_to_irr, 'GBP', '🇬🇧'),
-        (r'^([\d.,۰-۹٬٫]+)?\s*(aed|dirham|درهم)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_aed_to_irr, 'AED', '🇦🇪'),
-        (r'^([\d.,۰-۹٬٫]+)?\s*(cny|yuan|yuen|یوآن)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$', get_cny_to_irr, 'CNY', '🇨🇳'),
-    ]
-    for fx_pattern, fx_getter, fx_code, fx_emoji in fx_defs:
-        m = re.match(fx_pattern, text_lower)
+    fiat_patterns = {
+        r'^([\d.,۰-۹٬٫]+)?\s*(\$|usd|dollar|دلار)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$': 'usd',
+        r'^([\d.,۰-۹٬٫]+)?\s*(lira|tl|try|₺)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$': 'try',
+        r'^([\d.,۰-۹٬٫]+)?\s*(eur|euro|€)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$': 'eur',
+        r'^([\d.,۰-۹٬٫]+)?\s*(gbp|pound|£)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$': 'gbp',
+        r'^([\d.,۰-۹٬٫]+)?\s*(aed|dirham|درهم)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$': 'aed',
+        r'^([\d.,۰-۹٬٫]+)?\s*(cny|yuan|yuen|یوآن)\s*(?:to|به)?\s*(toman|تومان|تومن|irr|ریال)?$': 'cny',
+    }
+    for pattern, src_code in fiat_patterns.items():
+        m = re.match(pattern, text_lower)
         if not m:
             continue
         amount_str = m.group(1)
         amount = parse_number(amount_str) if amount_str else Decimal('1')
         if amount is None:
             amount = Decimal('1')
-
-        fx_to_irr = fx_getter()
-        if fx_to_irr is None:
+        bot.send_chat_action(message.chat.id, 'typing')
+        reply_text = _build_fiat_conversion_text(user_id, amount, src_code)
+        if reply_text is None:
             bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
             return True
-        result_toman = amount * Decimal(str(fx_to_irr))
-
-        user_lang = db_get_lang(user_id)
-        amount_formatted = format_fiat(amount)
-        result_formatted = format_fiat(result_toman, decimals=0)
-        amount_formatted = format_for_locale(amount_formatted, user_lang)
-        result_formatted = format_for_locale(result_formatted, user_lang)
-
-        reply_text = T(user_id, f'{fx_code.lower()}_conversion',
-                       amount=amount_formatted, result=result_formatted)
-
         bot.reply_to(message, add_timestamp(reply_text), parse_mode='HTML')
         if is_group:
-            query_key = f"fiat:{fx_code.lower()}_to_toman:{text_lower}"
-            raw_data = {'rate': fx_to_irr, 'amount': str(amount)}
-            set_group_cached_query(chat_id, query_key, raw_data)
+            set_group_cached_query(chat_id, f"fiat:{src_code}:{text_lower}", reply_text)
         return True
 
     return False
@@ -8131,22 +8217,18 @@ def _handle_text_wallet_and_tx(message, user_id, text):
     return False
 
 def _handle_text_standalone(message, user_id, text, text_lower):
-    # Standalone "try" → show TRY rate
-    if text_lower in ('try', 'lira', 'tl', '₺') and not re.search(r'\d', text):
-        bot.send_chat_action(message.chat.id, 'typing')
-        try_to_irr = get_try_to_irr()
-        if try_to_irr is None:
-            bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
+    # Standalone fiat keyword ("usd", "try", "lira", "€"…) → show the rate
+    # (converted into the display currency when it is USD/TRY/EUR).
+    if text_lower in FIAT_ALIASES and not re.search(r'\d', text):
+        src_code = FIAT_ALIASES[text_lower]
+        if src_code in ('usd', 'try', 'eur', 'gbp', 'aed', 'cny'):
+            bot.send_chat_action(message.chat.id, 'typing')
+            reply_text = _build_fiat_conversion_text(user_id, Decimal('1'), src_code)
+            if reply_text is None:
+                bot.reply_to(message, add_timestamp(T(user_id, 'rate_unavailable')), parse_mode='HTML')
+                return True
+            bot.reply_to(message, add_timestamp(reply_text), parse_mode='HTML')
             return True
-        user_lang = db_get_lang(user_id)
-        toman_label = "Toman" if user_lang == 'en' else "تومان"
-        rate_formatted = format_for_locale(format_fiat(Decimal(str(try_to_irr)), decimals=0), user_lang)
-        bot.reply_to(
-            message,
-            add_timestamp(T(user_id, 'try_rate', rate=rate_formatted)),
-            parse_mode='HTML'
-        )
-        return True
 
     # Standalone "gold" / "طلا" / "xau" → show gold price
     if text_lower in ('gold', 'طل', 'طلا', 'xau') and not re.search(r'\d', text):
@@ -8209,11 +8291,11 @@ def _handle_text_crypto(message, user_id, text, text_lower):
             if crypto != 'telegram-stars':
                 kb = types.InlineKeyboardMarkup()
                 kb.add(types.InlineKeyboardButton("📊 Chart", callback_data=f"chart_{crypto}_30d"))
-            # Shared price block (same as inline results)
+            # Shared price block (same as inline results).
+            # Only the user's display currency is shown — not the full fiat table.
             msg = _coin_price_block(
                 user_id, crypto_name, _fmt_price_with_exchange(price_usd, exch),
                 toman_str=toman_line,
-                extra_rows=_inline_fiat_lines(price_usd, usd_to_irr),
             )
             bot.reply_to(
                 message,
@@ -8235,8 +8317,7 @@ def _handle_text_crypto(message, user_id, text, text_lower):
             if price_usd:
                 value_usd  = amount * price_usd
                 sym = _sym(crypto)
-                toman_line = f"💰 {value_usd * usd_to_irr:,.0f} {T(user_id, 'toman_label')}" if usd_to_irr else ""
-                
+
                 # Cache raw data for group deduplication
                 is_group = message.chat.type in ('group', 'supergroup')
                 if is_group:
@@ -8250,9 +8331,9 @@ def _handle_text_crypto(message, user_id, text, text_lower):
                     set_group_cached_query(message.chat.id, query_key, raw_data)
                 
                 rows = [f"💵 {fmt_price(value_usd)}"]
-                if toman_line:
-                    rows.append(toman_line)
-                rows.extend(_inline_fiat_lines(value_usd, usd_to_irr))
+                secondary_line = _secondary_currency_line(user_id, value_usd, usd_to_irr)
+                if secondary_line:
+                    rows.append(secondary_line)
                 msg = f"💰 <b>{amount:,g} {sym}</b>\n" + quote("\n".join(rows))
                 bot.reply_to(
                     message,
