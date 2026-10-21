@@ -3975,22 +3975,45 @@ TGJU_CATEGORY_IDS = {
 }
 
 
+# Last successful tgju fetch as (prices, timestamp). Survives cache expiry so
+# an outage can degrade to old prices instead of an empty gold section.
+_iran_gold_last_good = (None, 0.0)
+
+
 @rate_limited_api_call(cache_key='iran_gold')
 def get_iran_gold_prices():
-    """Fetch Iranian gold prices (Toman) from tgju.org."""
+    """Fetch Iranian gold prices (Toman) from tgju.org.
+
+    tgju.org is the least reliable API this bot talks to (bot.log shows
+    hourly timeouts/502s). Two safeguards:
+    - Fail fast: stop crawling the remaining categories on the first network
+      failure instead of grinding through all of them (the session's Retry
+      has already spent 4 x 10s per request by then).
+    - Serve stale: on failure return the last known good prices instead of
+      {}, re-cached briefly so a degraded source is re-probed at most once
+      per TTL instead of on every call.
+    """
+    global _iran_gold_last_good
     cached = cache_get('iran_gold')
     if cached:
         return cached
     prices = {}
     try:
         for cid in TGJU_CATEGORY_IDS.values():
-            r = session.get(
-                f'https://api.tgju.org/v1/market/list-data?category_ids={cid}&extra_data=1&lang=fa',
-                timeout=10,
-                headers={'User-Agent': 'Mozilla/5.0'}
-            )
-            r.raise_for_status()
-            data = r.json()
+            try:
+                r = session.get(
+                    f'https://api.tgju.org/v1/market/list-data?category_ids={cid}&extra_data=1&lang=fa',
+                    timeout=10,
+                    headers={'User-Agent': 'Mozilla/5.0'}
+                )
+                r.raise_for_status()
+                data = r.json()
+            except Exception as e:
+                if prices:
+                    # Partial data beats none; skip the remaining categories.
+                    logger.warning(f"tgju category {cid} failed, using partial data: {e}")
+                    break
+                raise  # nothing collected yet - let the outer handler serve stale
             for row in data.get('data', []):
                 m = re.search(r'profile/([a-z0-9_]+)', row[0])
                 if not m:
@@ -4001,9 +4024,20 @@ def get_iran_gold_prices():
                     prices[slug] = price_rial // 10  # Rial → Toman
         if prices:
             cache_set('iran_gold', prices, ttl=60)
+            _iran_gold_last_good = (prices, time.time())
             logger.info(f"Fetched Iran gold prices from tgju: {list(prices)}")
-        return prices
+            return prices
+        # tgju answered but nothing parsed (format change?) - prefer stale.
+        raise RuntimeError('tgju response contained no parsable prices')
     except Exception as e:
+        last_prices, last_ts = _iran_gold_last_good
+        if last_prices:
+            age_min = int((time.time() - last_ts) / 60)
+            logger.warning(
+                f"tgju gold fetch failed ({e}); serving last known good data ({age_min}m old)"
+            )
+            cache_set('iran_gold', last_prices, ttl=60)  # back off while degraded
+            return last_prices
         logger.error(f"tgju gold fetch failed: {e}")
         return {}
 
