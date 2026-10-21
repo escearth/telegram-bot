@@ -2931,7 +2931,7 @@ def get_ton_wallet_balance(address, user_id: int = 0):
             
             if not ton_price or usd_to_irr is None:
                 bal_str = format_crypto(balance_ton)
-                return T(user_id, 'wallet_header_ton') + quote(f"🪙 {bal_str} TON")
+                return quote(f"🪙 {bal_str} TON")
             
             # Enhanced display with crypto + USD + Toman
             balance_display = format_wallet_balance(
@@ -2942,7 +2942,7 @@ def get_ton_wallet_balance(address, user_id: int = 0):
                 user_lang=user_lang
             )
             
-            return T(user_id, 'wallet_header_ton') + quote(balance_display)
+            return quote(balance_display)
         
         return "❌ Could not fetch wallet balance"
         
@@ -4229,7 +4229,7 @@ def get_tron_wallet_trx(address, user_id: int = 0):
             if not trx_price or usd_to_irr is None:
                 bal_str = format_crypto(balance_trx)
                 bal_str = format_for_locale(bal_str, user_lang)
-                return T(user_id, 'wallet_header_tron') + quote(f"🪙 {bal_str} TRX")
+                return quote(f"🪙 {bal_str} TRX")
             
             balance_display = format_wallet_balance(
                 crypto_amount=balance_trx,
@@ -4239,7 +4239,7 @@ def get_tron_wallet_trx(address, user_id: int = 0):
                 user_lang=user_lang
             )
             
-            return T(user_id, 'wallet_header_tron') + quote(balance_display)
+            return quote(balance_display)
         return T(user_id, 'no_balance')
     except requests.Timeout:
         logger.error(f"Timeout fetching TRX wallet: {address}")
