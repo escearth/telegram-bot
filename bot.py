@@ -1713,6 +1713,11 @@ def rate_limit_check(func):
                       and message.text.startswith('/'))
         is_group = message.chat.type in ['group', 'supergroup']
 
+        # Bot owner is exempt from rate limiting and group slowdown warnings
+        # (no limits are recorded or enforced for the owner, e.g. while testing).
+        if is_owner(user_id):
+            return func(message, *args, **kwargs)
+
         # Rate limiting: commands use global user rate limit, group plain-text uses group-specific limit
         if is_command:
             if is_user_rate_limited(user_id):
@@ -9226,6 +9231,9 @@ _webapp_rate_calls = 0
 def _webapp_rate_limited(key, limit: int = WEBAPP_RATE_LIMIT) -> bool:
     """Return True if the caller (user id or IP key) exceeded the rate limit."""
     global _webapp_rate_calls
+    # The bot owner is exempt from webapp rate limiting.
+    if not isinstance(key, tuple) and key == OWNER_USER_ID:
+        return False
     now = time.time()
     with _webapp_rate_lock:
         _webapp_rate_calls += 1
