@@ -145,7 +145,7 @@ for _chain in ['TRC20', 'TON', 'BEP20', 'ERC20', 'SOLANA']:
     if _val:
         DONATION_WALLETS[_chain] = _val
 
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, num_threads=8)
 # Bind module-level shortcut for inline answering
 answer_inline_query = bot.answer_inline_query
 bot.answer_inline_query = bot.answer_inline_query
@@ -2912,19 +2912,27 @@ def detect_wallet_chain(address: str) -> str | None:
     return None
 
 
-def get_wallet_balance(address: str, user_id: int = 0) -> str:
-    """Fetch balance for any supported wallet address (auto-detects chain)."""
+def get_wallet_balance(address: str, user_id: int = 0, cache_only_rates: bool = False) -> str:
+    """Fetch balance for any supported wallet address (auto-detects chain).
+
+    cache_only_rates is forwarded to the per-chain fetchers: the inline path
+    passes True so price/rate lookups never block on the network."""
     chain = detect_wallet_chain(address)
     if chain == 'tron':
-        return get_tron_wallet_trx(address, user_id)
+        return get_tron_wallet_trx(address, user_id, cache_only_rates)
     elif chain == 'ton':
-        return get_ton_wallet_balance(address, user_id)
+        return get_ton_wallet_balance(address, user_id, cache_only_rates)
     return "❌ Unknown wallet type"
 
 
-def get_ton_wallet_balance(address, user_id: int = 0):
+def get_ton_wallet_balance(address, user_id: int = 0, cache_only_rates: bool = False):
     """
     Fetch TON wallet balance using TON API.
+
+    cache_only_rates: read TON price / USD-IRR from cache only. Inline queries
+    must answer within a few seconds, so the inline path never blocks on the
+    price/rate fetchers (they can sleep ~3s on the API throttle and hit the
+    network for up to ~8-10s each on a cold cache).
     """
     try:
         # Using TON Center API (public)
@@ -2940,8 +2948,12 @@ def get_ton_wallet_balance(address, user_id: int = 0):
             balance_ton = Decimal(str(balance_nano)) / Decimal('1000000000')
             
             # Get current TON price and exchange rate
-            ton_price = get_crypto_price('the-open-network')
-            usd_to_irr = get_usd_to_irr()
+            if cache_only_rates:
+                ton_price = get_crypto_price('the-open-network', cache_only=True)
+                usd_to_irr = cache_get('usd_to_irr')
+            else:
+                ton_price = get_crypto_price('the-open-network')
+                usd_to_irr = get_usd_to_irr()
             user_lang = db_get_lang(user_id)
             
             if not ton_price or usd_to_irr is None:
@@ -4256,7 +4268,8 @@ def evaluate_math(expression, user_id: int = 0):
 # ─────────────────────────────────────────────
 # TRON helpers
 # ─────────────────────────────────────────────
-def get_tron_wallet_trx(address, user_id: int = 0):
+def get_tron_wallet_trx(address, user_id: int = 0, cache_only_rates: bool = False):
+    """Fetch TRX balance. cache_only_rates: see get_ton_wallet_balance."""
     try:
         # Only plain base58 TRON addresses may reach the API URL
         if not _TRON_ADDR_RE.fullmatch(str(address)):
@@ -4271,8 +4284,12 @@ def get_tron_wallet_trx(address, user_id: int = 0):
             balance_trx = Decimal(str(balance_sun)) / Decimal('1000000')
             
             # Get current TRX price and exchange rate
-            trx_price = get_crypto_price('tron')
-            usd_to_irr = get_usd_to_irr()
+            if cache_only_rates:
+                trx_price = get_crypto_price('tron', cache_only=True)
+                usd_to_irr = cache_get('usd_to_irr')
+            else:
+                trx_price = get_crypto_price('tron')
+                usd_to_irr = get_usd_to_irr()
             user_lang = db_get_lang(user_id)
             
             if not trx_price or usd_to_irr is None:
@@ -6516,7 +6533,7 @@ def inline_query_handler(inline_query):
     # ── 2. TRON wallet address (34 chars) ────────────────────────────
     elif re.match(r'^[A-Za-z0-9]{34}$', q) and is_valid_tron_address(q):
         try:
-            bal = get_tron_wallet_trx(q, uid)
+            bal = get_tron_wallet_trx(q, uid, cache_only_rates=True)
             short = f"{q[:8]}...{q[-6:]}"
             # No group cache: inline queries have no chat to dedup against
             results.append(article(
@@ -6534,7 +6551,7 @@ def inline_query_handler(inline_query):
     # ── 3. TON wallet address (48 chars, EQ/UQ) ────────────────────
     elif len(q) == 48 and q[:2] in ('EQ', 'UQ') and is_valid_ton_address(q):
         try:
-            bal = get_ton_wallet_balance(q, uid)
+            bal = get_ton_wallet_balance(q, uid, cache_only_rates=True)
             short = f"{q[:8]}...{q[-6:]}"
             # No group cache: inline queries have no chat to dedup against
             results.append(article(
@@ -6789,15 +6806,13 @@ def inline_query_handler(inline_query):
         # ── 9. "price" keyword → full price list ─────────────────────
         if ql in ('price', 'prices', 'قیمت', 'قیمت‌ها'):
             try:
-                # Serve from warm cache first so inline answers stay fast;
-                # only hit the network when nothing is cached yet.
+                # Serve from warm cache so inline answers stay fast - the
+                # background prewarmer keeps every CRYPTO_LIST price fresh.
                 prices = {}
                 for _code in CRYPTO_LIST:
                     _p = cache_get(_code)
                     if _p is not None:
                         prices[_code] = {'usd': _p}
-                if not prices:
-                    prices = _fetch_prices_coingecko(','.join(CRYPTO_LIST.keys()))
                 if prices:
                     txt = _build_price_list_message(uid, prices)
                     results.append(article(
@@ -6808,9 +6823,10 @@ def inline_query_handler(inline_query):
                 pass
 
         # ── 10. Gold prices ────────────────────────────────────────────
+        # Cache only - get_gold_prices() throttles+fetches on a cache miss.
         if ql in ('gold', 'gold price', 'طلا', 'قیمت طلا'):
             _xau_cached = cache_get('gold_xau')
-            gold = {'xau': _xau_cached} if _xau_cached is not None else get_gold_prices()
+            gold = {'xau': _xau_cached} if _xau_cached is not None else None
             if gold and 'xau' in gold:
                 xau = gold['xau']
                 iran = cache_get('iran_gold')  # cache only - never blocks inline
@@ -6829,9 +6845,9 @@ def inline_query_handler(inline_query):
         # ── 12. Market (Fear & Greed) ──────────────────────────────────
         if ql in ('market', 'fear', 'greed', 'fear and greed', 'fear & greed', 'بازار', 'ترس و طمع'):
             try:
-                # Serve from cache first so inline stays fast; the shared
-                # helpers cache their results after every successful fetch.
-                g = cache_get('cg_global') or _fetch_coingecko_global()
+                # Serve from warm cache only so inline stays fast - the
+                # background prewarmer refreshes these values every ~90s.
+                g = cache_get('cg_global')
                 if g:
                     mcap = g.get('total_market_cap', {}).get('usd', 0)
                     vol = g.get('total_volume', {}).get('usd', 0)
@@ -6841,11 +6857,6 @@ def inline_query_handler(inline_query):
                     chg24 = g.get('market_cap_change_percentage_24h_usd', 0)
                     arrow = '📈' if chg24 >= 0 else '📉'
                     fg_data = cache_get('fng')
-                    if not fg_data:
-                        try:
-                            fg_data = _fetch_fear_greed()
-                        except Exception:
-                            fg_data = None
                     # Same layout as /market (shared T-keys + _fg_block)
                     txt = (
                         T(uid, 'market_header') +
@@ -6863,7 +6874,8 @@ def inline_query_handler(inline_query):
 
         # ── 13. TRY to Toman rate ──────────────────────────────────────
         if ql in ('try', 'tl', 'lira', 'ترک', 'لیر'):
-            try_rate = cache_get('try_irr') or get_try_to_irr()
+            # Cache only - inline answers must not block on the network
+            try_rate = cache_get('try_irr')
             if try_rate:
                 # Same blockquote line as the 'try' text reply
                 txt = T(uid, 'try_rate', rate=f"{try_rate:,}")
@@ -6871,15 +6883,16 @@ def inline_query_handler(inline_query):
                 results.append(article("try_rate", f"1 TRY = {try_rate:,} {toman_lbl}", f"TRY → {toman_lbl}", txt, html=True))
 
         # ── 13b. EUR / GBP / AED / CNY to Toman (TRY is handled above in ── 13)
+        # Cache only - inline answers must not block on the network.
         fx_inline = [
-            (('eur', 'euro', '€'), 'EUR', get_eur_to_irr),
-            (('gbp', 'pound', '£'), 'GBP', get_gbp_to_irr),
-            (('aed', 'dirham', 'درهم'), 'AED', get_aed_to_irr),
-            (('cny', 'yuan', 'یوآن'), 'CNY', get_cny_to_irr),
+            (('eur', 'euro', '€'), 'EUR'),
+            (('gbp', 'pound', '£'), 'GBP'),
+            (('aed', 'dirham', 'درهم'), 'AED'),
+            (('cny', 'yuan', 'یوآن'), 'CNY'),
         ]
-        for fx_keys, fx_code, fx_getter in fx_inline:
+        for fx_keys, fx_code in fx_inline:
             if ql in fx_keys:
-                fx_rate = cache_get(f"{fx_code.lower()}_irr") or fx_getter()
+                fx_rate = cache_get(f"{fx_code.lower()}_irr")
                 if fx_rate:
                     toman_lbl = T(uid, 'toman_label')
                     # Same conversion line as the fx text replies
@@ -6996,7 +7009,8 @@ def inline_query_handler(inline_query):
                             html=True
                         ))
                         try:
-                            bal = get_wallet_balance(addr, uid)
+                            # Inline path: price/rate lookups must stay cache-only
+                            bal = get_wallet_balance(addr, uid, cache_only_rates=True)
                             results.append(article(
                                 f"wbal_{i}", f"👛 {wlbl} - {T(uid, 'wallet_with_balance_label')}",
                                 bal,
@@ -7021,7 +7035,7 @@ def inline_query_handler(inline_query):
         bot.answer_inline_query(
             inline_query.id, 
             results, 
-            cache_time=30, 
+            cache_time=5,  # short TTL: don't serve stale error/fallback results for 30s
             is_personal=True,
             switch_pm_text=T(uid, 'inline_help_button'),
             switch_pm_parameter='inline_help'
