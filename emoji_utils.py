@@ -116,6 +116,7 @@ _FLAG_FALLBACK: dict[str, str] = {
 _EMOJI_SKIP: set[str] = {
     '\U0001F7E0',   # 🟠 — user wants normal text
     '\U0001F535',   # 🔵 — user wants normal text
+    '\U0001FA99',   # 🪙 — user wants normal text (sticker padding reads as extra space)
 }
 
 _emoji_map: dict[str, str] = {}         # emoji_char -> document_id string
