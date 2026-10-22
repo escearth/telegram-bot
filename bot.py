@@ -1022,15 +1022,25 @@ def rate_limited_api_call(func=None, *, cache_key=None):
     return wrapper
 
 
-@rate_limited_api_call
 def _fetch_prices_coingecko(ids) -> dict:
+    """CoinGecko batch fetch. The rate-limit flag is checked BEFORE the global
+    API throttle: when CoinGecko is already 429-limited there is no point
+    paying the 3s cooldown just to be told 'use the fallback'."""
     if cache_get('cg_rate_limited'):
         return {}
+    return _coingecko_price_request(ids)
+
+
+@rate_limited_api_call
+def _coingecko_price_request(ids) -> dict:
     for attempt in range(2):
         try:
             resp = session.get(
                 f"https://api.coingecko.com/api/v3/simple/price"
-                f"?ids={ids}&vs_currencies=usd&include_24hr_change=true",
+                # Market cap + volume ride along in the same request so
+                # /compare doesn't need a second throttled API call.
+                f"?ids={ids}&vs_currencies=usd&include_24hr_change=true"
+                f"&include_market_cap=true&include_24hr_vol=true",
                 timeout=8
             )
             if resp.status_code == 200:
@@ -2065,8 +2075,8 @@ STRINGS = {
         'compare_pick2':       "📊 <b>Compare Coins</b>\n\n✅ First: <b>{sym}</b>\n\nNow pick the <b>second</b> coin:",
         'compare_vol':         "📦 Vol 24h: {vol}\n",
         'compare_mcap':        "💹 MCap: {mcap}",
-        'compare_winner':      "\n🏆 <b>{name}</b> performed better in the last 24h",
-        'compare_tied':        "\n🤝 <b>Tied</b> - same 24h performance",
+        'compare_winner':      "🏆 <b>{name}</b> performed better in the last 24h",
+        'compare_tied':        "🤝 <b>Tied</b> - same 24h performance",
 
         # ── /convert ──────────────────────────────────────────
         'convert_step1':       "💱 <b>Convert</b>\n\nStep 1 of 3 - Pick the coin to convert <b>from</b>:",
@@ -2498,8 +2508,8 @@ STRINGS = {
         'compare_pick2':       "📊 <b>مقایسه ارزها</b>\n\n✅ اول: <b>{sym}</b>\n\nحالا ارز <b>دوم</b> را انتخاب کنید:",
         'compare_vol':         "📦 حجم ۲۴س: {vol}\n",
         'compare_mcap':        "💹 ارزش بازار: {mcap}",
-        'compare_winner':      "\n🏆 <b>{name}</b> در ۲۴ ساعت گذشته بهتر عمل کرد",
-        'compare_tied':        "\n🤝 <b>مساوی</b> - عملکرد یکسان در ۲۴ ساعت",
+        'compare_winner':      "🏆 <b>{name}</b> در ۲۴ ساعت گذشته بهتر عمل کرد",
+        'compare_tied':        "🤝 <b>مساوی</b> - عملکرد یکسان در ۲۴ ساعت",
 
         # ── /convert ──────────────────────────────────────────
         'convert_step1':       "💱 <b>تبدیل ارز</b>\n\nمرحله ۱ از ۳ - ارز مبدا را انتخاب کنید:",
@@ -7255,30 +7265,23 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         ids.append(cid)
         names.append(_sym(cid))
 
-    usd_to_irr = get_usd_to_irr()
     cmp_uid = user_id or getattr(getattr(message, "from_user", None), "id", 0)
-    
-    # Multi-source batch fetch (rate-limited)
+
+    # USD/IRR is independent of prices - run it in a thread so the Nobitex
+    # round-trip happens alongside (not before) the batch price fetch.
+    irr_result = {}
+    def _irr_worker():
+        irr_result['usd_to_irr'] = get_usd_to_irr()
+    irr_thread = threading.Thread(target=_irr_worker, daemon=True)
+    irr_thread.start()
+
+    # Multi-source batch fetch (rate-limited). The CoinGecko response already
+    # carries market cap + 24h volume, so no second throttled API call is
+    # needed for them (that used to cost an extra 3s cooldown + round-trip).
     batch = _fetch_prices_batch(','.join(ids))
-    
-    # CoinGecko extra data (market cap, volume) - rate-limited
-    extra = {}
-    try:
-        ids_str = ','.join(ids)
-        if ids_str:
-            @rate_limited_api_call
-            def _fetch_extra():
-                return session.get(
-                    "https://api.coingecko.com/api/v3/simple/price"
-                    f"?ids={ids_str}&vs_currencies=usd"
-                    f"&include_market_cap=true&include_24hr_vol=true",
-                    timeout=8
-                )
-            r = _fetch_extra()
-            if r and r.status_code == 200:
-                extra = r.json()
-    except Exception:
-        pass
+
+    irr_thread.join()
+    usd_to_irr = irr_result.get('usd_to_irr')
 
     blocks = []
     prices = []
@@ -7288,9 +7291,8 @@ def _do_compare(message, raw1, raw2, user_id: int = 0, edit_msg_id=None):
         price = bp.get('usd', 0)
         prices.append(price)
         change = bp.get('usd_24h_change')
-        cd = extra.get(cid, {})
-        mcap = cd.get('usd_market_cap', 0)
-        vol = cd.get('usd_24h_vol', 0)
+        mcap = bp.get('usd_market_cap', 0)
+        vol = bp.get('usd_24h_vol', 0)
         changes.append(change or 0)
         # Format change in English always (not Persian digits)
         chg = _chg_str(change) if change is not None else ""
